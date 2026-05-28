@@ -3,23 +3,29 @@ import {
   Get,
   Post,
   Body,
-  Patch,
   Param,
   Delete,
-  Query,
+  Query, HttpCode, Put,
 } from '@nestjs/common';
 import { CommunitiesService } from './communities.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
-import { UpdateCommunityDto } from './dto/update-community.dto';
 import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
-import { ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { ApiNoContentResponse, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { Theme } from './dto/theme.dto';
+import { MemberPreviewDto } from '../members/dto/member.dto';
+import { KeynoteDto } from './dto/keynote.dto';
 
 export enum CommunitySort {
   MEMBER_ASC = 'MEMBER_ASC',
   MEMBER_DESC = 'MEMBER_DESC',
   CREATED_AT_ASC = 'CREATED_AT_ASC',
   CREATED_AT_DESC = 'CREATED_AT_DESC',
+}
+
+export enum CommunityMemberType {
+  KEYNOTE_MEMBER = 'KEYNOTE_MEMBER',
+  NORMAL_MEMBER = 'NORMAL_MEMBER',
+  HOST = 'HOST',
 }
 
 @Controller('api/communities')
@@ -36,6 +42,7 @@ export class CommunitiesController {
 
   @ApiOperation({
     summary: '커뮤니티 목록 페이지 조회',
+    description: 'hasNext 무한 스크롤 방식',
   })
   @Get()
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
@@ -61,11 +68,61 @@ export class CommunitiesController {
     summary: '커뮤니티 생성',
   })
   @Post()
-  async create(
-    @Body() request: CreateCommunityDto,
-  ): Promise<CommunityDto> {
+  async create(@Body() request: CreateCommunityDto): Promise<CommunityDto> {
     return {} as any;
   }
+
+  @ApiOperation({
+    summary: '커뮤니티 삭제 (소프트 딜리트)',
+  })
+  @ApiNoContentResponse({ description: '삭제 성공' })
+  @Delete('/:communityId')
+  @HttpCode(204)
+  async delete(@Param('communityId') communityId: string): Promise<void> {
+    return;
+  }
+
+  @ApiOperation({
+    summary: '커뮤니티 참여자 목록 조회',
+  })
+  @Get(':communityId/members')
+  @ApiQuery({
+    name: 'memberType',
+    required: false,
+    enum: CommunityMemberType,
+    enumName: 'CommunityMemberType',
+    description: '필터 기준',
+    example: CommunityMemberType.KEYNOTE_MEMBER,
+  })
+  async findCommunityMembers(
+    @Param('communityId') communityId: string,
+    @Query('memberType') memberType?: CommunityMemberType,
+  ): Promise<MemberPreviewDto[]> {
+    return {} as any;
+  }
+
+  @ApiOperation({
+    summary: '커뮤니티 참여자의 기조 발언 조회',
+  })
+  @Get(':communityId/members/:memberId')
+  async getMemberKeynote(
+    @Param('communityId') communityId: string,
+    @Param('memberId') memberId: string,
+  ): Promise<KeynoteDto> {
+    return {} as any;
+  }
+
+  @ApiOperation({
+    summary: '커뮤니티에 대한 나의 기조 발언 작성/수정하기',
+  })
+  @Put(':communityId/members/me')
+  async upsertMyKeynote(
+    @Param('communityId') communityId: string,
+    @Body() request: KeynoteDto,
+  ): Promise<KeynoteDto> {
+    return {} as any;
+  }
+
 
   // @Post()
   // create(@Body() createCommunityDto: CreateCommunityDto) {

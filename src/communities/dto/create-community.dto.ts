@@ -1,4 +1,4 @@
-import { KeynoteDto } from '../../member-communities/dto/keynote.dto';
+import { KeynoteDto } from './keynote.dto';
 
 export class CreateCommunityDto {
   themeId: string;
