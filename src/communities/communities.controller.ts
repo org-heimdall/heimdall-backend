@@ -73,7 +73,7 @@ export class CommunitiesController {
   }
 
   @ApiOperation({
-    summary: '커뮤니티 삭제 (소프트 딜리트)',
+    summary: '커뮤니티 삭제',
   })
   @ApiNoContentResponse({ description: '삭제 성공' })
   @Delete('/:communityId')
@@ -104,7 +104,7 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티 참여자의 기조 발언 조회',
   })
-  @Get(':communityId/members/:memberId')
+  @Get(':communityId/keynotes/:memberId')
   async getMemberKeynote(
     @Param('communityId') communityId: string,
     @Param('memberId') memberId: string,
@@ -113,14 +113,36 @@ export class CommunitiesController {
   }
 
   @ApiOperation({
-    summary: '커뮤니티에 대한 나의 기조 발언 작성/수정하기',
+    summary: '커뮤니티에 대한 나의 기조 발언 작성/수정',
   })
-  @Put(':communityId/members/me')
+  @Put(':communityId/keynotes/me')
   async upsertMyKeynote(
     @Param('communityId') communityId: string,
     @Body() request: KeynoteDto,
   ): Promise<KeynoteDto> {
     return {} as any;
+  }
+
+  @ApiOperation({
+    summary: '커뮤니티를 나의 즐겨찾기에 추가',
+  })
+  @Put(':communityId/favorites/me')
+  @HttpCode(204)
+  async addMyFavorite(
+    @Param('communityId') communityId: string,
+  ): Promise<void> {
+    return {} as any;
+  }
+
+  @ApiOperation({
+    summary: '커뮤니티리를 나의 즐겨찾기에서 삭제',
+  })
+  @Delete(':communityId/favorites/me')
+  @HttpCode(204)
+  async deleteMyFavorite(
+    @Param('communityId') communityId: string,
+  ): Promise<void> {
+    return;
   }
 
 
