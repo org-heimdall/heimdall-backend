@@ -1,34 +1,23 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
 import { DebatesService } from './debates.service';
-import { CreateDebateDto } from './dto/create-debate.dto';
-import { UpdateDebateDto } from './dto/update-debate.dto';
+import {
+  CreateDebateDto,
+  CreateDebateResultDto,
+} from './dto/create-debate.dto';
+import { ApiOperation } from '@nestjs/swagger';
+import { Body, Controller, Post } from '@nestjs/common';
 
-@Controller('debates')
+@Controller('api/debates')
 export class DebatesController {
   constructor(private readonly debatesService: DebatesService) {}
 
+  @ApiOperation({
+    summary: '토론 생성',
+    description: '호스트만 사용 가능',
+  })
   @Post()
-  create(@Body() createDebateDto: CreateDebateDto) {
+  async create(
+    @Body() request: CreateDebateDto,
+  ): Promise<CreateDebateResultDto> {
     return {} as any;
   }
-
-  // @Get()
-  // findAll() {
-  //   return this.debatesService.findAll();
-  // }
-  //
-  // @Get(':id')
-  // findOne(@Param('id') id: string) {
-  //   return this.debatesService.findOne(+id);
-  // }
-  //
-  // @Patch(':id')
-  // update(@Param('id') id: string, @Body() updateDebateDto: UpdateDebateDto) {
-  //   return this.debatesService.update(+id, updateDebateDto);
-  // }
-  //
-  // @Delete(':id')
-  // remove(@Param('id') id: string) {
-  //   return this.debatesService.remove(+id);
-  // }
 }

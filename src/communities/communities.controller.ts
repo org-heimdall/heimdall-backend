@@ -75,7 +75,7 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티 삭제',
   })
-  @ApiNoContentResponse({ description: '삭제 성공' })
+  @ApiNoContentResponse({ description: '커뮤니티 삭제 성공' })
   @Delete('/:communityId')
   @HttpCode(204)
   async delete(@Param('communityId') communityId: string): Promise<void> {
@@ -126,8 +126,8 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티를 나의 즐겨찾기에 추가',
   })
+  @ApiNoContentResponse({ description: '즐겨찾기 추가 성공' })
   @Put(':communityId/favorites/me')
-  @HttpCode(204)
   async addMyFavorite(
     @Param('communityId') communityId: string,
   ): Promise<void> {
@@ -135,8 +135,9 @@ export class CommunitiesController {
   }
 
   @ApiOperation({
-    summary: '커뮤니티리를 나의 즐겨찾기에서 삭제',
+    summary: '커뮤니티를 나의 즐겨찾기에서 삭제',
   })
+  @ApiNoContentResponse({ description: '즐겨찾기 삭제 성공' })
   @Delete(':communityId/favorites/me')
   @HttpCode(204)
   async deleteMyFavorite(
@@ -144,30 +145,4 @@ export class CommunitiesController {
   ): Promise<void> {
     return;
   }
-
-
-  // @Post()
-  // create(@Body() createCommunityDto: CreateCommunityDto) {
-  //   return this.communitiesService.create(createCommunityDto);
-  // }
-  //
-  // @Get()
-  // findAll() {
-  //   return this.communitiesService.findAll();
-  // }
-  //
-  // @Get(':id')
-  // findOne(@Param('id') id: string) {
-  //   return this.communitiesService.findOne(+id);
-  // }
-  //
-  // @Patch(':id')
-  // update(@Param('id') id: string, @Body() updateCommunityDto: UpdateCommunityDto) {
-  //   return this.communitiesService.update(+id, updateCommunityDto);
-  // }
-  //
-  // @Delete(':id')
-  // remove(@Param('id') id: string) {
-  //   return this.communitiesService.remove(+id);
-  // }
 }
