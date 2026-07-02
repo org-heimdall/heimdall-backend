@@ -9,7 +9,6 @@
 - Testable한 코드를 작성해주세요. 테스트 코드는 **Service와 Repository 레이어만** 작성합니다.
 - 관련 로직이 삭제되는 것이 아닌 이상, 기존 테스트 코드를 삭제하지 마세요.
 - REST 엔드포인트 추가 시 Swagger 데코레이터(`@ApiOperation` 등)를 함께 작성해주세요.
-- Socket 이벤트 추가/변경 시 `docs/socket-api.md` 명세를 반드시 갱신해주세요.
 - DTO는 `class` + `class-validator`로 정의하고, 형식 검증은 DTO에서 처리해주세요.
 
 ## Project Structure & Module Organization
@@ -30,7 +29,6 @@ NestJS 도메인 모듈 구조입니다.
 - TypeScript, NestJS 11, 2-space indent, Prettier(`singleQuote`, `trailingComma: all`).
 - 파일 `kebab-case`(+역할 접미사), 클래스 `PascalCase`, DTO는 `Create*Dto`/`*Dto`.
 - Socket 이벤트는 `snake_case`, 명세와 1:1 일치.
-- 자세한 내용은 `docs/code-convention.md` 참고.
 
 ## Testing Guidelines
 - Jest(`*.spec.ts`), Service/Repository 레이어 중심. Controller/Gateway 단위 테스트는 생략.
