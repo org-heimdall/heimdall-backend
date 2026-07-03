@@ -22,15 +22,21 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Prune to production deps
+        run: npm ci --omit=dev
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: nest-server
           path: |
             dist/
+            node_modules/
             package.json
             package-lock.json
             ecosystem.config.js
+            Dockerfile
+            docker-compose.yml
 
   deploy:
     needs: build
@@ -64,13 +70,12 @@ jobs:
           rsync -az -e "ssh -i private_key.pem -o StrictHostKeyChecking=no" \
             ./deploy/ $EC2_USERNAME@$EC2_HOST:$TARGET_DIR/
 
-          # 원격에서 의존성 설치 + PM2 무중단 배포
+          # 원격에서 의존성 설치 + docker compose
           ssh -i private_key.pem -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST "
             set -e
             cd $TARGET_DIR
-            npm ci --omit=dev
-            pm2 reload ecosystem.config.js --env production || pm2 start ecosystem.config.js --env production
-            pm2 save
+            docker compose up -d --build backend
+            docker image prune -f
           "
 
           rm -f private_key.pem
