@@ -5,7 +5,9 @@ import {
   Body,
   Param,
   Delete,
-  Query, HttpCode, Put,
+  Query,
+  HttpCode,
+  Put,
 } from '@nestjs/common';
 import { CommunitiesService } from './communities.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
