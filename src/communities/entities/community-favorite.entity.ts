@@ -1,7 +1,7 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
-@Entity('member_community')
-export class MemberCommunity {
+@Entity('community_favorite')
+export class CommunityFavorite {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: string;
 
@@ -11,10 +11,6 @@ export class MemberCommunity {
   @Column({ name: 'community_id', type: 'bigint' })
   communityId: string;
 
-  @Column({ type: 'varchar', nullable: true })
-  opinion: string | null;
-
-  /** 근거 목록 — ';' 구분 문자열로 저장 */
-  @Column({ type: 'varchar', nullable: true })
-  reasons: string | null;
+  @Column({ name: 'is_favored', type: 'boolean' })
+  isFavored: boolean;
 }
