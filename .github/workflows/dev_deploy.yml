@@ -67,7 +67,7 @@ jobs:
           ssh -i private_key.pem -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST "mkdir -p $TARGET_DIR"
 
           # 산출물 전송 (rsync가 없으면 scp -r 사용 가능)
-          rsync -az -e "ssh -i private_key.pem -o StrictHostKeyChecking=no" \
+          rsync -az --delete -e "ssh -i private_key.pem -o StrictHostKeyChecking=no" \
             ./deploy/ $EC2_USERNAME@$EC2_HOST:$TARGET_DIR/
 
           # 원격에서 의존성 설치 + docker compose
