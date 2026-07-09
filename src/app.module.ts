@@ -5,7 +5,9 @@ import { CommunitiesModule } from './communities/communities.module';
 import { MemberCommunitiesModule } from './member-communities/member-communities.module';
 import { MembersModule } from './members/members.module';
 import { DebatesModule } from './debates/debates.module';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { SnakeNamingStrategy } from './common/naming/snake-naming.strategy';
 import * as Joi from 'joi';
 
 @Module({
@@ -17,11 +19,25 @@ import * as Joi from 'joi';
           .valid('local', 'development', 'production', 'test')
           .default('development'),
 
-        MYSQL_HOST: Joi.string().required(),
-        MYSQL_PORT: Joi.number().default(3306),
-        MYSQL_USER: Joi.string().required(),
-        MYSQL_ROOT_PASSWORD: Joi.string().required(),
-        MYSQL_DATABASE: Joi.string().required(),
+        PG_HOST: Joi.string().required(),
+        PG_PORT: Joi.number().default(5432),
+        PG_USER: Joi.string().required(),
+        PG_PASSWORD: Joi.string().required(),
+        PG_DATABASE: Joi.string().required(),
+      }),
+    }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        host: config.get<string>('PG_HOST'),
+        port: config.get<number>('PG_PORT'),
+        username: config.get<string>('PG_USER'),
+        password: config.get<string>('PG_PASSWORD'),
+        database: config.get<string>('PG_DATABASE'),
+        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        synchronize: true,
+        namingStrategy: new SnakeNamingStrategy(),
       }),
     }),
     CommunitiesModule,
