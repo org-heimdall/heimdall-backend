@@ -12,15 +12,15 @@ export class DebatesService {
     return `This action returns all debates`;
   }
 
-  findOne(id: number) {
+  findOne(id: string) {
     return `This action returns a #${id} debate`;
   }
 
-  update(id: number, updateDebateDto: UpdateDebateDto) {
+  update(id: string, updateDebateDto: UpdateDebateDto) {
     return `This action updates a #${id} debate`;
   }
 
-  remove(id: number) {
+  remove(id: string) {
     return `This action removes a #${id} debate`;
   }
 }

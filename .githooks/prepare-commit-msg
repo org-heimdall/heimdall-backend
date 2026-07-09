@@ -1,0 +1,6 @@
+#!/bin/sh
+# Cursor agent가 추가하는 Co-authored-by 트레일러 제거
+COMMIT_MSG_FILE=$1
+
+grep -vi '^co-authored-by:' "$COMMIT_MSG_FILE" > "${COMMIT_MSG_FILE}.tmp"
+mv "${COMMIT_MSG_FILE}.tmp" "$COMMIT_MSG_FILE"

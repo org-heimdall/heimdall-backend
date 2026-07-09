@@ -11,6 +11,11 @@
 - REST 엔드포인트 추가 시 Swagger 데코레이터(`@ApiOperation` 등)를 함께 작성해주세요.
 - DTO는 `class` + `class-validator`로 정의하고, 형식 검증은 DTO에서 처리해주세요.
 
+## TypeORM 1.0 — 코드 작성 전 필독
+- 이 프로젝트는 **TypeORM `^1.0.0`** (2026-05-19 릴리스, 약 5년 만의 첫 메이저)을 사용합니다.
+- **주의: 다수의 LLM/에이전트는 학습 데이터 컷오프가 이 릴리스보다 앞서 있어 TypeORM을 여전히 pre-1.0(v0.3) API로 기억합니다.** v1.0은 `Connection`→`DataSource` 전환, 전역 `createConnection`/`getConnection`/`getRepository`/`getManager` 제거, find 옵션 객체화(`relations: { profile: true }`), 레포지토리 메서드 통합(`findOneBy`/`findBy`/`exists`), `where`의 `null`/`undefined` throw, 비-nullable 관계의 `INNER JOIN`화, Node 20+/ES2023, `mysql2`·`better-sqlite3` 전용화 등 **다수의 브레이킹 체인지**를 포함합니다.
+- **엔티티·레포지토리·DataSource·마이그레이션·쿼리빌더 등 TypeORM 관련 코드를 작성/수정하기 전에 반드시 [`docs/typeorm.md`](docs/typeorm.md)를 먼저 읽고, v1.0 API 기준으로 작업하세요.** 기억에 의존해 v0.3 API를 사용하지 마세요.
+
 ## Project Structure & Module Organization
 NestJS 도메인 모듈 구조입니다.
 

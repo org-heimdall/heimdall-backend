@@ -8,24 +8,24 @@ export enum CommunityState {
 
 @Entity('community')
 export class Community {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Column({ type: 'enum', enum: CommunityState })
   state: CommunityState;
 
-  @Column({ name: 'host_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   hostId: string;
 
-  @Column({ name: 'host_nickname', type: 'varchar' })
+  @Column({ type: 'varchar' })
   hostNickname: string;
 
-  @Column({ name: 'member_count', type: 'int' })
+  @Column({ type: 'int' })
   memberCount: number;
 
   @Column({ type: 'varchar' })
   topic: string;
 
-  @Column({ name: 'community_link', type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   communityLink: string | null;
 }

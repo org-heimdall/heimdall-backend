@@ -2,7 +2,7 @@ import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('member')
 export class Member {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Column({ type: 'varchar' })
@@ -20,10 +20,10 @@ export class Member {
   @Column({ type: 'int', nullable: true })
   age: number | null;
 
-  @Column({ name: 'profile_image_url', type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   profileImageUrl: string | null;
 
-  @Column({ name: 'social_credit', type: 'double precision' })
+  @Column({ type: 'double precision' })
   socialCredit: number;
 
   @Column({ type: 'double precision' })

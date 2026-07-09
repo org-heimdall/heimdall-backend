@@ -2,19 +2,18 @@ import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('member_community')
 export class MemberCommunity {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'member_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   memberId: string;
 
-  @Column({ name: 'community_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   communityId: string;
 
   @Column({ type: 'varchar', nullable: true })
   opinion: string | null;
 
-  /** 근거 목록 — ';' 구분 문자열로 저장 */
-  @Column({ type: 'varchar', nullable: true })
-  reasons: string | null;
+  @Column({ type: 'text', array: true, nullable: true })
+  reasons: string[] | null;
 }
