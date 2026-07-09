@@ -58,20 +58,4 @@ export class SnakeNamingStrategy
   ): string {
     return this.joinTableColumnName(tableName, propertyName, columnName);
   }
-
-  override foreignKeyName(
-    ...[
-      tableOrName,
-      columnNames,
-      referencedTablePath,
-      referencedColumnNames,
-    ]: Parameters<DefaultNamingStrategy['foreignKeyName']>
-  ): ReturnType<DefaultNamingStrategy['foreignKeyName']> {
-    return super.foreignKeyName(
-      tableOrName,
-      columnNames.map((columnName) => snakeCase(columnName)),
-      referencedTablePath,
-      referencedColumnNames?.map((columnName) => snakeCase(columnName)),
-    );
-  }
 }
