@@ -1,33 +1,31 @@
 services:
-  mysql:
-    image: mysql:8.4
+  postgres:
+    image: postgres:17-alpine
     restart: unless-stopped
-    command: >
-      --innodb-buffer-pool-size=128M
-      --performance-schema=OFF
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DATABASE}
     volumes:
-      - mysql-data:/var/lib/mysql
+      - postgres-data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:3306:3306"   # 로컬 디버깅용
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DATABASE}"]
       interval: 10s
       timeout: 5s
       retries: 5
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 256M
 
   backend:
     build: .
     restart: unless-stopped
     env_file: .env
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     ports:
       - "3000:3000"
@@ -37,4 +35,4 @@ services:
           memory: 384M
 
 volumes:
-  mysql-data:
+  postgres-data: # 컨테이너 재시작 시 데이터 안 날아가게 함
