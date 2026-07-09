@@ -2,12 +2,12 @@ import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('community_theme')
 export class CommunityTheme {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'community_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   communityId: string;
 
-  @Column({ name: 'theme_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   themeId: string;
 }

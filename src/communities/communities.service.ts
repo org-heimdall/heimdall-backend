@@ -12,15 +12,15 @@ export class CommunitiesService {
     return `This action returns all communities`;
   }
 
-  findOne(id: number) {
+  findOne(id: string) {
     return `This action returns a #${id} community`;
   }
 
-  update(id: number, updateCommunityDto: UpdateCommunityDto) {
+  update(id: string, updateCommunityDto: UpdateCommunityDto) {
     return `This action updates a #${id} community`;
   }
 
-  remove(id: number) {
+  remove(id: string) {
     return `This action removes a #${id} community`;
   }
 }

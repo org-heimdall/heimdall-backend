@@ -7,33 +7,33 @@ export enum DebateTurn {
 
 @Entity('debate')
 export class Debate {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'community_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   communityId: string;
 
-  @Column({ name: 'host_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   hostId: string;
 
-  @Column({ name: 'host_nickname', type: 'varchar' })
+  @Column({ type: 'varchar' })
   hostNickname: string;
 
-  @Column({ name: 'opponent_id', type: 'bigint', nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   opponentId: string | null;
 
-  @Column({ name: 'opponent_nickname', type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   opponentNickname: string | null;
 
-  @Column({ name: 'current_turn', type: 'enum', enum: DebateTurn })
+  @Column({ type: 'enum', enum: DebateTurn })
   currentTurn: DebateTurn;
 
-  @Column({ name: 'round_count', type: 'int' })
+  @Column({ type: 'int' })
   roundCount: number;
 
   @Column({ type: 'text', nullable: true })
   solution: string | null;
 
-  @Column({ name: 'winner_id', type: 'bigint', nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   winnerId: string | null;
 }

@@ -2,15 +2,15 @@ import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('speech_like')
 export class SpeechLike {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'member_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   memberId: string;
 
-  @Column({ name: 'speech_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   speechId: string;
 
-  @Column({ name: 'is_liked', type: 'boolean' })
+  @Column({ type: 'boolean' })
   isLiked: boolean;
 }

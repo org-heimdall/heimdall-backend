@@ -12,15 +12,15 @@ export class MembersService {
     return `This action returns all members`;
   }
 
-  findOne(id: number) {
+  findOne(id: string) {
     return `This action returns a #${id} member`;
   }
 
-  update(id: number, updateMemberDto: UpdateMemberDto) {
+  update(id: string, updateMemberDto: UpdateMemberDto) {
     return `This action updates a #${id} member`;
   }
 
-  remove(id: number) {
+  remove(id: string) {
     return `This action removes a #${id} member`;
   }
 }

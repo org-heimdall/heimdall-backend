@@ -2,13 +2,13 @@ import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('community_message')
 export class CommunityMessage {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'member_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   memberId: string;
 
-  @Column({ name: 'community_id', type: 'bigint' })
+  @Column({ type: 'uuid' })
   communityId: string;
 
   @Column({ type: 'varchar', nullable: true })
