@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
@@ -23,6 +27,19 @@ describe('MembersService', () => {
   /** pg 드라이버가 던지는 에러 모양(code 프로퍼티를 가진 Error) */
   const pgDriverError = (code: string): Error =>
     Object.assign(new Error(`pg error ${code}`), { code });
+
+  /** signUpDto.password를 해싱해 가진, DB에서 막 읽어온 듯한 Member */
+  const buildMember = async (): Promise<Member> => ({
+    id: 'member-uuid',
+    email: signUpDto.email,
+    password: await bcrypt.hash(signUpDto.password, 10),
+    nickname: signUpDto.nickname,
+    gender: null, // 바꾸지 않은 (전달되지 않은) 값들은 수정하지 않음을 테스트
+    age: null,
+    profileImageUrl: null,
+    socialCredit: 0,
+    rating: 0,
+  });
 
   beforeEach(async () => {
     repository = {
@@ -97,18 +114,6 @@ describe('MembersService', () => {
   });
 
   describe('login', () => {
-    const buildMember = async (): Promise<Member> => ({
-      id: 'member-uuid',
-      email: signUpDto.email,
-      password: await bcrypt.hash(signUpDto.password, 10),
-      nickname: signUpDto.nickname,
-      gender: null,
-      age: null,
-      profileImageUrl: null,
-      socialCredit: 0,
-      rating: 0,
-    });
-
     it('이메일과 비밀번호가 일치하면 memberId를 반환한다', async () => {
       repository.findOneBy.mockResolvedValue(await buildMember());
 
@@ -135,6 +140,85 @@ describe('MembersService', () => {
       await expect(
         service.login({ email: signUpDto.email, password: 'wrongpassword' }),
       ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('update', () => {
+    beforeEach(() => {
+      repository.save.mockImplementation((member: Member) =>
+        Promise.resolve(member),
+      );
+    });
+
+    it('전달된 필드만 수정하고 나머지는 유지한다', async () => {
+      repository.findOneBy.mockResolvedValue(await buildMember());
+
+      const result = await service.update('member-uuid', {
+        nickname: '새닉네임',
+        age: 30,
+      });
+
+      expect(result.nickname).toBe('새닉네임');
+      expect(result.age).toBe(30);
+      expect(result.email).toBe(signUpDto.email); // 건드리지 않은 필드는 그대로
+      expect(result.gender).toBeNull();
+    });
+
+    it('존재하지 않는 회원이면 NotFoundException을 던진다', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.update('없는-uuid', { nickname: '새닉네임' }),
+      ).rejects.toThrow(NotFoundException);
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    it('currentPassword가 맞으면 newPassword를 해싱해 저장한다', async () => {
+      repository.findOneBy.mockResolvedValue(await buildMember());
+
+      await service.update('member-uuid', {
+        currentPassword: signUpDto.password,
+        newPassword: 'brandNewPassword',
+      });
+
+      const saved = (await repository.save.mock.results[0].value) as Member;
+      expect(saved.password).not.toBe('brandNewPassword');
+      await expect(
+        bcrypt.compare('brandNewPassword', saved.password),
+      ).resolves.toBe(true);
+    });
+
+    it('currentPassword가 틀리면 UnauthorizedException을 던지고 저장하지 않는다', async () => {
+      repository.findOneBy.mockResolvedValue(await buildMember());
+
+      await expect(
+        service.update('member-uuid', {
+          currentPassword: 'wrongpassword',
+          newPassword: 'brandNewPassword',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    it('newPassword가 없으면 비밀번호를 건드리지 않는다', async () => {
+      const original = await buildMember();
+      const originalHash = original.password;
+      repository.findOneBy.mockResolvedValue(original);
+
+      await service.update('member-uuid', { nickname: '새닉네임' });
+
+      const saved = (await repository.save.mock.results[0].value) as Member;
+      expect(saved.password).toBe(originalHash);
+    });
+
+    it('응답에 password를 포함하지 않는다', async () => {
+      repository.findOneBy.mockResolvedValue(await buildMember());
+
+      const result = await service.update('member-uuid', {
+        nickname: '새닉네임',
+      });
+
+      expect(result).not.toHaveProperty('password');
     });
   });
 });
