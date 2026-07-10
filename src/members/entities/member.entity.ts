@@ -5,7 +5,7 @@ export class Member {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar' })
+  @Column({ type: 'varchar', unique: true })
   email: string;
 
   @Column({ type: 'varchar' })
@@ -23,9 +23,9 @@ export class Member {
   @Column({ type: 'varchar', nullable: true })
   profileImageUrl: string | null;
 
-  @Column({ type: 'double precision' })
+  @Column({ type: 'double precision', default: 0 })
   socialCredit: number;
 
-  @Column({ type: 'double precision' })
+  @Column({ type: 'double precision', default: 0 })
   rating: number;
 }
