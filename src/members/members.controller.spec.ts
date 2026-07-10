@@ -56,4 +56,8 @@ describe('MembersController', () => {
     await expect(controller.login(request)).resolves.toEqual(memberDto);
     expect(service.login).toHaveBeenCalledWith(request);
   });
+
+  it('로그아웃은 아직 서버 상태를 건드리지 않는다', () => {
+    expect(controller.logout()).toBeUndefined();
+  });
 });

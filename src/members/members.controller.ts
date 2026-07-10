@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Post } from '@nestjs/common';
 import {
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiUnauthorizedResponse,
@@ -36,5 +37,19 @@ export class MembersController {
   @HttpCode(200)
   async login(@Body() request: LoginMemberDto): Promise<MemberDto> {
     return this.membersService.login(request);
+  }
+
+  @ApiOperation({
+    summary: '로그아웃',
+    description:
+      '현재는 서버에 세션/토큰이 없어 무효화할 상태가 없다. ' +
+      '클라이언트가 보관 중인 memberId를 폐기하면 로그아웃이 완료된다. ' +
+      'JWT 또는 세션 도입 시 이 자리에 무효화 로직을 채운다.',
+  })
+  @ApiNoContentResponse({ description: '로그아웃 성공' })
+  @Post('/logout')
+  @HttpCode(204)
+  logout(): void {
+    return;
   }
 }
