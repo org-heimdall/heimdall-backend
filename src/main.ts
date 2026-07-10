@@ -1,9 +1,18 @@
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // DTO에 없는 속성은 제거
+      forbidNonWhitelisted: true, // DTO에 없는 속성이 오면 400
+      transform: true, // 요청 body를 DTO 인스턴스로 변환
+    }),
+  );
 
   // Swagger 설정 객체 생성
   const config = new DocumentBuilder()
