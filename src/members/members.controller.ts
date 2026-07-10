@@ -1,8 +1,17 @@
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import {
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
+  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiUnauthorizedResponse,
@@ -10,6 +19,7 @@ import {
 import { MembersService } from './members.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { LoginMemberDto } from './dto/login-member.dto';
+import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
 
 @Controller('api/members')
@@ -51,5 +61,22 @@ export class MembersController {
   @HttpCode(204)
   logout(): void {
     return;
+  }
+
+  @ApiOperation({
+    summary: '회원 정보 수정',
+    description:
+      '전달된 필드만 수정한다. 비밀번호를 바꾸려면 newPassword와 함께 ' +
+      'currentPassword를 보내야 한다. email 변경은 지원하지 않는다.',
+  })
+  @ApiOkResponse({ description: '수정 성공', type: MemberDto })
+  @ApiNotFoundResponse({ description: '존재하지 않는 회원' })
+  @ApiUnauthorizedResponse({ description: '현재 비밀번호 불일치' })
+  @Patch('/:memberId')
+  async update(
+    @Param('memberId', ParseUUIDPipe) memberId: string,
+    @Body() request: UpdateMemberDto,
+  ): Promise<MemberDto> {
+    return this.membersService.update(memberId, request);
   }
 }

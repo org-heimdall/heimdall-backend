@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -8,6 +9,7 @@ import { QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { LoginMemberDto } from './dto/login-member.dto';
+import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
 import { Member } from './entities/member.entity';
 
@@ -70,6 +72,38 @@ export class MembersService {
     }
 
     return MemberDto.from(member);
+  }
+
+  async update(
+    memberId: string,
+    updateMemberDto: UpdateMemberDto,
+  ): Promise<MemberDto> {
+    const member = await this.memberRepository.findOneBy({ id: memberId });
+    if (!member) {
+      throw new NotFoundException('회원을 찾을 수 없습니다.');
+    }
+
+    const { currentPassword, newPassword, ...profile } = updateMemberDto;
+
+    if (newPassword !== undefined) {
+      // DTO의 @ValidateIf가 newPassword와 currentPassword의 동반 전달을 보장한다.
+      const matches = await bcrypt.compare(currentPassword!, member.password);
+      if (!matches) {
+        throw new UnauthorizedException('현재 비밀번호가 올바르지 않습니다.');
+      }
+      member.password = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+    }
+
+    // 전달되지 않은 필드는 기존 값을 유지한다(부분 수정).
+    if (profile.nickname !== undefined) member.nickname = profile.nickname;
+    if (profile.gender !== undefined) member.gender = profile.gender;
+    if (profile.age !== undefined) member.age = profile.age;
+    if (profile.profileImageUrl !== undefined) {
+      member.profileImageUrl = profile.profileImageUrl;
+    }
+
+    const saved = await this.memberRepository.save(member);
+    return MemberDto.from(saved);
   }
 
   private isUniqueViolation(error: unknown): boolean {
