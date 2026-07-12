@@ -8,6 +8,7 @@ import {
 import { QueryFailedError } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
+import { UpdateMemberDto } from './dto/update-member.dto';
 import { Member } from './entities/member.entity';
 
 describe('MembersService', () => {
@@ -206,6 +207,21 @@ describe('MembersService', () => {
       repository.findOneBy.mockResolvedValue(original);
 
       await service.update('member-uuid', { nickname: '새닉네임' });
+
+      const saved = (await repository.save.mock.results[0].value) as Member;
+      expect(saved.password).toBe(originalHash);
+    });
+
+    it('newPassword가 null이면 bcrypt.hash에 도달하지 않고 비밀번호를 유지한다', async () => {
+      const original = await buildMember();
+      const originalHash = original.password;
+      repository.findOneBy.mockResolvedValue(original);
+
+      // DTO를 우회해 null이 들어와도 서비스가 방어적으로 미변경 처리하는지 검증한다.
+      await service.update('member-uuid', {
+        nickname: '새닉네임',
+        newPassword: null,
+      } as unknown as UpdateMemberDto);
 
       const saved = (await repository.save.mock.results[0].value) as Member;
       expect(saved.password).toBe(originalHash);
