@@ -85,7 +85,8 @@ export class MembersService {
 
     const { currentPassword, newPassword, ...profile } = updateMemberDto;
 
-    if (newPassword !== undefined) {
+    // null/undefined는 비밀번호 미변경으로 취급해 bcrypt.hash에 도달하지 않게 한다.
+    if (newPassword != null) {
       // DTO의 @ValidateIf가 newPassword와 currentPassword의 동반 전달을 보장한다.
       const matches = await bcrypt.compare(currentPassword!, member.password);
       if (!matches) {

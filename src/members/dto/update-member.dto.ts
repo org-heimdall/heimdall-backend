@@ -1,11 +1,5 @@
 import { ApiPropertyOptional, OmitType, PartialType } from '@nestjs/swagger';
-import {
-  IsOptional,
-  IsString,
-  MaxLength,
-  MinLength,
-  ValidateIf,
-} from 'class-validator';
+import { IsString, MinLength, ValidateIf } from 'class-validator';
 import { CreateMemberDto } from './create-member.dto';
 import { MaxByteLength } from '../../common/validators/max-byte-length.validator';
 import { PASSWORD_MAX_BYTES } from './password.constant';
@@ -32,7 +26,9 @@ export class UpdateMemberDto extends PartialType(
     minLength: 8,
     description: `비밀번호는 최대 ${PASSWORD_MAX_BYTES}바이트`,
   })
-  @IsOptional()
+  // undefined(미전달)만 검증을 건너뛰고 null은 검증한다. @IsOptional을 쓰면 null도 검증을 건너뛰어버린다
+  // 그러면 null이 bcrypt.hash까지 도달하는 문제가 생기므로, @ValidateIf로 undefined일 때만 검증을 건너뛴다.
+  @ValidateIf((dto: UpdateMemberDto) => dto.newPassword !== undefined)
   @IsString()
   @MinLength(8)
   @MaxByteLength(PASSWORD_MAX_BYTES)
