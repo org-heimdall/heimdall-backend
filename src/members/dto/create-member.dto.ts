@@ -10,16 +10,22 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { MaxByteLength } from '../../common/validators/max-byte-length.validator';
+import { PASSWORD_MAX_BYTES } from './password.constant';
 
 export class CreateMemberDto {
   @ApiProperty({ example: 'heimdall@example.com' })
   @IsEmail()
   email: string;
 
-  @ApiProperty({ example: 'password1234', minLength: 8, maxLength: 64 })
+  @ApiProperty({
+    example: 'password1234',
+    minLength: 8,
+    description: `비밀번호는 최대 ${PASSWORD_MAX_BYTES}바이트`,
+  })
   @IsString()
   @MinLength(8)
-  @MaxLength(64)
+  @MaxByteLength(PASSWORD_MAX_BYTES)
   password: string;
 
   @ApiProperty({ example: '헤임달' })

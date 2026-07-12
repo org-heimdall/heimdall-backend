@@ -7,6 +7,8 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { CreateMemberDto } from './create-member.dto';
+import { MaxByteLength } from '../../common/validators/max-byte-length.validator';
+import { PASSWORD_MAX_BYTES } from './password.constant';
 
 /**
  * email은 unique 제약이 걸려 있어 별도의 이메일 변경 API에서 다룬다.
@@ -22,16 +24,17 @@ export class UpdateMemberDto extends PartialType(
   @ValidateIf((dto: UpdateMemberDto) => dto.newPassword !== undefined)
   @IsString()
   @MinLength(1)
+  @MaxByteLength(PASSWORD_MAX_BYTES)
   currentPassword?: string;
 
   @ApiPropertyOptional({
     example: 'newPassword1234',
     minLength: 8,
-    maxLength: 64,
+    description: `비밀번호는 최대 ${PASSWORD_MAX_BYTES}바이트`,
   })
   @IsOptional()
   @IsString()
   @MinLength(8)
-  @MaxLength(64)
+  @MaxByteLength(PASSWORD_MAX_BYTES)
   newPassword?: string;
 }
