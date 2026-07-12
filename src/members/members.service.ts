@@ -20,6 +20,13 @@ const PG_UNIQUE_VIOLATION = '23505';
 
 const INVALID_CREDENTIALS = '이메일 또는 비밀번호가 올바르지 않습니다.';
 
+/**
+ * 존재하지 않는 이메일로 로그인해도 실제 회원과 동일한 bcrypt 비용을 치르게 하는 더미 해시.
+ * 저장 해시와 동일한 cost(10 rounds)라 비교 시간이 같아 이메일 존재 여부가 타이밍으로 드러나지 않는다.
+ */
+const DUMMY_PASSWORD_HASH =
+  '$2b$10$P3jRv..bS0gDS8tKkfnkmOrEIlvumxbN8oBrj0mCkTTy6hSPGp.2';
+
 @Injectable()
 export class MembersService {
   constructor(
@@ -58,16 +65,12 @@ export class MembersService {
       email: loginMemberDto.email,
     });
 
-    // 이메일 존재 여부가 드러나지 않도록 두 실패 경우 모두 같은 예외를 던진다.
-    if (!member) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
-    }
+    // 회원이 없어도 더미 해시와 비교해 bcrypt 비용을 동일하게 치른다(타이밍 공격 완화).
+    const passwordHash = member?.password ?? DUMMY_PASSWORD_HASH;
+    const matches = await bcrypt.compare(loginMemberDto.password, passwordHash);
 
-    const matches = await bcrypt.compare(
-      loginMemberDto.password,
-      member.password,
-    );
-    if (!matches) {
+    // 이메일 미존재/비밀번호 불일치 모두 같은 예외로 처리해 존재 여부가 드러나지 않게 한다.
+    if (!member || !matches) {
       throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
