@@ -8,8 +8,8 @@ async function bootstrap() {
 
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // DTO에 없는 속성은 제거
-      forbidNonWhitelisted: true, // DTO에 없는 속성이 오면 400
+      whitelist: true, // DTO에 없는 속성은 검사 대상에서 제외 (forbidNonWhitelisted와 함께 쓰면 400으로 거부)
+      forbidNonWhitelisted: true, // DTO에 없는 속성이 있으면 400
       transform: true, // 요청 body를 DTO 인스턴스로 변환
     }),
   );
