@@ -11,6 +11,7 @@ import { PASSWORD_MAX_BYTES } from './password.constant';
 export class UpdateMemberDto extends PartialType(
   OmitType(CreateMemberDto, ['email', 'password'] as const),
 ) {
+  //TODO: 추후에 @Matches() 를 통해 정규식 검증 정책 필요
   @ApiPropertyOptional({
     example: 'password1234',
     description: 'newPassword를 보낼 때만 필수',
