@@ -17,7 +17,7 @@ export class CreateMemberDto {
   @ApiProperty({ example: 'heimdall@example.com' })
   @IsEmail()
   email: string;
-
+  //TODO: 추후에 @Matches() 를 통해 정규식 검증 정책 필요
   @ApiProperty({
     example: 'password1234',
     minLength: 8,
