@@ -1,7 +1,4 @@
-import {
-  DefaultNamingStrategy,
-  type NamingStrategyInterface,
-} from 'typeorm';
+import { DefaultNamingStrategy, type NamingStrategyInterface } from 'typeorm';
 import { snakeCase } from 'typeorm/util/StringUtils';
 
 export class SnakeNamingStrategy
@@ -18,9 +15,7 @@ export class SnakeNamingStrategy
     embeddedPrefixes: string[],
   ): string {
     return snakeCase(
-      embeddedPrefixes
-        .concat(customName ?? propertyName)
-        .join('_'),
+      embeddedPrefixes.concat(customName ?? propertyName).join('_'),
     );
   }
 
