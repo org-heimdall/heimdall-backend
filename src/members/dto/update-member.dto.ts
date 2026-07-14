@@ -21,7 +21,7 @@ export class UpdateMemberDto extends PartialType(
   @MinLength(1)
   @MaxByteLength(PASSWORD_MAX_BYTES)
   currentPassword?: string;
-
+  //TODO: 추후에 @Matches() 를 통해 정규식 검증 정책 필요
   @ApiPropertyOptional({
     example: 'newPassword1234',
     minLength: 8,
