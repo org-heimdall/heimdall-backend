@@ -3,9 +3,6 @@ import { KeynoteDto } from '../../communities/dto/keynote.dto';
 import { Member } from '../entities/member.entity';
 import { ApiProperty } from '@nestjs/swagger';
 
-/**
- * 회원 정보 응답 DTO. password는 절대 포함하지 않는다.
- */
 export class MemberDto {
   @ApiProperty({ example: '3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60' })
   memberId: string;
