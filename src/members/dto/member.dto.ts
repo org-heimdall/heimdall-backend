@@ -1,4 +1,4 @@
-import { CommunityMemberType } from '../../communities/communities.controller';
+import { CommunityMemberType } from '../../communities/communities.enums';
 import { KeynoteDto } from '../../communities/dto/keynote.dto';
 import { Member } from '../entities/member.entity';
 import { ApiProperty } from '@nestjs/swagger';
@@ -46,11 +46,36 @@ export class MemberDto {
 }
 
 export class MemberPreviewDto {
+  @ApiProperty({ example: '3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60' })
   memberId: string;
-  profileImageUrl: string;
+
+  @ApiProperty({
+    example: 'https://cdn.example.com/profile/1.png',
+    nullable: true,
+  })
+  profileImageUrl: string | null;
+
+  @ApiProperty({ example: '헤임달' })
   nickName: string;
+
+  @ApiProperty({ example: 0 })
   rating: number;
+
+  @ApiProperty({ enum: CommunityMemberType, example: CommunityMemberType.HOST })
   memberType: CommunityMemberType;
+
+  static from(
+    member: Member,
+    memberType: CommunityMemberType,
+  ): MemberPreviewDto {
+    return {
+      memberId: member.id,
+      profileImageUrl: member.profileImageUrl,
+      nickName: member.nickname,
+      rating: member.rating,
+      memberType,
+    };
+  }
 }
 
 export class MemberProfileDto {
