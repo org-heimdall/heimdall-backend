@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import { In, QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { LoginMemberDto } from './dto/login-member.dto';
@@ -108,6 +108,14 @@ export class MembersService {
 
     const saved = await this.memberRepository.save(member);
     return MemberDto.from(saved);
+  }
+
+  // id 목록으로 회원을 배치 조회한다(호스트 프로필/참여자 목록 조립에 재사용).
+  async findByIds(ids: string[]): Promise<Member[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return this.memberRepository.findBy({ id: In(ids) });
   }
 
   private isUniqueViolation(error: unknown): boolean {
