@@ -5,6 +5,7 @@ import { CommunitiesModule } from './communities/communities.module';
 import { MemberCommunitiesModule } from './member-communities/member-communities.module';
 import { MembersModule } from './members/members.module';
 import { DebatesModule } from './debates/debates.module';
+import { SeedModule } from './seed/seed.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SnakeNamingStrategy } from './common/naming/snake-naming.strategy';
@@ -36,7 +37,7 @@ import * as Joi from 'joi';
         password: config.get<string>('PG_PASSWORD'),
         database: config.get<string>('PG_DATABASE'),
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: true,
+        synchronize: config.get<string>('NODE_ENV') === 'development',
         namingStrategy: new SnakeNamingStrategy(),
       }),
     }),
@@ -44,6 +45,7 @@ import * as Joi from 'joi';
     MemberCommunitiesModule,
     MembersModule,
     DebatesModule,
+    SeedModule,
   ],
   controllers: [AppController],
   providers: [AppService],
