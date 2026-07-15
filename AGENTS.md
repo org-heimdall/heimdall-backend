@@ -10,6 +10,7 @@
 - 관련 로직이 삭제되는 것이 아닌 이상, 기존 테스트 코드를 삭제하지 마세요.
 - REST 엔드포인트 추가 시 Swagger 데코레이터(`@ApiOperation` 등)를 함께 작성해주세요.
 - DTO는 `class` + `class-validator`로 정의하고, 형식 검증은 DTO에서 처리해주세요.
+- 비즈니스 에러는 Nest 기본 예외(`NotFoundException` 등) 대신 **`GeneralException` + 도메인별 에러 코드 카탈로그**로 던지세요. 카탈로그는 `src/<domain>/exceptions/<domain>-error-code.ts`에 `as const satisfies Record<string, AppError>`로 정의하고(공통은 `src/common/exceptions/error-code.ts`), 응답 변환은 전역 `AllExceptionsFilter`가 담당합니다(응답 형식: `ProblemDetail`). 예시: `src/debates/exceptions/debate-error-code.ts`.
 
 ## TypeORM 1.0 — 코드 작성 전 필독
 - 이 프로젝트는 **TypeORM `^1.0.0`** (2026-05-19 릴리스, 약 5년 만의 첫 메이저)을 사용합니다.
