@@ -1,26 +1,322 @@
-import { Injectable } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { Community, CommunityState } from './entities/community.entity';
+import { Theme } from './entities/theme.entity';
+import { CommunityTheme } from './entities/community-theme.entity';
+import { CommunityFavorite } from './entities/community-favorite.entity';
+import { Theme as ThemeDto } from './dto/theme.dto';
+import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
 import { CreateCommunityDto } from './dto/create-community.dto';
-import { UpdateCommunityDto } from './dto/update-community.dto';
+import { KeynoteDto } from './dto/keynote.dto';
+import { CommunityMemberType, CommunitySort } from './communities.enums';
+import { MembersService } from '../members/members.service';
+import { Member } from '../members/entities/member.entity';
+import { MemberCommunitiesService } from '../member-communities/member-communities.service';
+import { MemberCommunity } from '../member-communities/entities/member-community.entity';
+import { MemberPreviewDto } from '../members/dto/member.dto';
 
 @Injectable()
 export class CommunitiesService {
-  create(createCommunityDto: CreateCommunityDto) {
-    return 'This action adds a new community';
+  constructor(
+    @InjectRepository(Community)
+    private readonly communityRepository: Repository<Community>,
+    @InjectRepository(Theme)
+    private readonly themeRepository: Repository<Theme>,
+    @InjectRepository(CommunityTheme)
+    private readonly communityThemeRepository: Repository<CommunityTheme>,
+    @InjectRepository(CommunityFavorite)
+    private readonly communityFavoriteRepository: Repository<CommunityFavorite>,
+    private readonly dataSource: DataSource,
+    private readonly memberCommunitiesService: MemberCommunitiesService,
+    private readonly membersService: MembersService,
+  ) {}
+
+  // 테마 목록 전체 조회
+  async findAllThemes(): Promise<ThemeDto[]> {
+    const themes = await this.themeRepository.find();
+    return themes.map((theme) => ThemeDto.from(theme));
   }
 
-  findAll() {
-    return `This action returns all communities`;
+  // 커뮤니티 목록 페이지 조회 (size+1개를 읽어 hasNext 판정)
+  async findAll(
+    page: number,
+    size: number,
+    sort?: CommunitySort,
+    themeId?: string,
+  ): Promise<CommunitySliceDto> {
+    const { column, direction } = this.resolveSort(sort);
+
+    const query = this.communityRepository
+      .createQueryBuilder('community')
+      .orderBy(column, direction)
+      .skip((page - 1) * size)
+      .take(size + 1);
+
+    if (themeId) {
+      query.innerJoin(
+        CommunityTheme,
+        'communityTheme',
+        'communityTheme.communityId = community.id AND communityTheme.themeId = :themeId',
+        { themeId },
+      );
+    }
+
+    const rows = await query.getMany();
+    const hasNext = rows.length > size;
+    const communities = hasNext ? rows.slice(0, size) : rows;
+
+    const totalCommunityCount = await this.countCommunities(themeId);
+    const hostMap = await this.loadMemberMap(communities.map((c) => c.hostId));
+
+    return {
+      totalCommunityCount,
+      communityPreviews: communities.map((community) =>
+        CommunityDto.from(community, hostMap.get(community.hostId)),
+      ),
+      pageInfo: { hasNext, page, size },
+    };
   }
 
-  findOne(id: string) {
-    return `This action returns a #${id} community`;
+  // 커뮤니티 생성: community + community_theme + 호스트 member_community(기조발언)를 한 트랜잭션으로 저장
+  async create(
+    createCommunityDto: CreateCommunityDto,
+    hostId: string,
+  ): Promise<CommunityDto> {
+    const host = await this.getMemberOrThrow(hostId);
+
+    const community = await this.dataSource.transaction(async (manager) => {
+      const communityRepository = manager.getRepository(Community);
+      const communityThemeRepository = manager.getRepository(CommunityTheme);
+
+      const saved = await communityRepository.save(
+        communityRepository.create({
+          state: CommunityState.WAITING,
+          hostId,
+          hostNickname: host.nickname,
+          memberCount: 1,
+          topic: createCommunityDto.topic,
+          communityLink: null,
+        }),
+      );
+
+      await communityThemeRepository.save(
+        communityThemeRepository.create({
+          communityId: saved.id,
+          themeId: createCommunityDto.themeId,
+        }),
+      );
+
+      await this.memberCommunitiesService.create(
+        hostId,
+        saved.id,
+        createCommunityDto.keynoteDto.opinion,
+        createCommunityDto.keynoteDto.reasons,
+        manager,
+      );
+
+      // TODO: debate 생성(roundCount 등)은 추후 구현
+      return saved;
+    });
+
+    return CommunityDto.from(community, host);
   }
 
-  update(id: string, updateCommunityDto: UpdateCommunityDto) {
-    return `This action updates a #${id} community`;
+  // 커뮤니티 삭제: host만 가능. 소유 리소스 + 참여 행을 한 트랜잭션으로 정리
+  async delete(communityId: string, currentMemberId: string): Promise<void> {
+    const community = await this.getCommunityOrThrow(communityId);
+    if (community.hostId !== currentMemberId) {
+      throw new ForbiddenException('커뮤니티 삭제 권한이 없습니다.');
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(CommunityTheme).delete({ communityId });
+      await manager.getRepository(CommunityFavorite).delete({ communityId });
+      await this.memberCommunitiesService.deleteByCommunity(
+        communityId,
+        manager,
+      );
+      await manager.getRepository(Community).delete({ id: communityId });
+    });
   }
 
-  remove(id: string) {
-    return `This action removes a #${id} community`;
+  // 커뮤니티 참여자 목록 조회 (memberType 분류 후 선택적 필터)
+  async findCommunityMembers(
+    communityId: string,
+    memberType?: CommunityMemberType,
+  ): Promise<MemberPreviewDto[]> {
+    const community = await this.getCommunityOrThrow(communityId);
+
+    const participants =
+      await this.memberCommunitiesService.findParticipants(communityId);
+    const memberMap = await this.loadMemberMap(
+      participants.map((p) => p.memberId),
+    );
+
+    const previews = participants
+      .map((participant) => {
+        const member = memberMap.get(participant.memberId);
+        // 회원이 삭제된 경우 등 방어적으로 제외
+        if (!member) {
+          return null;
+        }
+        return MemberPreviewDto.from(
+          member,
+          this.classifyMemberType(community, participant),
+        );
+      })
+      .filter((preview): preview is MemberPreviewDto => preview !== null);
+
+    return memberType
+      ? previews.filter((preview) => preview.memberType === memberType)
+      : previews;
+  }
+
+  // 특정 참여자의 기조 발언 조회 (미작성이면 404)
+  async getMemberKeynote(
+    communityId: string,
+    memberId: string,
+  ): Promise<KeynoteDto> {
+    const participant = await this.memberCommunitiesService.findOne(
+      memberId,
+      communityId,
+    );
+    if (!participant || participant.opinion === null) {
+      throw new NotFoundException('기조 발언을 찾을 수 없습니다.');
+    }
+    return {
+      opinion: participant.opinion,
+      reasons: participant.reasons ?? [],
+    };
+  }
+
+  // 나의 기조 발언 작성/수정 (없으면 참여+작성)
+  async upsertMyKeynote(
+    communityId: string,
+    memberId: string,
+    keynoteDto: KeynoteDto,
+  ): Promise<KeynoteDto> {
+    await this.getCommunityOrThrow(communityId);
+
+    const saved = await this.memberCommunitiesService.upsertKeynote(
+      memberId,
+      communityId,
+      keynoteDto.opinion,
+      keynoteDto.reasons,
+    );
+    return {
+      opinion: saved.opinion ?? keynoteDto.opinion,
+      reasons: saved.reasons ?? [],
+    };
+  }
+
+  // 즐겨찾기 추가: 기존 row가 있으면 isFavored=true 토글, 없으면 생성
+  async addMyFavorite(communityId: string, memberId: string): Promise<void> {
+    await this.getCommunityOrThrow(communityId);
+
+    const existing = await this.communityFavoriteRepository.findOneBy({
+      memberId,
+      communityId,
+    });
+    if (existing) {
+      if (!existing.isFavored) {
+        existing.isFavored = true;
+        await this.communityFavoriteRepository.save(existing);
+      }
+      return;
+    }
+
+    await this.communityFavoriteRepository.save(
+      this.communityFavoriteRepository.create({
+        memberId,
+        communityId,
+        isFavored: true,
+      }),
+    );
+  }
+
+  // 즐겨찾기 삭제: 기존 row를 isFavored=false로 토글 (없으면 no-op)
+  async deleteMyFavorite(communityId: string, memberId: string): Promise<void> {
+    const existing = await this.communityFavoriteRepository.findOneBy({
+      memberId,
+      communityId,
+    });
+    if (existing && existing.isFavored) {
+      existing.isFavored = false;
+      await this.communityFavoriteRepository.save(existing);
+    }
+  }
+
+  // 정렬 기준을 쿼리 컬럼/방향으로 매핑 (기본: 최신순)
+  private resolveSort(sort?: CommunitySort): {
+    column: string;
+    direction: 'ASC' | 'DESC';
+  } {
+    switch (sort) {
+      case CommunitySort.MEMBER_ASC:
+        return { column: 'community.memberCount', direction: 'ASC' };
+      case CommunitySort.MEMBER_DESC:
+        return { column: 'community.memberCount', direction: 'DESC' };
+      case CommunitySort.CREATED_AT_ASC:
+        return { column: 'community.createdAt', direction: 'ASC' };
+      case CommunitySort.CREATED_AT_DESC:
+      default:
+        return { column: 'community.createdAt', direction: 'DESC' };
+    }
+  }
+
+  // themeId 필터를 반영한 전체 커뮤니티 수
+  private async countCommunities(themeId?: string): Promise<number> {
+    const query = this.communityRepository.createQueryBuilder('community');
+    if (themeId) {
+      query.innerJoin(
+        CommunityTheme,
+        'communityTheme',
+        'communityTheme.communityId = community.id AND communityTheme.themeId = :themeId',
+        { themeId },
+      );
+    }
+    return query.getCount();
+  }
+
+  // 참여자를 HOST / KEYNOTE_MEMBER / NORMAL_MEMBER로 분류
+  private classifyMemberType(
+    community: Community,
+    participant: MemberCommunity,
+  ): CommunityMemberType {
+    if (participant.memberId === community.hostId) {
+      return CommunityMemberType.HOST;
+    }
+    return participant.opinion !== null
+      ? CommunityMemberType.KEYNOTE_MEMBER
+      : CommunityMemberType.NORMAL_MEMBER;
+  }
+
+  // id 목록으로 회원을 배치 조회해 id→Member 맵으로 반환
+  private async loadMemberMap(ids: string[]): Promise<Map<string, Member>> {
+    const members = await this.membersService.findByIds(ids);
+    return new Map(members.map((member) => [member.id, member]));
+  }
+
+  private async getCommunityOrThrow(communityId: string): Promise<Community> {
+    const community = await this.communityRepository.findOneBy({
+      id: communityId,
+    });
+    if (!community) {
+      throw new NotFoundException('커뮤니티를 찾을 수 없습니다.');
+    }
+    return community;
+  }
+
+  private async getMemberOrThrow(memberId: string): Promise<Member> {
+    const [member] = await this.membersService.findByIds([memberId]);
+    if (!member) {
+      throw new NotFoundException('회원을 찾을 수 없습니다.');
+    }
+    return member;
   }
 }
