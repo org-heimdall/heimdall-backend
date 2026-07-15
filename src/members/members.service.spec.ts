@@ -17,6 +17,7 @@ describe('MembersService', () => {
     create: jest.Mock;
     save: jest.Mock;
     findOneBy: jest.Mock;
+    findBy: jest.Mock;
   };
 
   const signUpDto = {
@@ -47,6 +48,7 @@ describe('MembersService', () => {
       create: jest.fn((entity: Member) => entity),
       save: jest.fn(),
       findOneBy: jest.fn(),
+      findBy: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -235,6 +237,28 @@ describe('MembersService', () => {
       });
 
       expect(result).not.toHaveProperty('password');
+    });
+  });
+
+  describe('findByIds', () => {
+    it('빈 배열이면 레포지토리를 조회하지 않고 빈 배열을 반환한다', async () => {
+      const result = await service.findByIds([]);
+
+      expect(result).toEqual([]);
+      expect(repository.findBy).not.toHaveBeenCalled();
+    });
+
+    it('id 목록으로 조회한 회원들을 반환한다', async () => {
+      const members = [
+        { ...(await buildMember()), id: 'id-1' },
+        { ...(await buildMember()), id: 'id-2' },
+      ];
+      repository.findBy.mockResolvedValue(members);
+
+      const result = await service.findByIds(['id-1', 'id-2']);
+
+      expect(result).toBe(members);
+      expect(repository.findBy).toHaveBeenCalledTimes(1);
     });
   });
 });
