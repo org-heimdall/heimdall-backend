@@ -141,38 +141,54 @@ export class SeedService implements OnApplicationBootstrap {
     const communityThemeRepository = manager.getRepository(CommunityTheme);
     const memberCommunityRepository = manager.getRepository(MemberCommunity);
 
-    const [host, opponent, participant] = members;
+    const [messi, ronaldo, mbappe, yamal, haaland] = members;
     const [politics, economy] = themes;
 
+    // opinion !== null → KEYNOTE_MEMBER, null → NORMAL_MEMBER 로 분류된다.
+    // 호스트는 실제 커뮤니티 생성 흐름과 동일하게 자신의 기조 발언과 함께 참여자로 포함한다.
     const communitySeeds = [
       {
         topic: '기본소득 도입에 찬성하는가',
         state: CommunityState.ACTIVE,
-        host,
+        host: messi,
+        hostKeynote: {
+          opinion: '찬성',
+          reasons: ['기본 생계 보장', '소득 양극화 완화'],
+        },
         themes: [politics, economy],
-        participants: [
+        others: [
           {
-            member: opponent,
+            member: ronaldo,
             opinion: '반대',
             reasons: ['재원 부담', '근로 의욕 저하 우려'],
           },
           {
-            member: participant,
+            member: mbappe,
             opinion: '찬성',
-            reasons: ['소득 양극화 완화'],
+            reasons: ['소비 진작 효과'],
+          },
+          // opinion 미작성 → NORMAL_MEMBER
+          {
+            member: yamal,
+            opinion: null,
+            reasons: null,
           },
         ],
       },
       {
         topic: '주 4일제 전면 시행이 필요한가',
         state: CommunityState.WAITING,
-        host: opponent,
+        host: ronaldo,
+        hostKeynote: {
+          opinion: '찬성',
+          reasons: ['생산성 향상', '워라밸 개선'],
+        },
         themes: [economy],
-        participants: [
+        others: [
           {
-            member: host,
-            opinion: '찬성',
-            reasons: ['생산성 향상', '워라밸 개선'],
+            member: haaland,
+            opinion: '반대',
+            reasons: ['인건비 부담'],
           },
         ],
       },
@@ -186,12 +202,22 @@ export class SeedService implements OnApplicationBootstrap {
         continue;
       }
 
+      // 호스트를 첫 참여자로 두어 member_community에 반드시 행이 생기게 한다.
+      const participants = [
+        {
+          member: seed.host,
+          opinion: seed.hostKeynote.opinion,
+          reasons: seed.hostKeynote.reasons,
+        },
+        ...seed.others,
+      ];
+
       const community = await communityRepository.save(
         communityRepository.create({
           state: seed.state,
           hostId: seed.host.id,
           hostNickname: seed.host.nickname,
-          memberCount: seed.participants.length + 1,
+          memberCount: participants.length,
           topic: seed.topic,
           communityLink: null,
         }),
@@ -207,7 +233,7 @@ export class SeedService implements OnApplicationBootstrap {
       );
 
       await memberCommunityRepository.save(
-        seed.participants.map((participant) =>
+        participants.map((participant) =>
           memberCommunityRepository.create({
             memberId: participant.member.id,
             communityId: community.id,
