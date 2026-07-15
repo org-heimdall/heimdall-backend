@@ -1,4 +1,9 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 
 export enum CommunityState {
   WAITING = 'WAITING',
@@ -28,4 +33,7 @@ export class Community {
 
   @Column({ type: 'varchar', nullable: true })
   communityLink: string | null;
+
+  @CreateDateColumn()
+  createdAt: Date;
 }
