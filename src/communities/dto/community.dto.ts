@@ -25,7 +25,10 @@ export class CommunityDto {
   @ApiProperty({ nullable: true, description: 'debate 미구현으로 현재 null' })
   opponentProfileImageUrl: string | null;
 
-  @ApiProperty({ example: 0, description: 'debate 미구현으로 현재 placeholder' })
+  @ApiProperty({
+    example: 0,
+    description: 'debate 미구현으로 현재 placeholder',
+  })
   debateTotalMinutes: number;
 
   static from(community: Community, host?: Member | null): CommunityDto {
