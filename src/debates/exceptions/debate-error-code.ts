@@ -20,6 +20,6 @@ export const DebateErrorCode = {
     httpStatus: HttpStatus.CONFLICT,
     code: 'DEBATE.NOT_YOUR_TURN',
     title: 'Not Your Turn',
-    detail: '나의 발언 턴이 아닙니다.',
+    detail: '현재 발언할 차례가 아닙니다.',
   },
 } as const satisfies Record<string, AppError>;
