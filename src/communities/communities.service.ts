@@ -208,8 +208,9 @@ export class CommunitiesService {
       keynoteDto.opinion,
       keynoteDto.reasons,
     );
+
     return {
-      opinion: saved.opinion ?? keynoteDto.opinion,
+      opinion: saved.opinion!,
       reasons: saved.reasons ?? [],
     };
   }
