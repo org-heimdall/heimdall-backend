@@ -63,12 +63,34 @@ const statusToCommonError: Record<number, AppError | undefined> = {
   [HttpStatus.FORBIDDEN]: ErrorCode.FORBIDDEN,
   [HttpStatus.NOT_FOUND]: ErrorCode.NOT_FOUND,
   [HttpStatus.CONFLICT]: ErrorCode.CONFLICT,
+  [HttpStatus.INTERNAL_SERVER_ERROR]: ErrorCode.INTERNAL_SERVER_ERROR,
 };
 
 // GeneralException이 아닌 HttpException의 status를 공통 에러 코드로 변환
 function mapStatusToCommonError(status: number): AppError {
-  return (
-    statusToCommonError[status] ??
-    (status >= 500 ? ErrorCode.INTERNAL_SERVER_ERROR : ErrorCode.INVALID_INPUT)
-  );
+  return statusToCommonError[status] ?? fallbackHttpError(status);
+}
+
+// 카탈로그에 없는 status용 일반 오류 합성
+function fallbackHttpError(status: number): AppError {
+  return {
+    httpStatus: status,
+    code: 'COMMON.HTTP_ERROR',
+    title: httpStatusTitle(status),
+    detail:
+      status >= 500
+        ? '서버가 요청을 처리하지 못했습니다.'
+        : '요청을 처리할 수 없습니다.',
+  };
+}
+
+// HttpStatus enum 역조회 이름을 제목으로 변환 (예: PAYLOAD_TOO_LARGE → Payload Too Large)
+function httpStatusTitle(status: number): string {
+  const name: string | undefined = HttpStatus[status];
+  if (!name) return 'HTTP Error';
+  return name
+    .toLowerCase()
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
