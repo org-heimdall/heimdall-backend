@@ -70,7 +70,7 @@ export class CommunitiesService {
     const hasNext = rows.length > size;
     const communities = hasNext ? rows.slice(0, size) : rows;
 
-    const totalCommunityCount = await this.countCommunities(themeId);
+    const totalCommunityCount = await query.getCount();
     const hostMap = await this.loadMemberMap(communities.map((c) => c.hostId));
 
     return {
@@ -268,20 +268,6 @@ export class CommunitiesService {
       default:
         return { column: 'community.createdAt', direction: 'DESC' };
     }
-  }
-
-  // themeId 필터를 반영한 전체 커뮤니티 수
-  private async countCommunities(themeId?: string): Promise<number> {
-    const query = this.communityRepository.createQueryBuilder('community');
-    if (themeId) {
-      query.innerJoin(
-        CommunityTheme,
-        'communityTheme',
-        'communityTheme.communityId = community.id AND communityTheme.themeId = :themeId',
-        { themeId },
-      );
-    }
-    return query.getCount();
   }
 
   // 참여자를 HOST / KEYNOTE_MEMBER / NORMAL_MEMBER로 분류
