@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { validationExceptionFactory } from './common/exceptions/validation-exception.factory';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -11,6 +12,7 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true, // DTO에 없는 속성이 있으면 400
       transform: true, // 요청 body를 DTO 인스턴스로 변환
+      exceptionFactory: validationExceptionFactory, // 검증 오류를 ProblemDetail 형식으로 변환
     }),
   );
 
@@ -28,4 +30,4 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+void bootstrap();
