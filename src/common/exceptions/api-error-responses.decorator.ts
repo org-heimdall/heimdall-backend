@@ -1,5 +1,5 @@
 import { applyDecorators } from '@nestjs/common';
-import { ApiResponse } from '@nestjs/swagger';
+import { ApiExtraModels, ApiResponse, getSchemaPath } from '@nestjs/swagger';
 import { AppError } from './app-error.interface';
 import { ProblemDetail } from './problem-detail.dto';
 
@@ -15,11 +15,16 @@ export function ApiErrorResponses(...errors: AppError[]) {
   }
 
   return applyDecorators(
+    ApiExtraModels(ProblemDetail),
     ...[...byStatus.entries()].map(([status, group]) =>
       ApiResponse({
         status,
         description: group.map((e) => `${e.detail} (${e.code})`).join(' | '),
-        type: ProblemDetail,
+        content: {
+          'application/problem+json': {
+            schema: { $ref: getSchemaPath(ProblemDetail) },
+          },
+        },
       }),
     ),
   );
