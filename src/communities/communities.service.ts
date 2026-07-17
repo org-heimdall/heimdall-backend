@@ -183,9 +183,14 @@ export class CommunitiesService {
       memberId,
       communityId,
     );
-    if (!participant || participant.opinion === null) {
+    if (!participant) {
+      throw new NotFoundException('참여자를 찾을 수 없습니다.');
+    }
+
+    if (participant.opinion === null) {
       throw new NotFoundException('기조 발언을 찾을 수 없습니다.');
     }
+
     return {
       opinion: participant.opinion,
       reasons: participant.reasons ?? [],
