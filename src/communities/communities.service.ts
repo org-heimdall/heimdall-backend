@@ -27,8 +27,6 @@ export class CommunitiesService {
     private readonly communityRepository: Repository<Community>,
     @InjectRepository(Theme)
     private readonly themeRepository: Repository<Theme>,
-    @InjectRepository(CommunityTheme)
-    private readonly communityThemeRepository: Repository<CommunityTheme>,
     @InjectRepository(CommunityFavorite)
     private readonly communityFavoriteRepository: Repository<CommunityFavorite>,
     private readonly dataSource: DataSource,
