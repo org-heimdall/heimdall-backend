@@ -50,7 +50,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
       problem = ProblemDetail.of(appError, appError.detail, instance);
     }
 
-    response.status(problem.status).json(problem);
+    // RFC 9457: Problem Details 응답은 application/problem+json
+    response
+      .status(problem.status)
+      .type('application/problem+json')
+      .json(problem);
   }
 }
 
