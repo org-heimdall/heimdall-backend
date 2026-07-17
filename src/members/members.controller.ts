@@ -8,20 +8,18 @@ import {
   Post,
 } from '@nestjs/common';
 import {
-  ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
-  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { ProblemDetail } from '../common/exceptions/problem-detail.dto';
+import { ApiErrorResponses } from '../common/exceptions/api-error-responses.decorator';
 import { MembersService } from './members.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { LoginMemberDto } from './dto/login-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
+import { MemberErrorCode } from './exceptions/member-error-code';
 
 @Controller('api/members')
 export class MembersController {
@@ -32,10 +30,7 @@ export class MembersController {
     description: '이메일과 비밀번호로 회원을 생성하고 memberId를 반환한다.',
   })
   @ApiCreatedResponse({ description: '회원가입 성공', type: MemberDto })
-  @ApiConflictResponse({
-    description: '이미 가입된 이메일 (MEMBER.EMAIL_ALREADY_EXISTS)',
-    type: ProblemDetail,
-  })
+  @ApiErrorResponses(MemberErrorCode.EMAIL_ALREADY_EXISTS)
   @Post('/signup')
   async signUp(@Body() request: CreateMemberDto): Promise<MemberDto> {
     return this.membersService.signUp(request);
@@ -46,10 +41,7 @@ export class MembersController {
     description: '이메일과 비밀번호를 검증하고 memberId를 반환한다.',
   })
   @ApiOkResponse({ description: '로그인 성공', type: MemberDto })
-  @ApiUnauthorizedResponse({
-    description: '이메일 또는 비밀번호 불일치 (MEMBER.INVALID_CREDENTIALS)',
-    type: ProblemDetail,
-  })
+  @ApiErrorResponses(MemberErrorCode.INVALID_CREDENTIALS)
   @Post('/login')
   @HttpCode(200)
   async login(@Body() request: LoginMemberDto): Promise<MemberDto> {
@@ -77,14 +69,10 @@ export class MembersController {
       'currentPassword를 보내야 한다. email 변경은 지원하지 않는다.',
   })
   @ApiOkResponse({ description: '수정 성공', type: MemberDto })
-  @ApiNotFoundResponse({
-    description: '존재하지 않는 회원 (MEMBER.NOT_FOUND)',
-    type: ProblemDetail,
-  })
-  @ApiUnauthorizedResponse({
-    description: '현재 비밀번호 불일치 (MEMBER.INVALID_CURRENT_PASSWORD)',
-    type: ProblemDetail,
-  })
+  @ApiErrorResponses(
+    MemberErrorCode.NOT_FOUND,
+    MemberErrorCode.INVALID_CURRENT_PASSWORD,
+  )
   @Patch('/:memberId')
   async update(
     @Param('memberId', ParseUUIDPipe) memberId: string,
