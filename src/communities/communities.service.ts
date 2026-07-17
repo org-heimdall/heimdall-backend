@@ -85,7 +85,7 @@ export class CommunitiesService {
     createCommunityDto: CreateCommunityDto,
     hostId: string,
   ): Promise<CommunityDto> {
-    const host = await this.getMemberOrThrow(hostId);
+    const host = await this.membersService.findOneOrThrow(hostId);
 
     const community = await this.dataSource.transaction(async (manager) => {
       const communityRepository = manager.getRepository(Community);
@@ -300,13 +300,5 @@ export class CommunitiesService {
       throw new NotFoundException('커뮤니티를 찾을 수 없습니다.');
     }
     return community;
-  }
-
-  private async getMemberOrThrow(memberId: string): Promise<Member> {
-    const [member] = await this.membersService.findByIds([memberId]);
-    if (!member) {
-      throw new NotFoundException('회원을 찾을 수 없습니다.');
-    }
-    return member;
   }
 }

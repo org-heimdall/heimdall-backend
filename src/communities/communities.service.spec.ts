@@ -25,7 +25,7 @@ describe('CommunitiesService', () => {
     save: jest.Mock;
   };
   let dataSource: { transaction: jest.Mock };
-  let membersService: { findByIds: jest.Mock };
+  let membersService: { findByIds: jest.Mock; findOneOrThrow: jest.Mock };
   let memberCommunitiesService: {
     create: jest.Mock;
     deleteByCommunity: jest.Mock;
@@ -100,7 +100,7 @@ describe('CommunitiesService', () => {
       transaction: jest.fn((cb: (m: typeof manager) => unknown) => cb(manager)),
     };
 
-    membersService = { findByIds: jest.fn() };
+    membersService = { findByIds: jest.fn(), findOneOrThrow: jest.fn() };
     memberCommunitiesService = {
       create: jest.fn(),
       deleteByCommunity: jest.fn(),
@@ -203,7 +203,7 @@ describe('CommunitiesService', () => {
 
     it('트랜잭션으로 community/community_theme/호스트 keynote를 생성한다', async () => {
       const host = buildMember({ id: 'host-uuid', nickname: '호스트' });
-      membersService.findByIds.mockResolvedValue([host]);
+      membersService.findOneOrThrow.mockResolvedValue(host);
 
       const result = await service.create(dto, 'host-uuid');
 
@@ -231,7 +231,9 @@ describe('CommunitiesService', () => {
     });
 
     it('호스트 회원이 없으면 NotFoundException을 던진다', async () => {
-      membersService.findByIds.mockResolvedValue([]);
+      membersService.findOneOrThrow.mockRejectedValue(
+        new NotFoundException('회원을 찾을 수 없습니다.'),
+      );
 
       await expect(service.create(dto, 'host-uuid')).rejects.toThrow(
         NotFoundException,

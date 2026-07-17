@@ -240,6 +240,26 @@ describe('MembersService', () => {
     });
   });
 
+  describe('findOneOrThrow', () => {
+    it('존재하는 회원을 반환한다', async () => {
+      const member = await buildMember();
+      repository.findOneBy.mockResolvedValue(member);
+
+      const result = await service.findOneOrThrow('member-uuid');
+
+      expect(result).toBe(member);
+      expect(repository.findOneBy).toHaveBeenCalledWith({ id: 'member-uuid' });
+    });
+
+    it('존재하지 않는 회원이면 NotFoundException을 던진다', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.findOneOrThrow('없는-uuid')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('findByIds', () => {
     it('빈 배열이면 레포지토리를 조회하지 않고 빈 배열을 반환한다', async () => {
       const result = await service.findByIds([]);
