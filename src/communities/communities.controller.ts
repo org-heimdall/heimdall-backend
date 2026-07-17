@@ -24,7 +24,7 @@ import {
 import { CommunitiesService } from './communities.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
-import { Theme } from './dto/theme.dto';
+import { ThemeDto } from './dto/theme.dto';
 import { MemberPreviewDto } from '../members/dto/member.dto';
 import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
@@ -39,9 +39,9 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '테마 목록 전체 조회',
   })
-  @ApiOkResponse({ type: [Theme] })
+  @ApiOkResponse({ type: [ThemeDto] })
   @Get('/themes')
-  async findAllThemes(): Promise<Theme[]> {
+  async findAllThemes(): Promise<ThemeDto[]> {
     return this.communitiesService.findAllThemes();
   }
 

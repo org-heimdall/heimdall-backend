@@ -9,7 +9,7 @@ import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
 import { CommunityTheme } from './entities/community-theme.entity';
 import { CommunityFavorite } from './entities/community-favorite.entity';
-import { Theme as ThemeDto } from './dto/theme.dto';
+import { ThemeDto } from './dto/theme.dto';
 import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { KeynoteDto } from './dto/keynote.dto';
