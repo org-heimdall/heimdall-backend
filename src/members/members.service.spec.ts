@@ -10,6 +10,7 @@ import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { Member } from './entities/member.entity';
+import { MemberErrorCode } from './exceptions/member-error-code';
 
 describe('MembersService', () => {
   let service: MembersService;
@@ -98,14 +99,14 @@ describe('MembersService', () => {
       expect(result).not.toHaveProperty('password');
     });
 
-    it('이메일이 중복되면 ConflictException을 던진다', async () => {
+    it('이메일이 중복되면 EMAIL_ALREADY_EXISTS 에러를 던진다', async () => {
       repository.save.mockRejectedValue(
         new QueryFailedError('INSERT', [], pgDriverError('23505')),
       );
 
-      await expect(service.signUp(signUpDto)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(service.signUp(signUpDto)).rejects.toMatchObject({
+        appError: MemberErrorCode.EMAIL_ALREADY_EXISTS,
+      });
     });
 
     it('unique 위반이 아닌 DB 에러는 그대로 전파한다', async () => {
@@ -129,20 +130,24 @@ describe('MembersService', () => {
       expect(result).not.toHaveProperty('password');
     });
 
-    it('존재하지 않는 이메일이면 UnauthorizedException을 던진다', async () => {
+    it('존재하지 않는 이메일이면 INVALID_CREDENTIALS 에러를 던진다', async () => {
       repository.findOneBy.mockResolvedValue(null);
 
       await expect(
         service.login({ email: 'nobody@example.com', password: 'whatever12' }),
-      ).rejects.toThrow(UnauthorizedException);
+      ).rejects.toMatchObject({
+        appError: MemberErrorCode.INVALID_CREDENTIALS,
+      });
     });
 
-    it('비밀번호가 틀리면 UnauthorizedException을 던진다', async () => {
+    it('비밀번호가 틀리면 INVALID_CREDENTIALS 에러를 던진다', async () => {
       repository.findOneBy.mockResolvedValue(await buildMember());
 
       await expect(
         service.login({ email: signUpDto.email, password: 'wrongpassword' }),
-      ).rejects.toThrow(UnauthorizedException);
+      ).rejects.toMatchObject({
+        appError: MemberErrorCode.INVALID_CREDENTIALS,
+      });
     });
   });
 
@@ -167,12 +172,12 @@ describe('MembersService', () => {
       expect(result.gender).toBeNull();
     });
 
-    it('존재하지 않는 회원이면 NotFoundException을 던진다', async () => {
+    it('존재하지 않는 회원이면 NOT_FOUND 에러를 던진다', async () => {
       repository.findOneBy.mockResolvedValue(null);
 
       await expect(
         service.update('없는-uuid', { nickname: '새닉네임' }),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toMatchObject({ appError: MemberErrorCode.NOT_FOUND });
       expect(repository.save).not.toHaveBeenCalled();
     });
 
@@ -191,7 +196,7 @@ describe('MembersService', () => {
       ).resolves.toBe(true);
     });
 
-    it('currentPassword가 틀리면 UnauthorizedException을 던지고 저장하지 않는다', async () => {
+    it('currentPassword가 틀리면 INVALID_CURRENT_PASSWORD 에러를 던지고 저장하지 않는다', async () => {
       repository.findOneBy.mockResolvedValue(await buildMember());
 
       await expect(
@@ -199,7 +204,9 @@ describe('MembersService', () => {
           currentPassword: 'wrongpassword',
           newPassword: 'brandNewPassword',
         }),
-      ).rejects.toThrow(UnauthorizedException);
+      ).rejects.toMatchObject({
+        appError: MemberErrorCode.INVALID_CURRENT_PASSWORD,
+      });
       expect(repository.save).not.toHaveBeenCalled();
     });
 
