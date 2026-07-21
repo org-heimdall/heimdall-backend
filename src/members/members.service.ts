@@ -1,24 +1,19 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { GeneralException } from '../common/exceptions/general.exception';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { LoginMemberDto } from './dto/login-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
 import { Member } from './entities/member.entity';
+import { MemberErrorCode } from './exceptions/member-error-code';
 
 const BCRYPT_SALT_ROUNDS = 10;
 
 /** PostgreSQL unique_violation */
 const PG_UNIQUE_VIOLATION = '23505';
-
-const INVALID_CREDENTIALS = '이메일 또는 비밀번호가 올바르지 않습니다.';
 
 /**
  * 존재하지 않는 이메일로 로그인해도 실제 회원과 동일한 bcrypt 비용을 치르게 하는 더미 해시.
@@ -54,7 +49,7 @@ export class MembersService {
       return MemberDto.from(saved);
     } catch (error) {
       if (this.isUniqueViolation(error)) {
-        throw new ConflictException('이미 가입된 이메일입니다.');
+        throw new GeneralException(MemberErrorCode.EMAIL_ALREADY_EXISTS);
       }
       throw error;
     }
@@ -71,7 +66,7 @@ export class MembersService {
 
     // 이메일 미존재/비밀번호 불일치 모두 같은 예외로 처리해 존재 여부가 드러나지 않게 한다.
     if (!member || !matches) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      throw new GeneralException(MemberErrorCode.INVALID_CREDENTIALS);
     }
 
     return MemberDto.from(member);
@@ -90,7 +85,7 @@ export class MembersService {
       // DTO의 @ValidateIf가 newPassword와 currentPassword의 동반 전달을 보장한다.
       const matches = await bcrypt.compare(currentPassword!, member.password);
       if (!matches) {
-        throw new UnauthorizedException('현재 비밀번호가 올바르지 않습니다.');
+        throw new GeneralException(MemberErrorCode.INVALID_CURRENT_PASSWORD);
       }
       member.password = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
     }
