@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsDefined,
   IsInt,
   IsString,
   IsUUID,
@@ -28,6 +29,7 @@ export class CreateCommunityDto {
   roundCount: number;
 
   @ApiProperty({ type: KeynoteDto })
+  @IsDefined()
   @ValidateNested()
   @Type(() => KeynoteDto)
   keynoteDto: KeynoteDto;
