@@ -230,6 +230,8 @@ export class CommunitiesService {
 
   // 즐겨찾기 삭제: 단일 UPDATE로 isFavored=false 처리 (row가 없으면 no-op)
   async deleteMyFavorite(communityId: string, memberId: string): Promise<void> {
+    await this.getCommunityOrThrow(communityId);
+
     await this.communityFavoriteRepository.update(
       { memberId, communityId },
       { isFavored: false },

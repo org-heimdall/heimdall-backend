@@ -384,6 +384,10 @@ describe('CommunitiesService', () => {
   });
 
   describe('deleteMyFavorite (즐겨찾기)', () => {
+    beforeEach(() => {
+      communityRepository.findOneBy.mockResolvedValue({ id: 'community-uuid' });
+    });
+
     // 단일 UPDATE로 isFavored=false (row가 없으면 affected=0 → no-op)
     it('isFavored=false로 단일 update한다', async () => {
       await service.deleteMyFavorite('community-uuid', 'member-uuid');
@@ -392,6 +396,15 @@ describe('CommunitiesService', () => {
         { memberId: 'member-uuid', communityId: 'community-uuid' },
         { isFavored: false },
       );
+    });
+
+    it('커뮤니티가 없으면 NotFoundException을 던지고 update하지 않는다', async () => {
+      communityRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.deleteMyFavorite('community-uuid', 'member-uuid'),
+      ).rejects.toThrow(NotFoundException);
+      expect(communityFavoriteRepository.update).not.toHaveBeenCalled();
     });
   });
 });
