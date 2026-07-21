@@ -55,7 +55,8 @@ export class MemberCommunitiesService {
       'memberId',
       'communityId',
     ]);
-    return this.repo().findOneByOrFail({ memberId, communityId });
+    // 재조회 없이 방금 저장한 값을 그대로 반환해, 동시 요청이 응답을 덮어쓰는 창을 제거한다.
+    return this.repo().create({ memberId, communityId, opinion, reasons });
   }
 
   // 커뮤니티에 속한 모든 참여 행 삭제(커뮤니티 삭제 시). 삭제 트랜잭션에서 manager로 참여한다.
