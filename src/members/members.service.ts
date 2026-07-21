@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import { In, QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CreateMemberDto } from './dto/create-member.dto';
@@ -76,10 +76,7 @@ export class MembersService {
     memberId: string,
     updateMemberDto: UpdateMemberDto,
   ): Promise<MemberDto> {
-    const member = await this.memberRepository.findOneBy({ id: memberId });
-    if (!member) {
-      throw new GeneralException(MemberErrorCode.NOT_FOUND);
-    }
+    const member = await this.findOneOrThrow(memberId);
 
     const { currentPassword, newPassword, ...profile } = updateMemberDto;
 
@@ -103,6 +100,23 @@ export class MembersService {
 
     const saved = await this.memberRepository.save(member);
     return MemberDto.from(saved);
+  }
+
+  // id로 회원을 조회하고, 없으면 NotFoundException을 던진다.
+  async findOneOrThrow(memberId: string): Promise<Member> {
+    const member = await this.memberRepository.findOneBy({ id: memberId });
+    if (!member) {
+      throw new NotFoundException('회원을 찾을 수 없습니다.');
+    }
+    return member;
+  }
+
+  // id 목록으로 회원을 배치 조회한다(호스트 프로필/참여자 목록 조립에 재사용).
+  async findByIds(ids: string[]): Promise<Member[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    return this.memberRepository.findBy({ id: In(ids) });
   }
 
   private isUniqueViolation(error: unknown): boolean {

@@ -1,6 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { QueryFailedError } from 'typeorm';
+import {
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { In, QueryFailedError } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
@@ -13,6 +18,7 @@ describe('MembersService', () => {
     create: jest.Mock;
     save: jest.Mock;
     findOneBy: jest.Mock;
+    findBy: jest.Mock;
   };
 
   const signUpDto = {
@@ -43,6 +49,7 @@ describe('MembersService', () => {
       create: jest.fn((entity: Member) => entity),
       save: jest.fn(),
       findOneBy: jest.fn(),
+      findBy: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -237,6 +244,51 @@ describe('MembersService', () => {
       });
 
       expect(result).not.toHaveProperty('password');
+    });
+  });
+
+  describe('findOneOrThrow', () => {
+    it('존재하는 회원을 반환한다', async () => {
+      const member = await buildMember();
+      repository.findOneBy.mockResolvedValue(member);
+
+      const result = await service.findOneOrThrow('member-uuid');
+
+      expect(result).toBe(member);
+      expect(repository.findOneBy).toHaveBeenCalledWith({ id: 'member-uuid' });
+    });
+
+    it('존재하지 않는 회원이면 NotFoundException을 던진다', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.findOneOrThrow('없는-uuid')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('findByIds', () => {
+    it('빈 배열이면 레포지토리를 조회하지 않고 빈 배열을 반환한다', async () => {
+      const result = await service.findByIds([]);
+
+      expect(result).toEqual([]);
+      expect(repository.findBy).not.toHaveBeenCalled();
+    });
+
+    it('id 목록으로 조회한 회원들을 반환한다', async () => {
+      const members = [
+        { ...(await buildMember()), id: 'id-1' },
+        { ...(await buildMember()), id: 'id-2' },
+      ];
+      repository.findBy.mockResolvedValue(members);
+
+      const result = await service.findByIds(['id-1', 'id-2']);
+
+      expect(result).toBe(members);
+      expect(repository.findBy).toHaveBeenCalledTimes(1);
+      expect(repository.findBy).toHaveBeenCalledWith({
+        id: In(['id-1', 'id-2']),
+      });
     });
   });
 });
