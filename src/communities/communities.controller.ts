@@ -71,7 +71,7 @@ export class CommunitiesController {
     @Query('page', new DefaultValuePipe(1), ParsePositiveIntPipe) page: number,
     @Query('size', new DefaultValuePipe(10), ParsePositiveIntPipe) size: number,
     @Query('sort') sort?: CommunitySort,
-    @Query('themeId') themeId?: string,
+    @Query('themeId', new ParseUUIDPipe({ optional: true })) themeId?: string,
   ): Promise<CommunitySliceDto> {
     return this.communitiesService.findAll(page, size, sort, themeId);
   }
