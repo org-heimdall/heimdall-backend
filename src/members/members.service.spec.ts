@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { QueryFailedError } from 'typeorm';
+import { In, QueryFailedError } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
@@ -279,6 +279,9 @@ describe('MembersService', () => {
 
       expect(result).toBe(members);
       expect(repository.findBy).toHaveBeenCalledTimes(1);
+      expect(repository.findBy).toHaveBeenCalledWith({
+        id: In(['id-1', 'id-2']),
+      });
     });
   });
 });
