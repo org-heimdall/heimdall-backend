@@ -8,8 +8,10 @@ describe('MemberCommunitiesService', () => {
   let repository: {
     create: jest.Mock;
     save: jest.Mock;
+    upsert: jest.Mock;
     findBy: jest.Mock;
     findOneBy: jest.Mock;
+    findOneByOrFail: jest.Mock;
     delete: jest.Mock;
   };
 
@@ -28,8 +30,10 @@ describe('MemberCommunitiesService', () => {
     repository = {
       create: jest.fn((entity: Partial<MemberCommunity>) => entity),
       save: jest.fn((entity: MemberCommunity) => Promise.resolve(entity)),
+      upsert: jest.fn().mockResolvedValue({ identifiers: [] }),
       findBy: jest.fn(),
       findOneBy: jest.fn(),
+      findOneByOrFail: jest.fn(),
       delete: jest.fn(),
     };
 
@@ -65,29 +69,11 @@ describe('MemberCommunitiesService', () => {
   });
 
   describe('upsertKeynote', () => {
-    it('기존 행이 없으면 참여+기조발언 행을 새로 생성한다', async () => {
-      repository.findOneBy.mockResolvedValue(null);
-
-      const result = await service.upsertKeynote(
-        'member-uuid',
-        'community-uuid',
-        '찬성',
-        ['이유1'],
+    // 신규/기존 여부와 무관하게 (memberId, communityId) 유니크로 opinion/reasons를 upsert (원자적)
+    it('유니크 충돌 경로로 opinion/reasons를 upsert하고 갱신된 행을 반환한다', async () => {
+      repository.findOneByOrFail.mockResolvedValue(
+        buildRow({ opinion: '수정된 의견', reasons: ['새이유'] }),
       );
-
-      expect(repository.create).toHaveBeenCalledWith({
-        memberId: 'member-uuid',
-        communityId: 'community-uuid',
-        opinion: '찬성',
-        reasons: ['이유1'],
-      });
-      expect(repository.save).toHaveBeenCalledTimes(1);
-      expect(result.opinion).toBe('찬성');
-    });
-
-    it('기존 행이 있으면 opinion/reasons만 갱신한다', async () => {
-      const existing = buildRow({ opinion: '이전', reasons: ['이전이유'] });
-      repository.findOneBy.mockResolvedValue(existing);
 
       const result = await service.upsertKeynote(
         'member-uuid',
@@ -96,9 +82,18 @@ describe('MemberCommunitiesService', () => {
         ['새이유'],
       );
 
-      // 새 행을 만들지 않고 기존 행을 저장한다
-      expect(repository.create).not.toHaveBeenCalled();
-      expect(repository.save).toHaveBeenCalledWith(existing);
+      expect(repository.upsert).toHaveBeenCalledWith(
+        {
+          memberId: 'member-uuid',
+          communityId: 'community-uuid',
+          opinion: '수정된 의견',
+          reasons: ['새이유'],
+        },
+        ['memberId', 'communityId'],
+      );
+      // 읽기-수정-쓰기(findOneBy/save) 경로를 타지 않는다
+      expect(repository.findOneBy).not.toHaveBeenCalled();
+      expect(repository.save).not.toHaveBeenCalled();
       expect(result.opinion).toBe('수정된 의견');
       expect(result.reasons).toEqual(['새이유']);
     });

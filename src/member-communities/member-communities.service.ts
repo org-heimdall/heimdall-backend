@@ -43,20 +43,19 @@ export class MemberCommunitiesService {
     return repo.save(row);
   }
 
-  // 기조발언 작성/수정: 행이 있으면 opinion/reasons만 갱신, 없으면 참여+작성 행을 생성한다.
+  // 기조발언 작성/수정: (memberId, communityId) 유니크 제약 기반 upsert로 원자적 처리한다.
+  // 충돌 시 opinion/reasons만 갱신, 없으면 참여+작성 행을 생성한다.
   async upsertKeynote(
     memberId: string,
     communityId: string,
     opinion: string,
     reasons: string[],
   ): Promise<MemberCommunity> {
-    const existing = await this.repo().findOneBy({ memberId, communityId });
-    if (existing) {
-      existing.opinion = opinion;
-      existing.reasons = reasons;
-      return this.repo().save(existing);
-    }
-    return this.create(memberId, communityId, opinion, reasons);
+    await this.repo().upsert({ memberId, communityId, opinion, reasons }, [
+      'memberId',
+      'communityId',
+    ]);
+    return this.repo().findOneByOrFail({ memberId, communityId });
   }
 
   // 커뮤니티에 속한 모든 참여 행 삭제(커뮤니티 삭제 시). 삭제 트랜잭션에서 manager로 참여한다.
