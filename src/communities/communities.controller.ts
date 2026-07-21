@@ -9,9 +9,9 @@ import {
   HttpCode,
   Put,
   ParseUUIDPipe,
-  ParseIntPipe,
   DefaultValuePipe,
 } from '@nestjs/common';
+import { ParsePositiveIntPipe } from '../common/pipes/parse-positive-int.pipe';
 import {
   ApiCreatedResponse,
   ApiHeader,
@@ -68,8 +68,8 @@ export class CommunitiesController {
     description: '테마 필터',
   })
   async findAll(
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('size', new DefaultValuePipe(10), ParseIntPipe) size: number,
+    @Query('page', new DefaultValuePipe(1), ParsePositiveIntPipe) page: number,
+    @Query('size', new DefaultValuePipe(10), ParsePositiveIntPipe) size: number,
     @Query('sort') sort?: CommunitySort,
     @Query('themeId') themeId?: string,
   ): Promise<CommunitySliceDto> {
