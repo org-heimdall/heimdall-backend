@@ -20,9 +20,8 @@ describe('CommunitiesService', () => {
   };
   let themeRepository: { find: jest.Mock };
   let communityFavoriteRepository: {
-    findOneBy: jest.Mock;
-    create: jest.Mock;
-    save: jest.Mock;
+    upsert: jest.Mock;
+    update: jest.Mock;
   };
   let dataSource: { transaction: jest.Mock };
   let membersService: { findByIds: jest.Mock; findOneOrThrow: jest.Mock };
@@ -76,9 +75,8 @@ describe('CommunitiesService', () => {
     };
     themeRepository = { find: jest.fn() };
     communityFavoriteRepository = {
-      findOneBy: jest.fn(),
-      create: jest.fn((entity) => entity),
-      save: jest.fn((entity) => Promise.resolve(entity)),
+      upsert: jest.fn().mockResolvedValue({ identifiers: [] }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
 
     txRepos = new Map();
@@ -356,62 +354,44 @@ describe('CommunitiesService', () => {
     });
   });
 
-  describe('addMyFavorite (즐겨찾기 토글)', () => {
+  describe('addMyFavorite (즐겨찾기)', () => {
     beforeEach(() => {
       communityRepository.findOneBy.mockResolvedValue({ id: 'community-uuid' });
     });
 
-    it('기존 row가 없으면 isFavored=true로 생성한다', async () => {
-      communityFavoriteRepository.findOneBy.mockResolvedValue(null);
-
+    // 신규/기존 여부와 무관하게 (memberId, communityId) 유니크로 isFavored=true upsert (원자적)
+    it('유니크 충돌 경로로 isFavored=true를 upsert한다', async () => {
       await service.addMyFavorite('community-uuid', 'member-uuid');
 
-      expect(communityFavoriteRepository.create).toHaveBeenCalledWith({
-        memberId: 'member-uuid',
-        communityId: 'community-uuid',
-        isFavored: true,
-      });
-      expect(communityFavoriteRepository.save).toHaveBeenCalled();
+      expect(communityFavoriteRepository.upsert).toHaveBeenCalledWith(
+        {
+          memberId: 'member-uuid',
+          communityId: 'community-uuid',
+          isFavored: true,
+        },
+        ['memberId', 'communityId'],
+      );
     });
 
-    it('기존 row가 false면 true로 토글한다', async () => {
-      const existing = { isFavored: false };
-      communityFavoriteRepository.findOneBy.mockResolvedValue(existing);
+    it('커뮤니티가 없으면 NotFoundException을 던지고 upsert하지 않는다', async () => {
+      communityRepository.findOneBy.mockResolvedValue(null);
 
-      await service.addMyFavorite('community-uuid', 'member-uuid');
-
-      expect(existing.isFavored).toBe(true);
-      expect(communityFavoriteRepository.save).toHaveBeenCalledWith(existing);
-    });
-
-    it('기존 row가 이미 true면 저장하지 않는다', async () => {
-      communityFavoriteRepository.findOneBy.mockResolvedValue({
-        isFavored: true,
-      });
-
-      await service.addMyFavorite('community-uuid', 'member-uuid');
-
-      expect(communityFavoriteRepository.save).not.toHaveBeenCalled();
+      await expect(
+        service.addMyFavorite('community-uuid', 'member-uuid'),
+      ).rejects.toThrow(NotFoundException);
+      expect(communityFavoriteRepository.upsert).not.toHaveBeenCalled();
     });
   });
 
-  describe('deleteMyFavorite (즐겨찾기 토글)', () => {
-    it('기존 row가 true면 false로 토글한다', async () => {
-      const existing = { isFavored: true };
-      communityFavoriteRepository.findOneBy.mockResolvedValue(existing);
-
+  describe('deleteMyFavorite (즐겨찾기)', () => {
+    // 단일 UPDATE로 isFavored=false (row가 없으면 affected=0 → no-op)
+    it('isFavored=false로 단일 update한다', async () => {
       await service.deleteMyFavorite('community-uuid', 'member-uuid');
 
-      expect(existing.isFavored).toBe(false);
-      expect(communityFavoriteRepository.save).toHaveBeenCalledWith(existing);
-    });
-
-    it('기존 row가 없으면 no-op', async () => {
-      communityFavoriteRepository.findOneBy.mockResolvedValue(null);
-
-      await service.deleteMyFavorite('community-uuid', 'member-uuid');
-
-      expect(communityFavoriteRepository.save).not.toHaveBeenCalled();
+      expect(communityFavoriteRepository.update).toHaveBeenCalledWith(
+        { memberId: 'member-uuid', communityId: 'community-uuid' },
+        { isFavored: false },
+      );
     });
   });
 });

@@ -218,41 +218,22 @@ export class CommunitiesService {
     };
   }
 
-  // 즐겨찾기 추가: 기존 row가 있으면 isFavored=true 토글, 없으면 생성
+  // 즐겨찾기 추가: (memberId, communityId) 유니크 제약 기반 upsert로 원자적 처리
   async addMyFavorite(communityId: string, memberId: string): Promise<void> {
     await this.getCommunityOrThrow(communityId);
 
-    const existing = await this.communityFavoriteRepository.findOneBy({
-      memberId,
-      communityId,
-    });
-    if (existing) {
-      if (!existing.isFavored) {
-        existing.isFavored = true;
-        await this.communityFavoriteRepository.save(existing);
-      }
-      return;
-    }
-
-    await this.communityFavoriteRepository.save(
-      this.communityFavoriteRepository.create({
-        memberId,
-        communityId,
-        isFavored: true,
-      }),
+    await this.communityFavoriteRepository.upsert(
+      { memberId, communityId, isFavored: true },
+      ['memberId', 'communityId'],
     );
   }
 
-  // 즐겨찾기 삭제: 기존 row를 isFavored=false로 토글 (없으면 no-op)
+  // 즐겨찾기 삭제: 단일 UPDATE로 isFavored=false 처리 (row가 없으면 no-op)
   async deleteMyFavorite(communityId: string, memberId: string): Promise<void> {
-    const existing = await this.communityFavoriteRepository.findOneBy({
-      memberId,
-      communityId,
-    });
-    if (existing && existing.isFavored) {
-      existing.isFavored = false;
-      await this.communityFavoriteRepository.save(existing);
-    }
+    await this.communityFavoriteRepository.update(
+      { memberId, communityId },
+      { isFavored: false },
+    );
   }
 
   // 정렬 기준을 쿼리 컬럼/방향으로 매핑 (기본: 최신순)
