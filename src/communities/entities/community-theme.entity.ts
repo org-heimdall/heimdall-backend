@@ -10,7 +10,7 @@ import { Community } from './community.entity';
 import { Theme } from './theme.entity';
 
 @Entity('community_theme')
-@Unique(['communityId'])
+@Unique(['communityId', 'themeId'])
 export class CommunityTheme {
   @PrimaryGeneratedColumn('uuid')
   id: string;
