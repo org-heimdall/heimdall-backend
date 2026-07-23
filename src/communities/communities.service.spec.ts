@@ -1,8 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunitiesService } from './communities.service';
+import { CommunityErrorCode } from './exceptions/community-error-code';
+import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
 import { CommunityTheme } from './entities/community-theme.entity';
@@ -84,7 +86,7 @@ describe('CommunitiesService', () => {
       getRepository: jest.fn((entity: unknown) => {
         if (!txRepos.has(entity)) {
           txRepos.set(entity, {
-            create: jest.fn((e) => e),
+            create: jest.fn(<T>(e: T): T => e),
             save: jest.fn((e) =>
               Promise.resolve({ id: 'new-community', ...e }),
             ),
@@ -228,20 +230,20 @@ describe('CommunitiesService', () => {
       expect(result.communityId).toBe('new-community');
     });
 
-    it('호스트 회원이 없으면 NotFoundException을 던진다', async () => {
+    it('호스트 회원이 없으면 NOT_FOUND 에러를 던진다', async () => {
       membersService.findOneOrThrow.mockRejectedValue(
-        new NotFoundException('회원을 찾을 수 없습니다.'),
+        new GeneralException(MemberErrorCode.NOT_FOUND),
       );
 
-      await expect(service.create(dto, 'host-uuid')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.create(dto, 'host-uuid')).rejects.toMatchObject({
+        appError: MemberErrorCode.NOT_FOUND,
+      });
       expect(dataSource.transaction).not.toHaveBeenCalled();
     });
   });
 
   describe('delete', () => {
-    it('host가 아니면 ForbiddenException을 던진다', async () => {
+    it('host가 아니면 DELETE_FORBIDDEN 에러를 던진다', async () => {
       communityRepository.findOneBy.mockResolvedValue({
         id: 'community-uuid',
         hostId: 'other-uuid',
@@ -249,16 +251,18 @@ describe('CommunitiesService', () => {
 
       await expect(
         service.delete('community-uuid', 'not-host'),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toMatchObject({
+        appError: CommunityErrorCode.DELETE_FORBIDDEN,
+      });
       expect(dataSource.transaction).not.toHaveBeenCalled();
     });
 
-    it('존재하지 않으면 NotFoundException을 던진다', async () => {
+    it('존재하지 않으면 NOT_FOUND 에러를 던진다', async () => {
       communityRepository.findOneBy.mockResolvedValue(null);
 
       await expect(
         service.delete('community-uuid', 'host-uuid'),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toMatchObject({ appError: CommunityErrorCode.NOT_FOUND });
     });
 
     it('host면 소유 리소스와 참여 행을 트랜잭션으로 삭제한다', async () => {
@@ -320,15 +324,17 @@ describe('CommunitiesService', () => {
   });
 
   describe('getMemberKeynote', () => {
-    it('행이 없으면 NotFoundException을 던진다', async () => {
+    it('행이 없으면 PARTICIPANT_NOT_FOUND 에러를 던진다', async () => {
       memberCommunitiesService.findOne.mockResolvedValue(null);
 
       await expect(
         service.getMemberKeynote('community-uuid', 'member-uuid'),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toMatchObject({
+        appError: CommunityErrorCode.PARTICIPANT_NOT_FOUND,
+      });
     });
 
-    it('기조발언 미작성(opinion=null)이면 NotFoundException을 던진다', async () => {
+    it('기조발언 미작성(opinion=null)이면 KEYNOTE_NOT_FOUND 에러를 던진다', async () => {
       memberCommunitiesService.findOne.mockResolvedValue({
         opinion: null,
         reasons: null,
@@ -336,7 +342,9 @@ describe('CommunitiesService', () => {
 
       await expect(
         service.getMemberKeynote('community-uuid', 'member-uuid'),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toMatchObject({
+        appError: CommunityErrorCode.KEYNOTE_NOT_FOUND,
+      });
     });
 
     it('작성된 기조발언을 KeynoteDto로 반환한다', async () => {
@@ -373,12 +381,12 @@ describe('CommunitiesService', () => {
       );
     });
 
-    it('커뮤니티가 없으면 NotFoundException을 던지고 upsert하지 않는다', async () => {
+    it('커뮤니티가 없으면 NOT_FOUND 에러를 던지고 upsert하지 않는다', async () => {
       communityRepository.findOneBy.mockResolvedValue(null);
 
       await expect(
         service.addMyFavorite('community-uuid', 'member-uuid'),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toMatchObject({ appError: CommunityErrorCode.NOT_FOUND });
       expect(communityFavoriteRepository.upsert).not.toHaveBeenCalled();
     });
   });
@@ -398,12 +406,12 @@ describe('CommunitiesService', () => {
       );
     });
 
-    it('커뮤니티가 없으면 NotFoundException을 던지고 update하지 않는다', async () => {
+    it('커뮤니티가 없으면 NOT_FOUND 에러를 던지고 update하지 않는다', async () => {
       communityRepository.findOneBy.mockResolvedValue(null);
 
       await expect(
         service.deleteMyFavorite('community-uuid', 'member-uuid'),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toMatchObject({ appError: CommunityErrorCode.NOT_FOUND });
       expect(communityFavoriteRepository.update).not.toHaveBeenCalled();
     });
   });
