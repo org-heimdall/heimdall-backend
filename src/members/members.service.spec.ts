@@ -1,10 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import {
-  ConflictException,
-  NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
 import { In, QueryFailedError } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
@@ -32,17 +27,18 @@ describe('MembersService', () => {
     Object.assign(new Error(`pg error ${code}`), { code });
 
   /** signUpDto.password를 해싱해 가진, DB에서 막 읽어온 듯한 Member */
-  const buildMember = async (): Promise<Member> => ({
-    id: 'member-uuid',
-    email: signUpDto.email,
-    password: await bcrypt.hash(signUpDto.password, 10),
-    nickname: signUpDto.nickname,
-    gender: null, // 바꾸지 않은 (전달되지 않은) 값들은 수정하지 않음을 테스트
-    age: null,
-    profileImageUrl: null,
-    socialCredit: 0,
-    rating: 0,
-  });
+  const buildMember = async (): Promise<Member> =>
+    Object.assign(new Member(), {
+      id: 'member-uuid',
+      email: signUpDto.email,
+      password: await bcrypt.hash(signUpDto.password, 10),
+      nickname: signUpDto.nickname,
+      gender: null, // 바꾸지 않은 (전달되지 않은) 값들은 수정하지 않음을 테스트
+      age: null,
+      profileImageUrl: null,
+      socialCredit: 0,
+      rating: 0,
+    });
 
   beforeEach(async () => {
     repository = {
@@ -258,12 +254,12 @@ describe('MembersService', () => {
       expect(repository.findOneBy).toHaveBeenCalledWith({ id: 'member-uuid' });
     });
 
-    it('존재하지 않는 회원이면 NotFoundException을 던진다', async () => {
+    it('존재하지 않는 회원이면 NOT_FOUND 에러를 던진다', async () => {
       repository.findOneBy.mockResolvedValue(null);
 
-      await expect(service.findOneOrThrow('없는-uuid')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.findOneOrThrow('없는-uuid')).rejects.toMatchObject({
+        appError: MemberErrorCode.NOT_FOUND,
+      });
     });
   });
 
