@@ -21,6 +21,7 @@ import {
   ApiParam,
   ApiQuery,
 } from '@nestjs/swagger';
+import { ApiErrorResponses } from '../common/exceptions/api-error-responses.decorator';
 import { CommunitiesService } from './communities.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
@@ -28,6 +29,8 @@ import { ThemeDto } from './dto/theme.dto';
 import { MemberPreviewDto } from '../members/dto/member.dto';
 import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
+import { CommunityErrorCode } from './exceptions/community-error-code';
+import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { CurrentMember } from '../common/decorators/current-member.decorator';
 
 export { CommunityMemberType, CommunitySort };
@@ -85,6 +88,7 @@ export class CommunitiesController {
     description: '현재 회원 id',
   })
   @ApiCreatedResponse({ type: CommunityDto })
+  @ApiErrorResponses(MemberErrorCode.NOT_FOUND)
   @Post()
   async create(
     @CurrentMember() memberId: string,
@@ -103,6 +107,10 @@ export class CommunitiesController {
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiNoContentResponse({ description: '커뮤니티 삭제 성공' })
+  @ApiErrorResponses(
+    CommunityErrorCode.NOT_FOUND,
+    CommunityErrorCode.DELETE_FORBIDDEN,
+  )
   @Delete('/:communityId')
   @HttpCode(204)
   async delete(
@@ -117,6 +125,7 @@ export class CommunitiesController {
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiOkResponse({ type: [MemberPreviewDto] })
+  @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
   @Get(':communityId/members')
   @ApiQuery({
     name: 'memberType',
@@ -142,6 +151,10 @@ export class CommunitiesController {
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiParam({ name: 'memberId', format: 'uuid' })
   @ApiOkResponse({ type: KeynoteDto })
+  @ApiErrorResponses(
+    CommunityErrorCode.PARTICIPANT_NOT_FOUND,
+    CommunityErrorCode.KEYNOTE_NOT_FOUND,
+  )
   @Get(':communityId/keynotes/:memberId')
   async getMemberKeynote(
     @Param('communityId', ParseUUIDPipe) communityId: string,
@@ -160,6 +173,7 @@ export class CommunitiesController {
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiOkResponse({ type: KeynoteDto })
+  @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
   @Put(':communityId/keynotes/me')
   async upsertMyKeynote(
     @Param('communityId', ParseUUIDPipe) communityId: string,
@@ -183,6 +197,7 @@ export class CommunitiesController {
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiNoContentResponse({ description: '즐겨찾기 추가 성공' })
+  @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
   @Put(':communityId/favorites/me')
   @HttpCode(204)
   async addMyFavorite(
@@ -202,6 +217,7 @@ export class CommunitiesController {
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiNoContentResponse({ description: '즐겨찾기 삭제 성공' })
+  @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
   @Delete(':communityId/favorites/me')
   @HttpCode(204)
   async deleteMyFavorite(
