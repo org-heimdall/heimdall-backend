@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -35,13 +35,13 @@ export class MembersService {
       BCRYPT_SALT_ROUNDS,
     );
 
-    const member = this.memberRepository.create({
+    const member = Member.register({
       email: createMemberDto.email,
       password,
       nickname: createMemberDto.nickname,
-      gender: createMemberDto.gender ?? null,
-      age: createMemberDto.age ?? null,
-      profileImageUrl: createMemberDto.profileImageUrl ?? null,
+      gender: createMemberDto.gender,
+      age: createMemberDto.age,
+      profileImageUrl: createMemberDto.profileImageUrl,
     });
 
     try {
@@ -91,22 +91,17 @@ export class MembersService {
     }
 
     // 전달되지 않은 필드는 기존 값을 유지한다(부분 수정).
-    if (profile.nickname !== undefined) member.nickname = profile.nickname;
-    if (profile.gender !== undefined) member.gender = profile.gender;
-    if (profile.age !== undefined) member.age = profile.age;
-    if (profile.profileImageUrl !== undefined) {
-      member.profileImageUrl = profile.profileImageUrl;
-    }
+    member.updateProfile(profile);
 
     const saved = await this.memberRepository.save(member);
     return MemberDto.from(saved);
   }
 
-  // id로 회원을 조회하고, 없으면 NotFoundException을 던진다.
+  // id로 회원을 조회하고, 없으면 NOT_FOUND 도메인 예외를 던진다.
   async findOneOrThrow(memberId: string): Promise<Member> {
     const member = await this.memberRepository.findOneBy({ id: memberId });
     if (!member) {
-      throw new NotFoundException('회원을 찾을 수 없습니다.');
+      throw new GeneralException(MemberErrorCode.NOT_FOUND);
     }
     return member;
   }
