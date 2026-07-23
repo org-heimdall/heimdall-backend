@@ -1,4 +1,11 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+import { Community } from '../../communities/entities/community.entity';
 
 export enum DebateTurn {
   HOST = 'HOST',
@@ -36,4 +43,8 @@ export class Debate {
 
   @Column({ type: 'uuid', nullable: true })
   winnerId: string | null;
+
+  @ManyToOne(() => Community, { nullable: false })
+  @JoinColumn({ name: 'community_id' })
+  community: Community;
 }

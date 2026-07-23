@@ -1,4 +1,13 @@
-import { Column, Entity, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  Unique,
+} from 'typeorm';
+import { Member } from '../../members/entities/member.entity';
+import { Community } from '../../communities/entities/community.entity';
 
 @Entity('member_community')
 @Unique(['memberId', 'communityId'])
@@ -17,4 +26,12 @@ export class MemberCommunity {
 
   @Column({ type: 'text', array: true, nullable: true })
   reasons: string[] | null;
+
+  @ManyToOne(() => Member, { nullable: false })
+  @JoinColumn({ name: 'member_id' })
+  member: Member;
+
+  @ManyToOne(() => Community, { nullable: false })
+  @JoinColumn({ name: 'community_id' })
+  community: Community;
 }
