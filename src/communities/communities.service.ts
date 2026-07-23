@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { Community, CommunityState } from './entities/community.entity';
+import { Community } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
 import { CommunityTheme } from './entities/community-theme.entity';
 import { CommunityFavorite } from './entities/community-favorite.entity';
@@ -92,14 +92,7 @@ export class CommunitiesService {
       const communityThemeRepository = manager.getRepository(CommunityTheme);
 
       const saved = await communityRepository.save(
-        communityRepository.create({
-          state: CommunityState.WAITING,
-          hostId,
-          hostNickname: host.nickname,
-          memberCount: 1,
-          topic: createCommunityDto.topic,
-          communityLink: null,
-        }),
+        Community.open(hostId, host.nickname, createCommunityDto.topic),
       );
 
       await communityThemeRepository.save(

@@ -85,8 +85,9 @@ describe('CommunitiesService', () => {
         if (!txRepos.has(entity)) {
           txRepos.set(entity, {
             create: jest.fn((e) => e),
+            // TypeORM save처럼 저장된 엔티티에 생성 id를 채워 반환한다
             save: jest.fn((e) =>
-              Promise.resolve({ id: 'new-community', ...e }),
+              Promise.resolve({ ...e, id: 'new-community' }),
             ),
             delete: jest.fn().mockResolvedValue({ affected: 1 }),
           });
@@ -208,13 +209,15 @@ describe('CommunitiesService', () => {
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
 
       const communityTxRepo = txRepos.get(Community)!;
-      expect(communityTxRepo.create).toHaveBeenCalledWith(
+      // Community.open 팩토리가 만든 초기 불변식 엔티티를 그대로 save 한다
+      expect(communityTxRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
           state: CommunityState.WAITING,
           hostId: 'host-uuid',
           hostNickname: '호스트',
           memberCount: 1,
           topic: 'AI 규제',
+          communityLink: null,
         }),
       );
       // 호스트의 member_community(기조발언)를 같은 트랜잭션 manager로 생성한다
