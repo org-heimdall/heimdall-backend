@@ -1,6 +1,7 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, Unique } from 'typeorm';
 
 @Entity('speech_like')
+@Unique(['memberId', 'speechId'])
 export class SpeechLike {
   @PrimaryGeneratedColumn('uuid')
   id: string;

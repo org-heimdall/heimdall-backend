@@ -1,6 +1,7 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, Unique } from 'typeorm';
 
 @Entity('community_theme')
+@Unique(['communityId'])
 export class CommunityTheme {
   @PrimaryGeneratedColumn('uuid')
   id: string;
