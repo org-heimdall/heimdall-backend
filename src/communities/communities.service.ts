@@ -19,6 +19,7 @@ import { Member } from '../members/entities/member.entity';
 import { MemberCommunitiesService } from '../member-communities/member-communities.service';
 import { MemberCommunity } from '../member-communities/entities/member-community.entity';
 import { MemberPreviewDto } from '../members/dto/member.dto';
+import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 @Injectable()
 export class CommunitiesService {
@@ -51,6 +52,7 @@ export class CommunitiesService {
 
     const query = this.communityRepository
       .createQueryBuilder('community')
+      .where('community.status = :status', { status: ResourceStatus.NORMAL })
       .orderBy(column, direction)
       .skip((page - 1) * size)
       .take(size + 1);
@@ -117,22 +119,16 @@ export class CommunitiesService {
     return CommunityDto.from(community, host);
   }
 
-  // 커뮤니티 삭제: host만 가능. 소유 리소스 + 참여 행을 한 트랜잭션으로 정리
+  // 커뮤니티 삭제: host만 가능. 커뮤니티 엔티티만 soft-delete(상태 전환)하고
+  // 자식 리소스(theme/favorite/member_community)는 그대로 둔다.
   async delete(communityId: string, currentMemberId: string): Promise<void> {
     const community = await this.getCommunityOrThrow(communityId);
     if (community.hostId !== currentMemberId) {
       throw new ForbiddenException('커뮤니티 삭제 권한이 없습니다.');
     }
 
-    await this.dataSource.transaction(async (manager) => {
-      await manager.getRepository(CommunityTheme).delete({ communityId });
-      await manager.getRepository(CommunityFavorite).delete({ communityId });
-      await this.memberCommunitiesService.deleteByCommunity(
-        communityId,
-        manager,
-      );
-      await manager.getRepository(Community).delete({ id: communityId });
-    });
+    community.softDelete();
+    await this.communityRepository.save(community);
   }
 
   // 커뮤니티 참여자 목록 조회 (memberType 분류 후 선택적 필터)
@@ -271,6 +267,7 @@ export class CommunitiesService {
   private async getCommunityOrThrow(communityId: string): Promise<Community> {
     const community = await this.communityRepository.findOneBy({
       id: communityId,
+      status: ResourceStatus.NORMAL,
     });
     if (!community) {
       throw new NotFoundException('커뮤니티를 찾을 수 없습니다.');

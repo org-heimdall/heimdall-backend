@@ -9,6 +9,7 @@ import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
 import { Member } from './entities/member.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
+import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 const BCRYPT_SALT_ROUNDS = 10;
 
@@ -58,6 +59,7 @@ export class MembersService {
   async login(loginMemberDto: LoginMemberDto): Promise<MemberDto> {
     const member = await this.memberRepository.findOneBy({
       email: loginMemberDto.email,
+      status: ResourceStatus.NORMAL,
     });
 
     // 회원이 없어도 더미 해시와 비교해 bcrypt 비용을 동일하게 치른다(타이밍 공격 완화).
@@ -99,7 +101,10 @@ export class MembersService {
 
   // id로 회원을 조회하고, 없으면 NOT_FOUND 도메인 예외를 던진다.
   async findOneOrThrow(memberId: string): Promise<Member> {
-    const member = await this.memberRepository.findOneBy({ id: memberId });
+    const member = await this.memberRepository.findOneBy({
+      id: memberId,
+      status: ResourceStatus.NORMAL,
+    });
     if (!member) {
       throw new GeneralException(MemberErrorCode.NOT_FOUND);
     }
@@ -111,7 +116,10 @@ export class MembersService {
     if (ids.length === 0) {
       return [];
     }
-    return this.memberRepository.findBy({ id: In(ids) });
+    return this.memberRepository.findBy({
+      id: In(ids),
+      status: ResourceStatus.NORMAL,
+    });
   }
 
   private isUniqueViolation(error: unknown): boolean {
