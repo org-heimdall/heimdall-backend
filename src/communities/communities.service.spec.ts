@@ -11,12 +11,14 @@ import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { MembersService } from '../members/members.service';
 import { MemberCommunitiesService } from '../member-communities/member-communities.service';
 import { Member } from '../members/entities/member.entity';
+import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 describe('CommunitiesService', () => {
   let service: CommunitiesService;
   let communityRepository: {
     createQueryBuilder: jest.Mock;
     findOneBy: jest.Mock;
+    save: jest.Mock;
   };
   let themeRepository: { find: jest.Mock };
   let communityFavoriteRepository: {
@@ -33,6 +35,7 @@ describe('CommunitiesService', () => {
     upsertKeynote: jest.Mock;
   };
   let queryBuilder: {
+    where: jest.Mock;
     orderBy: jest.Mock;
     skip: jest.Mock;
     take: jest.Mock;
@@ -47,21 +50,24 @@ describe('CommunitiesService', () => {
   >;
   let manager: { getRepository: jest.Mock };
 
-  const buildMember = (overrides: Partial<Member> = {}): Member => ({
-    id: 'member-uuid',
-    email: 'a@b.com',
-    password: 'hash',
-    nickname: '헤임달',
-    gender: null,
-    age: null,
-    profileImageUrl: null,
-    socialCredit: 0,
-    rating: 0,
-    ...overrides,
-  });
+  const buildMember = (overrides: Partial<Member> = {}): Member =>
+    Object.assign(new Member(), {
+      id: 'member-uuid',
+      email: 'a@b.com',
+      password: 'hash',
+      nickname: '헤임달',
+      gender: null,
+      age: null,
+      profileImageUrl: null,
+      socialCredit: 0,
+      rating: 0,
+      status: ResourceStatus.NORMAL,
+      ...overrides,
+    });
 
   beforeEach(async () => {
     queryBuilder = {
+      where: jest.fn(() => queryBuilder),
       orderBy: jest.fn(() => queryBuilder),
       skip: jest.fn(() => queryBuilder),
       take: jest.fn(() => queryBuilder),
@@ -72,6 +78,7 @@ describe('CommunitiesService', () => {
     communityRepository = {
       createQueryBuilder: jest.fn(() => queryBuilder),
       findOneBy: jest.fn(),
+      save: jest.fn((e) => Promise.resolve(e)),
     };
     themeRepository = { find: jest.fn() };
     communityFavoriteRepository = {
@@ -84,6 +91,7 @@ describe('CommunitiesService', () => {
       getRepository: jest.fn((entity: unknown) => {
         if (!txRepos.has(entity)) {
           txRepos.set(entity, {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
             create: jest.fn((e) => e),
             // TypeORM save처럼 저장된 엔티티에 생성 id를 채워 반환한다
             save: jest.fn((e) =>
@@ -190,6 +198,19 @@ describe('CommunitiesService', () => {
 
       expect(queryBuilder.innerJoin).not.toHaveBeenCalled();
     });
+
+    it('status=NORMAL 필터를 적용해 soft-delete된 커뮤니티를 제외한다', async () => {
+      queryBuilder.getMany.mockResolvedValue([]);
+      queryBuilder.getCount.mockResolvedValue(0);
+      membersService.findByIds.mockResolvedValue([]);
+
+      await service.findAll(1, 10);
+
+      expect(queryBuilder.where).toHaveBeenCalledWith(
+        'community.status = :status',
+        { status: ResourceStatus.NORMAL },
+      );
+    });
   });
 
   describe('create', () => {
@@ -264,21 +285,26 @@ describe('CommunitiesService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('host면 소유 리소스와 참여 행을 트랜잭션으로 삭제한다', async () => {
-      communityRepository.findOneBy.mockResolvedValue({
+    it('host면 커뮤니티를 물리 삭제가 아니라 status=DELETED로 soft-delete한다', async () => {
+      const community = Object.assign(new Community(), {
         id: 'community-uuid',
         hostId: 'host-uuid',
+        status: ResourceStatus.NORMAL,
       });
+      communityRepository.findOneBy.mockResolvedValue(community);
 
       await service.delete('community-uuid', 'host-uuid');
 
-      expect(memberCommunitiesService.deleteByCommunity).toHaveBeenCalledWith(
-        'community-uuid',
-        manager,
+      // 상태만 전환해 저장한다
+      expect(communityRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'community-uuid',
+          status: ResourceStatus.DELETED,
+        }),
       );
-      expect(txRepos.get(Community)!.delete).toHaveBeenCalledWith({
-        id: 'community-uuid',
-      });
+      // 자식 리소스와 참여 행은 건드리지 않는다(물리 삭제 없음)
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(memberCommunitiesService.deleteByCommunity).not.toHaveBeenCalled();
     });
   });
 

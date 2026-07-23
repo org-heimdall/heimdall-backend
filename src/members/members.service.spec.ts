@@ -6,6 +6,7 @@ import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { Member } from './entities/member.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
+import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 describe('MembersService', () => {
   let service: MembersService;
@@ -38,6 +39,7 @@ describe('MembersService', () => {
       profileImageUrl: null,
       socialCredit: 0,
       rating: 0,
+      status: ResourceStatus.NORMAL,
     });
 
   beforeEach(async () => {
@@ -143,6 +145,20 @@ describe('MembersService', () => {
         service.login({ email: signUpDto.email, password: 'wrongpassword' }),
       ).rejects.toMatchObject({
         appError: MemberErrorCode.INVALID_CREDENTIALS,
+      });
+    });
+
+    it('status=NORMAL 조건으로만 조회해 soft-delete된 회원을 제외한다', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.login({ email: signUpDto.email, password: signUpDto.password }),
+      ).rejects.toMatchObject({
+        appError: MemberErrorCode.INVALID_CREDENTIALS,
+      });
+      expect(repository.findOneBy).toHaveBeenCalledWith({
+        email: signUpDto.email,
+        status: ResourceStatus.NORMAL,
       });
     });
   });
@@ -251,7 +267,10 @@ describe('MembersService', () => {
       const result = await service.findOneOrThrow('member-uuid');
 
       expect(result).toBe(member);
-      expect(repository.findOneBy).toHaveBeenCalledWith({ id: 'member-uuid' });
+      expect(repository.findOneBy).toHaveBeenCalledWith({
+        id: 'member-uuid',
+        status: ResourceStatus.NORMAL,
+      });
     });
 
     it('존재하지 않는 회원이면 NOT_FOUND 에러를 던진다', async () => {
@@ -284,6 +303,7 @@ describe('MembersService', () => {
       expect(repository.findBy).toHaveBeenCalledTimes(1);
       expect(repository.findBy).toHaveBeenCalledWith({
         id: In(['id-1', 'id-2']),
+        status: ResourceStatus.NORMAL,
       });
     });
   });

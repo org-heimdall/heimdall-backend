@@ -17,14 +17,15 @@ describe('MemberCommunitiesService', () => {
 
   const buildRow = (
     overrides: Partial<MemberCommunity> = {},
-  ): MemberCommunity => ({
-    id: 'mc-uuid',
-    memberId: 'member-uuid',
-    communityId: 'community-uuid',
-    opinion: null,
-    reasons: null,
-    ...overrides,
-  });
+  ): MemberCommunity =>
+    Object.assign(new MemberCommunity(), {
+      id: 'mc-uuid',
+      memberId: 'member-uuid',
+      communityId: 'community-uuid',
+      opinion: null,
+      reasons: null,
+      ...overrides,
+    });
 
   beforeEach(async () => {
     repository = {
