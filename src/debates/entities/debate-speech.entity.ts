@@ -7,9 +7,10 @@ import {
 } from 'typeorm';
 import { Member } from '../../members/entities/member.entity';
 import { Debate } from './debate.entity';
+import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
 @Entity('debate_speech')
-export class DebateSpeech {
+export class DebateSpeech extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

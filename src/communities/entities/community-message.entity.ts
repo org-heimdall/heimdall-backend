@@ -6,10 +6,11 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Member } from '../../members/entities/member.entity';
+import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 import { Community } from './community.entity';
 
 @Entity('community_message')
-export class CommunityMessage {
+export class CommunityMessage extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

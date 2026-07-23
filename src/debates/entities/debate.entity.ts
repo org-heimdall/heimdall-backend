@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Community } from '../../communities/entities/community.entity';
+import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
 export enum DebateTurn {
   HOST = 'HOST',
@@ -13,7 +14,7 @@ export enum DebateTurn {
 }
 
 @Entity('debate')
-export class Debate {
+export class Debate extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
