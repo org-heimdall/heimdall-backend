@@ -80,7 +80,7 @@ export class MembersService {
   ): Promise<MemberDto> {
     const member = await this.findOneOrThrow(memberId);
 
-    const { currentPassword, newPassword, ...profile } = updateMemberDto;
+    const { currentPassword, newPassword } = updateMemberDto;
 
     // null/undefined는 비밀번호 미변경으로 취급해 bcrypt.hash에 도달하지 않게 한다.
     if (newPassword != null) {
@@ -93,7 +93,13 @@ export class MembersService {
     }
 
     // 전달되지 않은 필드는 기존 값을 유지한다(부분 수정).
-    member.updateProfile(profile);
+    // DTO를 통째로 넘기지 않고 필드를 명시해, 향후 DTO에 필드가 추가돼도 엔티티에 흘러들지 않게 한다.
+    member.updateProfile({
+      nickname: updateMemberDto.nickname,
+      gender: updateMemberDto.gender,
+      age: updateMemberDto.age,
+      profileImageUrl: updateMemberDto.profileImageUrl,
+    });
 
     const saved = await this.memberRepository.save(member);
     return MemberDto.from(saved);
