@@ -3,7 +3,6 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunitiesService } from './communities.service';
-import { CommunityErrorCode } from './exceptions/community-error-code';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
