@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { CommunitiesService } from './communities.service';
 import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
@@ -12,6 +12,7 @@ import { MembersService } from '../members/members.service';
 import { MemberCommunitiesService } from '../member-communities/member-communities.service';
 import { Member } from '../members/entities/member.entity';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
+import { CommunityErrorCode } from './exceptions/community-error-code';
 
 describe('CommunitiesService', () => {
   let service: CommunitiesService;
@@ -267,7 +268,7 @@ describe('CommunitiesService', () => {
   });
 
   describe('delete', () => {
-    it('host가 아니면 ForbiddenException을 던진다', async () => {
+    it('host가 아니면 DELETE_FORBIDDEN 에러를 던진다', async () => {
       communityRepository.findOneBy.mockResolvedValue({
         id: 'community-uuid',
         hostId: 'other-uuid',
@@ -275,7 +276,9 @@ describe('CommunitiesService', () => {
 
       await expect(
         service.delete('community-uuid', 'not-host'),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toMatchObject({
+        appError: CommunityErrorCode.DELETE_FORBIDDEN,
+      });
       expect(dataSource.transaction).not.toHaveBeenCalled();
     });
 

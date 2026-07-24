@@ -1,8 +1,4 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Community } from './entities/community.entity';
@@ -20,6 +16,8 @@ import { MemberCommunitiesService } from '../member-communities/member-communiti
 import { MemberCommunity } from '../member-communities/entities/member-community.entity';
 import { MemberPreviewDto } from '../members/dto/member.dto';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
+import { GeneralException } from '../common/exceptions/general.exception';
+import { CommunityErrorCode } from './exceptions/community-error-code';
 
 @Injectable()
 export class CommunitiesService {
@@ -124,7 +122,7 @@ export class CommunitiesService {
   async delete(communityId: string, currentMemberId: string): Promise<void> {
     const community = await this.getCommunityOrThrow(communityId);
     if (community.hostId !== currentMemberId) {
-      throw new ForbiddenException('커뮤니티 삭제 권한이 없습니다.');
+      throw new GeneralException(CommunityErrorCode.DELETE_FORBIDDEN);
     }
 
     community.softDelete();

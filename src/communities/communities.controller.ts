@@ -29,6 +29,8 @@ import { MemberPreviewDto } from '../members/dto/member.dto';
 import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { CurrentMember } from '../common/decorators/current-member.decorator';
+import { ApiErrorResponses } from '../common/exceptions/api-error-responses.decorator';
+import { CommunityErrorCode } from './exceptions/community-error-code';
 
 export { CommunityMemberType, CommunitySort };
 
@@ -103,6 +105,7 @@ export class CommunitiesController {
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiNoContentResponse({ description: '커뮤니티 삭제 성공' })
+  @ApiErrorResponses(CommunityErrorCode.DELETE_FORBIDDEN)
   @Delete('/:communityId')
   @HttpCode(204)
   async delete(
