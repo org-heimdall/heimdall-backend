@@ -1,6 +1,5 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
-import { ResourceStatus } from '../../common/entities/resource-status.enum';
 
 @Entity('member')
 export class Member extends SoftDeletableEntity {
@@ -41,8 +40,6 @@ export class Member extends SoftDeletableEntity {
     profileImageUrl?: string | null;
   }): Member {
     const member = new Member();
-    // DB default는 INSERT 시점에만 적용되므로 in-memory 객체의 초기 상태를 명시한다.
-    member.status = ResourceStatus.NORMAL;
     member.email = params.email;
     member.password = params.password;
     member.nickname = params.nickname;

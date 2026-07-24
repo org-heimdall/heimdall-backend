@@ -233,6 +233,8 @@ describe('CommunitiesService', () => {
       // Community.open 팩토리가 만든 초기 불변식 엔티티를 그대로 save 한다
       expect(communityTxRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
+          // 저장 전 in-memory 엔티티도 NORMAL이어야 isDeleted()가 오판하지 않는다
+          status: ResourceStatus.NORMAL,
           state: CommunityState.WAITING,
           hostId: 'host-uuid',
           hostNickname: '호스트',

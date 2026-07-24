@@ -84,6 +84,10 @@ describe('MembersService', () => {
         bcrypt.compare(signUpDto.password, savedMember!.password),
       ).resolves.toBe(true);
 
+      // 저장 전 in-memory 엔티티도 NORMAL이어야 isDeleted()가 오판하지 않는다
+      expect(savedMember?.status).toBe(ResourceStatus.NORMAL);
+      expect(savedMember?.isDeleted()).toBe(false);
+
       expect(result).toEqual({
         memberId: 'member-uuid',
         email: signUpDto.email,
