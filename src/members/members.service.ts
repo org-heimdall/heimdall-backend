@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -102,11 +102,11 @@ export class MembersService {
     return MemberDto.from(saved);
   }
 
-  // id로 회원을 조회하고, 없으면 NotFoundException을 던진다.
+  // id로 회원을 조회하고, 없으면 GeneralException(NOT_FOUND)을 던진다.
   async findOneOrThrow(memberId: string): Promise<Member> {
     const member = await this.memberRepository.findOneBy({ id: memberId });
     if (!member) {
-      throw new NotFoundException('회원을 찾을 수 없습니다.');
+      throw new GeneralException(MemberErrorCode.NOT_FOUND);
     }
     return member;
   }

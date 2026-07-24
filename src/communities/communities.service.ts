@@ -1,9 +1,7 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { GeneralException } from '../common/exceptions/general.exception';
+import { CommunityErrorCode } from './exceptions/community-error-code';
 import { DataSource, Repository } from 'typeorm';
 import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
@@ -128,7 +126,7 @@ export class CommunitiesService {
   async delete(communityId: string, currentMemberId: string): Promise<void> {
     const community = await this.getCommunityOrThrow(communityId);
     if (community.hostId !== currentMemberId) {
-      throw new ForbiddenException('커뮤니티 삭제 권한이 없습니다.');
+      throw new GeneralException(CommunityErrorCode.DELETE_FORBIDDEN);
     }
 
     await this.dataSource.transaction(async (manager) => {
@@ -184,11 +182,11 @@ export class CommunitiesService {
       communityId,
     );
     if (!participant) {
-      throw new NotFoundException('참여자를 찾을 수 없습니다.');
+      throw new GeneralException(CommunityErrorCode.PARTICIPANT_NOT_FOUND);
     }
 
     if (participant.opinion === null) {
-      throw new NotFoundException('기조 발언을 찾을 수 없습니다.');
+      throw new GeneralException(CommunityErrorCode.KEYNOTE_NOT_FOUND);
     }
 
     return {
@@ -280,7 +278,7 @@ export class CommunitiesService {
       id: communityId,
     });
     if (!community) {
-      throw new NotFoundException('커뮤니티를 찾을 수 없습니다.');
+      throw new GeneralException(CommunityErrorCode.NOT_FOUND);
     }
     return community;
   }

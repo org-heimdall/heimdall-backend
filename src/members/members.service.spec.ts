@@ -1,10 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import {
-  ConflictException,
-  NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
 import { In, QueryFailedError } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
@@ -258,12 +253,12 @@ describe('MembersService', () => {
       expect(repository.findOneBy).toHaveBeenCalledWith({ id: 'member-uuid' });
     });
 
-    it('존재하지 않는 회원이면 NotFoundException을 던진다', async () => {
+    it('존재하지 않는 회원이면 NOT_FOUND 에러를 던진다', async () => {
       repository.findOneBy.mockResolvedValue(null);
 
-      await expect(service.findOneOrThrow('없는-uuid')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.findOneOrThrow('없는-uuid')).rejects.toMatchObject({
+        appError: MemberErrorCode.NOT_FOUND,
+      });
     });
   });
 
