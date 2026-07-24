@@ -26,6 +26,11 @@
 - `cause` 옵션은 **원인 예외를 도메인 사실로 완전히 환원하지 못한 채 감쌀 때만** 붙이세요(예: LLM SDK·외부 API의 예상 밖 실패). catch에서 원인을 검사해 분류를 끝낸 기대 가능한 에러(예: unique 위반 → `EMAIL_ALREADY_EXISTS`)는 cause 없이 던집니다. 필터가 cause를 WARN으로 로깅하므로, 정상 비즈니스 흐름이 경고 로그를 만들면 안 됩니다.
 - Swagger 에러 문서화는 `@ApiErrorResponses(카탈로그항목, ...)` 하나로만 하세요(`src/common/exceptions/api-error-responses.decorator.ts`). 수기 `@ApiConflictResponse` 등은 금지 — status·문구가 카탈로그에서 파생되어 불일치가 생길 수 없습니다. 문서화 대상은 **프론트가 분기해야 하는 도메인 에러만**이며, 검증 400·예상 못 한 500은 전 엔드포인트 공통이므로 개별 문서화하지 않습니다.
 
+## Soft Delete
+
+- `SoftDeletableEntity`를 상속한 엔티티(`Member`/`Community`/`CommunityMessage`/`Debate`/`DebateSpeech`)는 물리 삭제하지 않고 `status`(`ResourceStatus`)로 삭제를 표현합니다. TypeORM 네이티브 soft delete를 쓰지 않으므로 **자동 제외 필터가 없습니다.**
+- **조회 시 반드시 `where`에 `status = NORMAL`을 넣어** soft-delete된 행을 제외하세요. 조인으로 끌어오는 soft-delete 엔티티에도 동일하게 적용합니다. 상세 규칙·예시·테스트 가이드는 [`docs/soft-delete.md`](docs/soft-delete.md).
+
 ## Project Structure & Module Organization
 
 NestJS 도메인 모듈 구조입니다.
