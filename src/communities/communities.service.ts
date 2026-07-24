@@ -18,8 +18,6 @@ import { MemberCommunitiesService } from '../member-communities/member-communiti
 import { MemberCommunity } from '../member-communities/entities/member-community.entity';
 import { MemberPreviewDto } from '../members/dto/member.dto';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
-import { GeneralException } from '../common/exceptions/general.exception';
-import { CommunityErrorCode } from './exceptions/community-error-code';
 
 @Injectable()
 export class CommunitiesService {

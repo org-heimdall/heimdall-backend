@@ -32,8 +32,6 @@ import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { CommunityErrorCode } from './exceptions/community-error-code';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { CurrentMember } from '../common/decorators/current-member.decorator';
-import { ApiErrorResponses } from '../common/exceptions/api-error-responses.decorator';
-import { CommunityErrorCode } from './exceptions/community-error-code';
 
 export { CommunityMemberType, CommunitySort };
 
