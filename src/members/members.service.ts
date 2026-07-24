@@ -99,7 +99,7 @@ export class MembersService {
     return MemberDto.from(saved);
   }
 
-  // id로 회원을 조회하고, 없으면 NOT_FOUND 도메인 예외를 던진다.
+  // id로 회원을 조회하고, 없으면 GeneralException(NOT_FOUND)을 던진다.
   async findOneOrThrow(memberId: string): Promise<Member> {
     const member = await this.memberRepository.findOneBy({
       id: memberId,

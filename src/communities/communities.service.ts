@@ -1,5 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { GeneralException } from '../common/exceptions/general.exception';
+import { CommunityErrorCode } from './exceptions/community-error-code';
 import { DataSource, Repository } from 'typeorm';
 import { Community } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
@@ -171,11 +173,11 @@ export class CommunitiesService {
       communityId,
     );
     if (!participant) {
-      throw new NotFoundException('참여자를 찾을 수 없습니다.');
+      throw new GeneralException(CommunityErrorCode.PARTICIPANT_NOT_FOUND);
     }
 
     if (participant.opinion === null) {
-      throw new NotFoundException('기조 발언을 찾을 수 없습니다.');
+      throw new GeneralException(CommunityErrorCode.KEYNOTE_NOT_FOUND);
     }
 
     return {
@@ -268,7 +270,7 @@ export class CommunitiesService {
       status: ResourceStatus.NORMAL,
     });
     if (!community) {
-      throw new NotFoundException('커뮤니티를 찾을 수 없습니다.');
+      throw new GeneralException(CommunityErrorCode.NOT_FOUND);
     }
     return community;
   }
