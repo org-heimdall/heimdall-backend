@@ -6,6 +6,7 @@ import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { Member } from './entities/member.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
+import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 describe('MembersService', () => {
   let service: MembersService;
@@ -27,17 +28,19 @@ describe('MembersService', () => {
     Object.assign(new Error(`pg error ${code}`), { code });
 
   /** signUpDto.password를 해싱해 가진, DB에서 막 읽어온 듯한 Member */
-  const buildMember = async (): Promise<Member> => ({
-    id: 'member-uuid',
-    email: signUpDto.email,
-    password: await bcrypt.hash(signUpDto.password, 10),
-    nickname: signUpDto.nickname,
-    gender: null, // 바꾸지 않은 (전달되지 않은) 값들은 수정하지 않음을 테스트
-    age: null,
-    profileImageUrl: null,
-    socialCredit: 0,
-    rating: 0,
-  });
+  const buildMember = async (): Promise<Member> =>
+    Object.assign(new Member(), {
+      id: 'member-uuid',
+      email: signUpDto.email,
+      password: await bcrypt.hash(signUpDto.password, 10),
+      nickname: signUpDto.nickname,
+      gender: null, // 바꾸지 않은 (전달되지 않은) 값들은 수정하지 않음을 테스트
+      age: null,
+      profileImageUrl: null,
+      socialCredit: 0,
+      rating: 0,
+      status: ResourceStatus.NORMAL,
+    });
 
   beforeEach(async () => {
     repository = {
@@ -80,6 +83,10 @@ describe('MembersService', () => {
       await expect(
         bcrypt.compare(signUpDto.password, savedMember!.password),
       ).resolves.toBe(true);
+
+      // 저장 전 in-memory 엔티티도 NORMAL이어야 isDeleted()가 오판하지 않는다
+      expect(savedMember?.status).toBe(ResourceStatus.NORMAL);
+      expect(savedMember?.isDeleted()).toBe(false);
 
       expect(result).toEqual({
         memberId: 'member-uuid',
@@ -142,6 +149,20 @@ describe('MembersService', () => {
         service.login({ email: signUpDto.email, password: 'wrongpassword' }),
       ).rejects.toMatchObject({
         appError: MemberErrorCode.INVALID_CREDENTIALS,
+      });
+    });
+
+    it('status=NORMAL 조건으로만 조회해 soft-delete된 회원을 제외한다', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.login({ email: signUpDto.email, password: signUpDto.password }),
+      ).rejects.toMatchObject({
+        appError: MemberErrorCode.INVALID_CREDENTIALS,
+      });
+      expect(repository.findOneBy).toHaveBeenCalledWith({
+        email: signUpDto.email,
+        status: ResourceStatus.NORMAL,
       });
     });
   });
@@ -250,7 +271,10 @@ describe('MembersService', () => {
       const result = await service.findOneOrThrow('member-uuid');
 
       expect(result).toBe(member);
-      expect(repository.findOneBy).toHaveBeenCalledWith({ id: 'member-uuid' });
+      expect(repository.findOneBy).toHaveBeenCalledWith({
+        id: 'member-uuid',
+        status: ResourceStatus.NORMAL,
+      });
     });
 
     it('존재하지 않는 회원이면 NOT_FOUND 에러를 던진다', async () => {
@@ -283,6 +307,7 @@ describe('MembersService', () => {
       expect(repository.findBy).toHaveBeenCalledTimes(1);
       expect(repository.findBy).toHaveBeenCalledWith({
         id: In(['id-1', 'id-2']),
+        status: ResourceStatus.NORMAL,
       });
     });
   });

@@ -12,6 +12,7 @@
 - REST 엔드포인트 추가 시 Swagger 데코레이터(`@ApiOperation` 등)를 함께 작성해주세요.
 - DTO는 `class` + `class-validator`로 정의하고, 형식 검증은 DTO에서 처리해주세요.
 - 에러 처리는 아래 **에러 처리** 섹션의 규칙을 따르세요.
+- `SoftDeletableEntity` 상속 엔티티는 조회 시 `status = NORMAL` 필터가 **필수**입니다(자동 적용 안 됨). 규칙은 [`docs/soft-delete.md`](docs/soft-delete.md).
 
 ## TypeORM 1.0 — 코드 작성 전 필독
 

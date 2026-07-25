@@ -1,7 +1,16 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+import { Member } from '../../members/entities/member.entity';
+import { Debate } from './debate.entity';
+import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
 @Entity('debate_speech')
-export class DebateSpeech {
+export class DebateSpeech extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -16,4 +25,12 @@ export class DebateSpeech {
 
   @Column({ type: 'text', array: true, nullable: true })
   imageUrl: string[] | null;
+
+  @ManyToOne(() => Member, { nullable: false })
+  @JoinColumn({ name: 'member_id' })
+  member: Member;
+
+  @ManyToOne(() => Debate, { nullable: false })
+  @JoinColumn({ name: 'debate_id' })
+  debate: Debate;
 }

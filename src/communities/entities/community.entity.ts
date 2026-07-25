@@ -4,6 +4,7 @@ import {
   Entity,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
 export enum CommunityState {
   WAITING = 'WAITING',
@@ -12,7 +13,7 @@ export enum CommunityState {
 }
 
 @Entity('community')
-export class Community {
+export class Community extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -36,4 +37,16 @@ export class Community {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  // 커뮤니티 생성 시 초기 상태 불변식(대기중, 호스트 1명, 링크 없음)을 강제하는 팩토리
+  static open(hostId: string, hostNickname: string, topic: string): Community {
+    const community = new Community();
+    community.state = CommunityState.WAITING;
+    community.hostId = hostId;
+    community.hostNickname = hostNickname;
+    community.memberCount = 1;
+    community.topic = topic;
+    community.communityLink = null;
+    return community;
+  }
 }

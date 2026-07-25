@@ -9,6 +9,7 @@ import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
 import { Member } from './entities/member.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
+import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 const BCRYPT_SALT_ROUNDS = 10;
 
@@ -35,13 +36,13 @@ export class MembersService {
       BCRYPT_SALT_ROUNDS,
     );
 
-    const member = this.memberRepository.create({
+    const member = Member.register({
       email: createMemberDto.email,
       password,
       nickname: createMemberDto.nickname,
-      gender: createMemberDto.gender ?? null,
-      age: createMemberDto.age ?? null,
-      profileImageUrl: createMemberDto.profileImageUrl ?? null,
+      gender: createMemberDto.gender,
+      age: createMemberDto.age,
+      profileImageUrl: createMemberDto.profileImageUrl,
     });
 
     try {
@@ -58,6 +59,7 @@ export class MembersService {
   async login(loginMemberDto: LoginMemberDto): Promise<MemberDto> {
     const member = await this.memberRepository.findOneBy({
       email: loginMemberDto.email,
+      status: ResourceStatus.NORMAL,
     });
 
     // 회원이 없어도 더미 해시와 비교해 bcrypt 비용을 동일하게 치른다(타이밍 공격 완화).
@@ -78,7 +80,7 @@ export class MembersService {
   ): Promise<MemberDto> {
     const member = await this.findOneOrThrow(memberId);
 
-    const { currentPassword, newPassword, ...profile } = updateMemberDto;
+    const { currentPassword, newPassword } = updateMemberDto;
 
     // null/undefined는 비밀번호 미변경으로 취급해 bcrypt.hash에 도달하지 않게 한다.
     if (newPassword != null) {
@@ -91,12 +93,13 @@ export class MembersService {
     }
 
     // 전달되지 않은 필드는 기존 값을 유지한다(부분 수정).
-    if (profile.nickname !== undefined) member.nickname = profile.nickname;
-    if (profile.gender !== undefined) member.gender = profile.gender;
-    if (profile.age !== undefined) member.age = profile.age;
-    if (profile.profileImageUrl !== undefined) {
-      member.profileImageUrl = profile.profileImageUrl;
-    }
+    // DTO를 통째로 넘기지 않고 필드를 명시해, 향후 DTO에 필드가 추가돼도 엔티티에 흘러들지 않게 한다.
+    member.updateProfile({
+      nickname: updateMemberDto.nickname,
+      gender: updateMemberDto.gender,
+      age: updateMemberDto.age,
+      profileImageUrl: updateMemberDto.profileImageUrl,
+    });
 
     const saved = await this.memberRepository.save(member);
     return MemberDto.from(saved);
@@ -104,7 +107,10 @@ export class MembersService {
 
   // id로 회원을 조회하고, 없으면 GeneralException(NOT_FOUND)을 던진다.
   async findOneOrThrow(memberId: string): Promise<Member> {
-    const member = await this.memberRepository.findOneBy({ id: memberId });
+    const member = await this.memberRepository.findOneBy({
+      id: memberId,
+      status: ResourceStatus.NORMAL,
+    });
     if (!member) {
       throw new GeneralException(MemberErrorCode.NOT_FOUND);
     }
@@ -116,7 +122,10 @@ export class MembersService {
     if (ids.length === 0) {
       return [];
     }
-    return this.memberRepository.findBy({ id: In(ids) });
+    return this.memberRepository.findBy({
+      id: In(ids),
+      status: ResourceStatus.NORMAL,
+    });
   }
 
   private isUniqueViolation(error: unknown): boolean {

@@ -3,7 +3,6 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunitiesService } from './communities.service';
-import { CommunityErrorCode } from './exceptions/community-error-code';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
@@ -13,12 +12,15 @@ import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { MembersService } from '../members/members.service';
 import { MemberCommunitiesService } from '../member-communities/member-communities.service';
 import { Member } from '../members/entities/member.entity';
+import { ResourceStatus } from '../common/entities/resource-status.enum';
+import { CommunityErrorCode } from './exceptions/community-error-code';
 
 describe('CommunitiesService', () => {
   let service: CommunitiesService;
   let communityRepository: {
     createQueryBuilder: jest.Mock;
     findOneBy: jest.Mock;
+    save: jest.Mock;
   };
   let themeRepository: { find: jest.Mock };
   let communityFavoriteRepository: {
@@ -35,6 +37,7 @@ describe('CommunitiesService', () => {
     upsertKeynote: jest.Mock;
   };
   let queryBuilder: {
+    where: jest.Mock;
     orderBy: jest.Mock;
     skip: jest.Mock;
     take: jest.Mock;
@@ -49,21 +52,24 @@ describe('CommunitiesService', () => {
   >;
   let manager: { getRepository: jest.Mock };
 
-  const buildMember = (overrides: Partial<Member> = {}): Member => ({
-    id: 'member-uuid',
-    email: 'a@b.com',
-    password: 'hash',
-    nickname: '헤임달',
-    gender: null,
-    age: null,
-    profileImageUrl: null,
-    socialCredit: 0,
-    rating: 0,
-    ...overrides,
-  });
+  const buildMember = (overrides: Partial<Member> = {}): Member =>
+    Object.assign(new Member(), {
+      id: 'member-uuid',
+      email: 'a@b.com',
+      password: 'hash',
+      nickname: '헤임달',
+      gender: null,
+      age: null,
+      profileImageUrl: null,
+      socialCredit: 0,
+      rating: 0,
+      status: ResourceStatus.NORMAL,
+      ...overrides,
+    });
 
   beforeEach(async () => {
     queryBuilder = {
+      where: jest.fn(() => queryBuilder),
       orderBy: jest.fn(() => queryBuilder),
       skip: jest.fn(() => queryBuilder),
       take: jest.fn(() => queryBuilder),
@@ -74,6 +80,7 @@ describe('CommunitiesService', () => {
     communityRepository = {
       createQueryBuilder: jest.fn(() => queryBuilder),
       findOneBy: jest.fn(),
+      save: jest.fn((e) => Promise.resolve(e)),
     };
     themeRepository = { find: jest.fn() };
     communityFavoriteRepository = {
@@ -86,9 +93,11 @@ describe('CommunitiesService', () => {
       getRepository: jest.fn((entity: unknown) => {
         if (!txRepos.has(entity)) {
           txRepos.set(entity, {
-            create: jest.fn(<T>(e: T): T => e),
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+            create: jest.fn((e) => e),
+            // TypeORM save처럼 저장된 엔티티에 생성 id를 채워 반환한다
             save: jest.fn((e) =>
-              Promise.resolve({ id: 'new-community', ...e }),
+              Promise.resolve({ ...e, id: 'new-community' }),
             ),
             delete: jest.fn().mockResolvedValue({ affected: 1 }),
           });
@@ -191,6 +200,19 @@ describe('CommunitiesService', () => {
 
       expect(queryBuilder.innerJoin).not.toHaveBeenCalled();
     });
+
+    it('status=NORMAL 필터를 적용해 soft-delete된 커뮤니티를 제외한다', async () => {
+      queryBuilder.getMany.mockResolvedValue([]);
+      queryBuilder.getCount.mockResolvedValue(0);
+      membersService.findByIds.mockResolvedValue([]);
+
+      await service.findAll(1, 10);
+
+      expect(queryBuilder.where).toHaveBeenCalledWith(
+        'community.status = :status',
+        { status: ResourceStatus.NORMAL },
+      );
+    });
   });
 
   describe('create', () => {
@@ -210,13 +232,17 @@ describe('CommunitiesService', () => {
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
 
       const communityTxRepo = txRepos.get(Community)!;
-      expect(communityTxRepo.create).toHaveBeenCalledWith(
+      // Community.open 팩토리가 만든 초기 불변식 엔티티를 그대로 save 한다
+      expect(communityTxRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
+          // 저장 전 in-memory 엔티티도 NORMAL이어야 isDeleted()가 오판하지 않는다
+          status: ResourceStatus.NORMAL,
           state: CommunityState.WAITING,
           hostId: 'host-uuid',
           hostNickname: '호스트',
           memberCount: 1,
           topic: 'AI 규제',
+          communityLink: null,
         }),
       );
       // 호스트의 member_community(기조발언)를 같은 트랜잭션 manager로 생성한다
@@ -265,21 +291,26 @@ describe('CommunitiesService', () => {
       ).rejects.toMatchObject({ appError: CommunityErrorCode.NOT_FOUND });
     });
 
-    it('host면 소유 리소스와 참여 행을 트랜잭션으로 삭제한다', async () => {
-      communityRepository.findOneBy.mockResolvedValue({
+    it('host면 커뮤니티를 물리 삭제가 아니라 status=DELETED로 soft-delete한다', async () => {
+      const community = Object.assign(new Community(), {
         id: 'community-uuid',
         hostId: 'host-uuid',
+        status: ResourceStatus.NORMAL,
       });
+      communityRepository.findOneBy.mockResolvedValue(community);
 
       await service.delete('community-uuid', 'host-uuid');
 
-      expect(memberCommunitiesService.deleteByCommunity).toHaveBeenCalledWith(
-        'community-uuid',
-        manager,
+      // 상태만 전환해 저장한다
+      expect(communityRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'community-uuid',
+          status: ResourceStatus.DELETED,
+        }),
       );
-      expect(txRepos.get(Community)!.delete).toHaveBeenCalledWith({
-        id: 'community-uuid',
-      });
+      // 자식 리소스와 참여 행은 건드리지 않는다(물리 삭제 없음)
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(memberCommunitiesService.deleteByCommunity).not.toHaveBeenCalled();
     });
   });
 

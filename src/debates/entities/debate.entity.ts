@@ -1,4 +1,12 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
+import { Community } from '../../communities/entities/community.entity';
+import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
 export enum DebateTurn {
   HOST = 'HOST',
@@ -6,7 +14,7 @@ export enum DebateTurn {
 }
 
 @Entity('debate')
-export class Debate {
+export class Debate extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -36,4 +44,8 @@ export class Debate {
 
   @Column({ type: 'uuid', nullable: true })
   winnerId: string | null;
+
+  @ManyToOne(() => Community, { nullable: false })
+  @JoinColumn({ name: 'community_id' })
+  community: Community;
 }
