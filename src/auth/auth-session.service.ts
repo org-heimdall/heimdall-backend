@@ -4,10 +4,6 @@ import { AuthTokenDto } from './dto/auth-token.dto';
 import { RefreshTokenService } from './refresh-token.service';
 import { TokenService } from './token.service';
 
-/**
- * "회원 한 명의 로그인 세션"의 생명주기(발급 · 회전 · 종료)를 소유한다.
- * 로컬 로그인(members)과 소셜 로그인(auth)이 같은 토큰 발급 규칙을 공유하도록 한 곳에 모았다.
- */
 @Injectable()
 export class AuthSessionService {
   constructor(

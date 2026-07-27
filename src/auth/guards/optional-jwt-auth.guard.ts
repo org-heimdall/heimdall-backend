@@ -5,13 +5,10 @@ import { GeneralException } from '../../common/exceptions/general.exception';
 import { AuthenticatedRequest } from '../../common/types/authenticated-request';
 import { AuthErrorCode } from '../exceptions/auth-error-code';
 
-/**
- * APP_GUARD로 전역 등록되는 옵셔널 인증 가드.
- * 토큰이 있으면 검증해 request.user를 채우고, 없으면 비인증으로 통과시킨다.
- * "이 라우트에 인증이 필요한가"는 @CurrentMember() 사용 여부가 결정한다.
- */
 @Injectable()
 export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
+  // 토큰이 있으면 검증해 request.user를 채우고, 없으면 비인증으로 통과시킨다.
+  // "이 라우트에 인증이 필요한가"는 @CurrentMember() 사용 여부가 결정한다.
   handleRequest<TUser>(
     err: unknown,
     user: TUser | false,

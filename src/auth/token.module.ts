@@ -6,10 +6,6 @@ import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenService } from './refresh-token.service';
 import { TokenService } from './token.service';
 
-/**
- * 토큰 발급·검증만 담당하는 하위 모듈. 회원 조회에 의존하지 않으므로
- * MembersModule(로컬 로그인)과 AuthModule(소셜 로그인)이 순환 없이 함께 가져다 쓴다.
- */
 @Module({
   imports: [
     TypeOrmModule.forFeature([RefreshToken]),
