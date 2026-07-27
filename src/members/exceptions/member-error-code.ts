@@ -28,4 +28,10 @@ export const MemberErrorCode = {
     title: 'Invalid Current Password',
     detail: '현재 비밀번호가 올바르지 않습니다.',
   },
+  SOCIAL_ACCOUNT_NO_PASSWORD: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'MEMBER.SOCIAL_ACCOUNT_NO_PASSWORD',
+    title: 'Social Account Has No Password',
+    detail: '소셜 로그인 계정은 비밀번호를 사용할 수 없습니다.',
+  },
 } as const satisfies Record<string, AppError>;
