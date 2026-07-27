@@ -4,7 +4,7 @@ import { In, QueryFailedError } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
-import { Member } from './entities/member.entity';
+import { MEMBER_EMAIL_UNIQUE, Member } from './entities/member.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 
@@ -23,9 +23,9 @@ describe('MembersService', () => {
     nickname: '헤임달',
   };
 
-  /** pg 드라이버가 던지는 에러 모양(code 프로퍼티를 가진 Error) */
-  const pgDriverError = (code: string): Error =>
-    Object.assign(new Error(`pg error ${code}`), { code });
+  /** pg 드라이버가 던지는 에러 모양(code=SQLSTATE, unique 위반이면 constraint=제약 이름) */
+  const pgDriverError = (code: string, constraint?: string): Error =>
+    Object.assign(new Error(`pg error ${code}`), { code, constraint });
 
   /** signUpDto.password를 해싱해 가진, DB에서 막 읽어온 듯한 Member */
   const buildMember = async (): Promise<Member> =>
@@ -101,14 +101,37 @@ describe('MembersService', () => {
       expect(result).not.toHaveProperty('password');
     });
 
-    it('이메일이 중복되면 EMAIL_ALREADY_EXISTS 에러를 던진다', async () => {
+    it('이메일 unique 제약을 위반하면 EMAIL_ALREADY_EXISTS 에러를 던진다', async () => {
       repository.save.mockRejectedValue(
-        new QueryFailedError('INSERT', [], pgDriverError('23505')),
+        new QueryFailedError(
+          'INSERT',
+          [],
+          pgDriverError('23505', MEMBER_EMAIL_UNIQUE),
+        ),
       );
 
       await expect(service.signUp(signUpDto)).rejects.toMatchObject({
         appError: MemberErrorCode.EMAIL_ALREADY_EXISTS,
       });
+    });
+
+    // 두 번째 unique 제약이 생겼을 때 이메일 중복으로 오분류하지 않는지 확인하는 회귀 테스트
+    it('매핑되지 않은 unique 제약 위반은 그대로 전파한다', async () => {
+      const error = new QueryFailedError(
+        'INSERT',
+        [],
+        pgDriverError('23505', 'UQ_member_nickname'),
+      );
+      repository.save.mockRejectedValue(error);
+
+      await expect(service.signUp(signUpDto)).rejects.toBe(error);
+    });
+
+    it('제약 이름이 없는 unique 위반은 그대로 전파한다', async () => {
+      const error = new QueryFailedError('INSERT', [], pgDriverError('23505'));
+      repository.save.mockRejectedValue(error);
+
+      await expect(service.signUp(signUpDto)).rejects.toBe(error);
     });
 
     it('unique 위반이 아닌 DB 에러는 그대로 전파한다', async () => {
