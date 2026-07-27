@@ -15,7 +15,7 @@ import { MemberErrorCode } from './exceptions/member-error-code';
 import { OAuthProviderType } from './members.enums';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 
-/** 소셜 계정 연동 행을 만들 때 필요한 값 */
+// 소셜 계정 연동 행을 만들 때 필요한 값
 interface OAuthAccountLink {
   provider: OAuthProviderType;
   providerId: string;
@@ -24,13 +24,11 @@ interface OAuthAccountLink {
 
 const BCRYPT_SALT_ROUNDS = 10;
 
-/** PostgreSQL unique_violation */
+// PostgreSQL unique_violation
 const PG_UNIQUE_VIOLATION = '23505';
 
-/**
- * 존재하지 않는 이메일로 로그인해도 실제 회원과 동일한 bcrypt 비용을 치르게 하는 더미 해시.
- * 저장 해시와 동일한 cost(10 rounds)라 비교 시간이 같아 이메일 존재 여부가 타이밍으로 드러나지 않는다.
- */
+// 존재하지 않는 이메일로 로그인해도 실제 회원과 동일한 bcrypt 비용을 치르게 하는 더미 해시.
+// 저장 해시와 동일한 cost(10 rounds)라 비교 시간이 같아 이메일 존재 여부가 타이밍으로 드러나지 않는다.
 const DUMMY_PASSWORD_HASH =
   '$2b$10$P3jRv..bS0gDS8tKkfnkmOrEIlvumxbN8oBrj0mCkTTy6hSPGp.2';
 
