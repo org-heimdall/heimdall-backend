@@ -21,9 +21,7 @@ async function bootstrap() {
     .setTitle('Heimdall Backend API') // 팀 프로젝트 API 이름
     .setDescription('Heimdall 서비스의 백엔드 API 명세서')
     .setVersion('1.0')
-    .addBearerAuth() // JWT Bearer 인증 스킴 정의
-    // 전역 적용: 라우트마다 @ApiBearerAuth()를 붙이지 않아도 Swagger UI에 자물쇠가 표시된다.
-    .addSecurityRequirements('bearer')
+    .addBearerAuth() // JWT Bearer 인증 스킴 정의 (요구는 @ApiAuthRequired() 라우트에만 적용)
     .build();
 
   // Swagger 문서 생성 및 엔드포인트 설정

@@ -1,4 +1,5 @@
 import { applyDecorators } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
 import { AuthErrorCode } from '../../auth/exceptions/auth-error-code';
 import { ApiErrorResponses } from '../exceptions/api-error-responses.decorator';
 
@@ -9,6 +10,7 @@ import { ApiErrorResponses } from '../exceptions/api-error-responses.decorator';
  */
 export function ApiAuthRequired() {
   return applyDecorators(
+    ApiBearerAuth(),
     ApiErrorResponses(
       AuthErrorCode.UNAUTHORIZED,
       AuthErrorCode.INVALID_TOKEN,
