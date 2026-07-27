@@ -91,6 +91,7 @@ export class MembersService {
     return this.authSessionService.start(MemberDto.from(member));
   }
 
+  // 회원 정보 수정. 대상은 호출자 자신으로 고정이며, memberId는 액세스 토큰에서만 온다.
   async update(
     memberId: string,
     updateMemberDto: UpdateMemberDto,

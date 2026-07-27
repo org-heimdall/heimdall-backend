@@ -59,9 +59,10 @@ export class MembersController {
     MemberErrorCode.INVALID_CURRENT_PASSWORD,
     MemberErrorCode.SOCIAL_ACCOUNT_NO_PASSWORD,
   )
-  @Patch('/:memberId')
-  async update(
-    @Param('memberId', ParseUUIDPipe) memberId: string,
+  @ApiAuthRequired()
+  @Patch('/me')
+  async updateMe(
+    @CurrentMember() memberId: string,
     @Body() request: UpdateMemberDto,
   ): Promise<MemberDto> {
     return this.membersService.update(memberId, request);
