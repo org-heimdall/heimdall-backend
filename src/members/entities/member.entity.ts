@@ -1,12 +1,19 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
+/**
+ * 이메일 unique 제약 이름. 자동 생성 이름(UQ_<해시>)은 코드에서 참조할 수 없어 명시적으로 부여한다.
+ * 서비스가 unique 위반을 제약 이름으로 분류하므로 엔티티와 분류기의 단일 출처가 된다.
+ */
+export const MEMBER_EMAIL_UNIQUE = 'UQ_member_email';
+
 @Entity('member')
+@Unique(MEMBER_EMAIL_UNIQUE, ['email'])
 export class Member extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar', unique: true })
+  @Column({ type: 'varchar' })
   email: string;
 
   @Column({ type: 'varchar' })

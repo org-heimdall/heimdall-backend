@@ -1,20 +1,27 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, QueryFailedError, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { AppError } from '../common/exceptions/app-error.interface';
 import { GeneralException } from '../common/exceptions/general.exception';
+import { getUniqueViolationConstraint } from '../common/exceptions/unique-violation.util';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { LoginMemberDto } from './dto/login-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
-import { Member } from './entities/member.entity';
+import { MEMBER_EMAIL_UNIQUE, Member } from './entities/member.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 const BCRYPT_SALT_ROUNDS = 10;
 
-/** PostgreSQL unique_violation */
-const PG_UNIQUE_VIOLATION = '23505';
+/**
+ * member 테이블의 unique 제약 이름 → 도메인 에러.
+ * unique 제약을 추가할 때 엔티티의 @Unique와 이 맵에 한 줄씩만 더하면 분류가 따라온다.
+ */
+const UNIQUE_VIOLATION_ERRORS: Record<string, AppError> = {
+  [MEMBER_EMAIL_UNIQUE]: MemberErrorCode.EMAIL_ALREADY_EXISTS,
+};
 
 /**
  * 존재하지 않는 이메일로 로그인해도 실제 회원과 동일한 bcrypt 비용을 치르게 하는 더미 해시.
@@ -49,8 +56,9 @@ export class MembersService {
       const saved = await this.memberRepository.save(member);
       return MemberDto.from(saved);
     } catch (error) {
-      if (this.isUniqueViolation(error)) {
-        throw new GeneralException(MemberErrorCode.EMAIL_ALREADY_EXISTS);
+      const appError = this.resolveUniqueViolation(error);
+      if (appError) {
+        throw new GeneralException(appError);
       }
       throw error;
     }
@@ -128,10 +136,14 @@ export class MembersService {
     });
   }
 
-  private isUniqueViolation(error: unknown): boolean {
-    return (
-      error instanceof QueryFailedError &&
-      (error.driverError as { code?: string })?.code === PG_UNIQUE_VIOLATION
-    );
+  // 위반된 제약 이름으로 unique 위반을 도메인 에러로 분류한다.
+  // 매핑되지 않은 제약(또는 unique 위반이 아님)은 null을 반환해 호출부가 원본 에러를 전파하게 한다.
+  // 추측으로 특정 에러에 흡수시키면 제약이 늘어날 때마다 오분류가 재발하기 때문이다.
+  private resolveUniqueViolation(error: unknown): AppError | null {
+    const constraint = getUniqueViolationConstraint(error);
+    if (!constraint) {
+      return null;
+    }
+    return UNIQUE_VIOLATION_ERRORS[constraint] ?? null;
   }
 }
