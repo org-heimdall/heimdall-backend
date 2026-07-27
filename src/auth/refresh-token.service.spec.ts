@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { IsNull } from 'typeorm';
+import { FindOperator, IsNull } from 'typeorm';
 import { createHash } from 'node:crypto';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { AuthErrorCode } from './exceptions/auth-error-code';
@@ -14,7 +14,15 @@ const sha256 = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
 
 /** expect.any의 반환 타입이 any라, 인자 위치에서 쓰려면 좁혀 준다 */
-const anyDate = (): Date => expect.any(Date) as Date;
+const anyExpression = (): (() => string) =>
+  expect.any(Function) as () => string;
+
+/** update()의 SET 인자에 들어간 revokedAt 표현식을 SQL로 펼친다 */
+const revokedAtSql = (set: unknown): string =>
+  (set as { revokedAt: () => string }).revokedAt();
+
+/** repository.update(where, set) 호출의 SET 인자 */
+const setArgOf = (call: unknown): unknown => (call as unknown[])[1];
 
 const issuedToken = (token: string, expiresInMs = HOUR): IssuedToken => ({
   token,
@@ -30,7 +38,7 @@ describe('RefreshTokenService', () => {
     update: jest.Mock;
     manager: { transaction: jest.Mock };
   };
-  let entityManager: { save: jest.Mock };
+  let entityManager: { update: jest.Mock; insert: jest.Mock };
 
   /** DB에서 막 읽어온 듯한 활성 RefreshToken */
   const storedToken = (
@@ -49,10 +57,8 @@ describe('RefreshTokenService', () => {
 
   beforeEach(async () => {
     entityManager = {
-      save: jest.fn((entity: { id?: string }) => {
-        entity.id ??= 'new-token-id';
-        return Promise.resolve(entity);
-      }),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      insert: jest.fn().mockResolvedValue({}),
     };
 
     repository = {
@@ -92,7 +98,7 @@ describe('RefreshTokenService', () => {
   });
 
   describe('rotate', () => {
-    it('새 토큰을 저장하고 이전 토큰을 대체 이력과 함께 폐기한다', async () => {
+    it('이전 토큰을 대체 이력과 함께 폐기하고 새 토큰을 저장한다', async () => {
       const current = storedToken('old-token');
       repository.findOneBy.mockResolvedValue(current);
 
@@ -103,15 +109,84 @@ describe('RefreshTokenService', () => {
         tokenHash: sha256('old-token'),
       });
 
-      // 새 토큰 저장과 이전 토큰 폐기는 한 트랜잭션 안에서 일어난다
+      // 폐기와 새 토큰 저장은 한 트랜잭션 안에서 일어난다
       expect(repository.manager.transaction).toHaveBeenCalledTimes(1);
-      expect(entityManager.save).toHaveBeenCalledTimes(2);
 
-      const [issued] = entityManager.save.mock.calls[0] as [RefreshToken];
+      const [, where, values] = entityManager.update.mock.calls[0] as [
+        unknown,
+        { id: string; revokedAt: unknown; expiresAt: FindOperator<Date> },
+        { replacedById: string },
+      ];
+      // 폐기는 미폐기·미만료를 조건으로 건다(경합 시 한쪽만 성공)
+      expect(where).toMatchObject({ id: current.id, revokedAt: IsNull() });
+      // 만료 판정도 폐기 시각도 앱이 아니라 DB 시계(NOW()) 기준이다
+      expect(where.expiresAt.getSql?.('"expires_at"')).toBe(
+        '"expires_at" > NOW()',
+      );
+      expect(revokedAtSql(values)).toBe('NOW()');
+
+      const [[, issued]] = entityManager.insert.mock.calls as [
+        [unknown, RefreshToken],
+      ];
       expect(issued.tokenHash).toBe(sha256('new-token'));
+      expect(issued.revokedAt).toBeNull();
+      // 대체 이력은 폐기 UPDATE가 새 토큰 id를 그대로 가리킨다
+      expect(values.replacedById).toBe(issued.id);
+    });
 
-      expect(current.revokedAt).not.toBeNull();
-      expect(current.replacedById).toBe(issued.id);
+    it('폐기가 0행이면 새 토큰을 발급하지 않는다', async () => {
+      repository.findOneBy.mockResolvedValue(storedToken('old-token'));
+      entityManager.update.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        service.rotate(MEMBER_ID, 'old-token', issuedToken('new-token')),
+      ).rejects.toMatchObject({
+        appError: AuthErrorCode.INVALID_REFRESH_TOKEN,
+      });
+
+      expect(entityManager.insert).not.toHaveBeenCalled();
+    });
+
+    it('폐기가 0행이고 그 사이 폐기된 토큰이면(동시 회전) 회원의 모든 활성 토큰을 폐기한다', async () => {
+      // 검증 시점엔 활성, 폐기 실패 후 재조회 시점엔 경합 상대가 이미 회전시킨 상태
+      repository.findOneBy
+        .mockResolvedValueOnce(storedToken('old-token'))
+        .mockResolvedValueOnce(
+          storedToken('old-token', {
+            revokedAt: new Date(),
+            replacedById: 'rival-token-id',
+          }),
+        );
+      entityManager.update.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        service.rotate(MEMBER_ID, 'old-token', issuedToken('new-token')),
+      ).rejects.toMatchObject({
+        appError: AuthErrorCode.INVALID_REFRESH_TOKEN,
+      });
+
+      expect(repository.update).toHaveBeenCalledWith(
+        { memberId: MEMBER_ID, revokedAt: IsNull() },
+        { revokedAt: anyExpression() },
+      );
+    });
+
+    it('폐기가 0행이고 그 사이 만료된 토큰이면 다른 세션까지 끊지는 않는다', async () => {
+      // DB 시계로는 만료됐지만 앱이 읽은 시점엔 아직 유효했던 경우
+      repository.findOneBy
+        .mockResolvedValueOnce(storedToken('old-token'))
+        .mockResolvedValueOnce(
+          storedToken('old-token', { expiresAt: new Date(Date.now() - HOUR) }),
+        );
+      entityManager.update.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        service.rotate(MEMBER_ID, 'old-token', issuedToken('new-token')),
+      ).rejects.toMatchObject({
+        appError: AuthErrorCode.INVALID_REFRESH_TOKEN,
+      });
+
+      expect(repository.update).not.toHaveBeenCalled();
     });
 
     it('등록되지 않은 토큰이면 INVALID_REFRESH_TOKEN 에러를 던진다', async () => {
@@ -158,7 +233,7 @@ describe('RefreshTokenService', () => {
 
       expect(repository.update).toHaveBeenCalledWith(
         { memberId: MEMBER_ID, revokedAt: IsNull() },
-        { revokedAt: anyDate() },
+        { revokedAt: anyExpression() },
       );
       expect(repository.manager.transaction).not.toHaveBeenCalled();
     });
@@ -191,7 +266,11 @@ describe('RefreshTokenService', () => {
           tokenHash: sha256('refresh-token-1'),
           revokedAt: IsNull(),
         },
-        { revokedAt: anyDate() },
+        { revokedAt: anyExpression() },
+      );
+      // 폐기 시각은 DB 시계로 남긴다
+      expect(revokedAtSql(setArgOf(repository.update.mock.calls[0]))).toBe(
+        'NOW()',
       );
     });
 
@@ -210,23 +289,12 @@ describe('RefreshTokenService', () => {
 
       expect(repository.update).toHaveBeenCalledWith(
         { memberId: MEMBER_ID, revokedAt: IsNull() },
-        { revokedAt: anyDate() },
+        { revokedAt: anyExpression() },
       );
-    });
-  });
-
-  describe('RefreshToken.revoke', () => {
-    it('이미 폐기된 토큰의 최초 폐기 이력을 덮어쓰지 않는다', () => {
-      const firstRevokedAt = new Date(Date.now() - HOUR);
-      const token = storedToken('token', {
-        revokedAt: firstRevokedAt,
-        replacedById: 'successor-id',
-      });
-
-      token.revoke(new Date(), 'another-id');
-
-      expect(token.revokedAt).toBe(firstRevokedAt);
-      expect(token.replacedById).toBe('successor-id');
+      // 폐기 시각은 DB 시계로 남긴다
+      expect(revokedAtSql(setArgOf(repository.update.mock.calls[0]))).toBe(
+        'NOW()',
+      );
     });
   });
 });

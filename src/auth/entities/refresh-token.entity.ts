@@ -53,12 +53,4 @@ export class RefreshToken {
   isActive(now: Date): boolean {
     return this.revokedAt === null && this.expiresAt.getTime() > now.getTime();
   }
-
-  // 토큰을 폐기한다. 회전이면 대체 토큰 id를 남겨 체인을 기록한다.
-  revoke(now: Date, replacedById: string | null = null): void {
-    // 이미 폐기된 토큰의 최초 폐기 시각·대체 이력은 재사용 감지의 증거이므로 덮어쓰지 않는다.
-    if (this.revokedAt !== null) return;
-    this.revokedAt = now;
-    this.replacedById = replacedById;
-  }
 }
