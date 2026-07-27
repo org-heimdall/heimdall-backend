@@ -13,6 +13,7 @@
 - DTO는 `class` + `class-validator`로 정의하고, 형식 검증은 DTO에서 처리해주세요.
 - 에러 처리는 아래 **에러 처리** 섹션의 규칙을 따르세요.
 - `SoftDeletableEntity` 상속 엔티티는 조회 시 `status = NORMAL` 필터가 **필수**입니다(자동 적용 안 됨). 규칙은 [`docs/soft-delete.md`](docs/soft-delete.md).
+- 전역 인증 가드는 **옵셔널**입니다(토큰 없으면 통과). 사용자 컨텍스트가 필요한 라우트는 반드시 `@CurrentMember()`로 memberId를 받으세요 — 이 데코레이터를 쓰는 것이 곧 "인증 필수" 선언이며, 빠뜨리면 라우트가 조용히 공개됩니다.
 
 ## TypeORM 1.0 — 코드 작성 전 필독
 
