@@ -27,6 +27,17 @@ import * as Joi from 'joi';
         PG_USER: Joi.string().required(),
         PG_PASSWORD: Joi.string().required(),
         PG_DATABASE: Joi.string().required(),
+
+        // access/refresh secret은 분리한다(혼용 토큰 원천 차단). 값이 같으면 부팅을 막는다.
+        JWT_ACCESS_SECRET: Joi.string().min(32).required(),
+        JWT_ACCESS_EXPIRES_IN: Joi.string().default('30m'),
+        JWT_REFRESH_SECRET: Joi.string()
+          .min(32)
+          .required()
+          .disallow(Joi.ref('JWT_ACCESS_SECRET')),
+        JWT_REFRESH_EXPIRES_IN: Joi.string().default('14d'),
+
+        GOOGLE_CLIENT_ID: Joi.string().required(),
       }),
     }),
     TypeOrmModule.forRootAsync({
