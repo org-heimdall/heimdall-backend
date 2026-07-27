@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { CommunitiesModule } from './communities/communities.module';
 import { MemberCommunitiesModule } from './member-communities/member-communities.module';
@@ -54,6 +55,7 @@ import * as Joi from 'joi';
         namingStrategy: new SnakeNamingStrategy(),
       }),
     }),
+    AuthModule,
     CommunitiesModule,
     MemberCommunitiesModule,
     MembersModule,
