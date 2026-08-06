@@ -14,7 +14,6 @@ import {
 import { ParsePositiveIntPipe } from '../common/pipes/parse-positive-int.pipe';
 import {
   ApiCreatedResponse,
-  ApiHeader,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
@@ -31,6 +30,7 @@ import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { CommunityErrorCode } from './exceptions/community-error-code';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
+import { ApiAuthRequired } from '../common/decorators/api-auth-required.decorator';
 import { CurrentMember } from '../common/decorators/current-member.decorator';
 
 export { CommunityMemberType, CommunitySort };
@@ -82,13 +82,9 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티 생성',
   })
-  @ApiHeader({
-    name: 'X-Member-Id',
-    required: true,
-    description: '현재 회원 id',
-  })
   @ApiCreatedResponse({ type: CommunityDto })
   @ApiErrorResponses(MemberErrorCode.NOT_FOUND)
+  @ApiAuthRequired()
   @Post()
   async create(
     @CurrentMember() memberId: string,
@@ -100,17 +96,13 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티 삭제',
   })
-  @ApiHeader({
-    name: 'X-Member-Id',
-    required: true,
-    description: '현재 회원 id',
-  })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiNoContentResponse({ description: '커뮤니티 삭제 성공' })
   @ApiErrorResponses(
     CommunityErrorCode.NOT_FOUND,
     CommunityErrorCode.DELETE_FORBIDDEN,
   )
+  @ApiAuthRequired()
   @Delete('/:communityId')
   @HttpCode(204)
   async delete(
@@ -166,14 +158,10 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티에 대한 나의 기조 발언 작성/수정',
   })
-  @ApiHeader({
-    name: 'X-Member-Id',
-    required: true,
-    description: '현재 회원 id',
-  })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiOkResponse({ type: KeynoteDto })
   @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
+  @ApiAuthRequired()
   @Put(':communityId/keynotes/me')
   async upsertMyKeynote(
     @Param('communityId', ParseUUIDPipe) communityId: string,
@@ -190,14 +178,10 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티를 나의 즐겨찾기에 추가',
   })
-  @ApiHeader({
-    name: 'X-Member-Id',
-    required: true,
-    description: '현재 회원 id',
-  })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiNoContentResponse({ description: '즐겨찾기 추가 성공' })
   @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
+  @ApiAuthRequired()
   @Put(':communityId/favorites/me')
   @HttpCode(204)
   async addMyFavorite(
@@ -210,14 +194,10 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티를 나의 즐겨찾기에서 삭제',
   })
-  @ApiHeader({
-    name: 'X-Member-Id',
-    required: true,
-    description: '현재 회원 id',
-  })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiNoContentResponse({ description: '즐겨찾기 삭제 성공' })
   @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
+  @ApiAuthRequired()
   @Delete(':communityId/favorites/me')
   @HttpCode(204)
   async deleteMyFavorite(

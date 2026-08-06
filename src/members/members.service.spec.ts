@@ -5,7 +5,11 @@ import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { Member } from './entities/member.entity';
+import { MemberOAuthAccount } from './entities/member-oauth-account.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
+import { OAuthProviderType } from './members.enums';
+import { AuthSessionService } from '../auth/auth-session.service';
+import { AuthTokenDto } from '../auth/dto/auth-token.dto';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 describe('MembersService', () => {
@@ -15,7 +19,18 @@ describe('MembersService', () => {
     save: jest.Mock;
     findOneBy: jest.Mock;
     findBy: jest.Mock;
+    manager: { transaction: jest.Mock };
   };
+  let oauthAccountRepository: { findOneBy: jest.Mock; save: jest.Mock };
+  let entityManager: { save: jest.Mock };
+  let authSessionService: { start: jest.Mock };
+
+  /** login이 반환할 세션 토큰 스텁 */
+  const authToken = {
+    accessToken: 'access-token',
+    refreshToken: 'refresh-token',
+    expiresIn: 1800,
+  } as AuthTokenDto;
 
   const signUpDto = {
     email: 'heimdall@example.com',
@@ -43,17 +58,39 @@ describe('MembersService', () => {
     });
 
   beforeEach(async () => {
+    // 트랜잭션 콜백에 넘어가는 EntityManager. save 시 id가 없으면 채워 준다(DB 생성값 흉내).
+    entityManager = {
+      save: jest.fn((entity: { id?: string }) => {
+        entity.id ??= 'generated-uuid';
+        return Promise.resolve(entity);
+      }),
+    };
+
     repository = {
       create: jest.fn((entity: Member) => entity),
       save: jest.fn(),
       findOneBy: jest.fn(),
       findBy: jest.fn(),
+      manager: {
+        transaction: jest.fn(
+          (runInTransaction: (manager: typeof entityManager) => unknown) =>
+            runInTransaction(entityManager),
+        ),
+      },
     };
+
+    oauthAccountRepository = { findOneBy: jest.fn(), save: jest.fn() };
+    authSessionService = { start: jest.fn().mockResolvedValue(authToken) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MembersService,
         { provide: getRepositoryToken(Member), useValue: repository },
+        {
+          provide: getRepositoryToken(MemberOAuthAccount),
+          useValue: oauthAccountRepository,
+        },
+        { provide: AuthSessionService, useValue: authSessionService },
       ],
     }).compile();
 
@@ -81,7 +118,7 @@ describe('MembersService', () => {
 
       expect(savedMember?.password).not.toBe(signUpDto.password);
       await expect(
-        bcrypt.compare(signUpDto.password, savedMember!.password),
+        bcrypt.compare(signUpDto.password, savedMember!.password!),
       ).resolves.toBe(true);
 
       // 저장 전 in-memory 엔티티도 NORMAL이어야 isDeleted()가 오판하지 않는다
@@ -120,7 +157,7 @@ describe('MembersService', () => {
   });
 
   describe('login', () => {
-    it('이메일과 비밀번호가 일치하면 memberId를 반환한다', async () => {
+    it('이메일과 비밀번호가 일치하면 해당 회원의 세션(토큰)을 발급한다', async () => {
       repository.findOneBy.mockResolvedValue(await buildMember());
 
       const result = await service.login({
@@ -128,8 +165,24 @@ describe('MembersService', () => {
         password: signUpDto.password,
       });
 
-      expect(result.memberId).toBe('member-uuid');
+      expect(authSessionService.start).toHaveBeenCalledWith(
+        expect.objectContaining({ memberId: 'member-uuid' }),
+      );
+      expect(result).toBe(authToken);
       expect(result).not.toHaveProperty('password');
+    });
+
+    it('비밀번호가 없는 소셜 전용 계정은 INVALID_CREDENTIALS로 거부하고 세션을 만들지 않는다', async () => {
+      const socialOnly = await buildMember();
+      socialOnly.password = null;
+      repository.findOneBy.mockResolvedValue(socialOnly);
+
+      await expect(
+        service.login({ email: signUpDto.email, password: signUpDto.password }),
+      ).rejects.toMatchObject({
+        appError: MemberErrorCode.INVALID_CREDENTIALS,
+      });
+      expect(authSessionService.start).not.toHaveBeenCalled();
     });
 
     it('존재하지 않는 이메일이면 INVALID_CREDENTIALS 에러를 던진다', async () => {
@@ -208,7 +261,7 @@ describe('MembersService', () => {
       const saved = (await repository.save.mock.results[0].value) as Member;
       expect(saved.password).not.toBe('brandNewPassword');
       await expect(
-        bcrypt.compare('brandNewPassword', saved.password),
+        bcrypt.compare('brandNewPassword', saved.password!),
       ).resolves.toBe(true);
     });
 
@@ -231,7 +284,9 @@ describe('MembersService', () => {
       const originalHash = original.password;
       repository.findOneBy.mockResolvedValue(original);
 
-      await service.update('member-uuid', { nickname: '새닉네임' });
+      await service.update('member-uuid', {
+        nickname: '새닉네임',
+      });
 
       const saved = (await repository.save.mock.results[0].value) as Member;
       expect(saved.password).toBe(originalHash);
@@ -250,6 +305,34 @@ describe('MembersService', () => {
 
       const saved = (await repository.save.mock.results[0].value) as Member;
       expect(saved.password).toBe(originalHash);
+    });
+
+    it('소셜 전용 계정의 비밀번호 변경은 SOCIAL_ACCOUNT_NO_PASSWORD로 거부한다', async () => {
+      const socialOnly = await buildMember();
+      socialOnly.password = null;
+      repository.findOneBy.mockResolvedValue(socialOnly);
+
+      await expect(
+        service.update('member-uuid', {
+          currentPassword: 'whatever12',
+          newPassword: 'brandNewPassword',
+        }),
+      ).rejects.toMatchObject({
+        appError: MemberErrorCode.SOCIAL_ACCOUNT_NO_PASSWORD,
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    it('소셜 전용 계정도 비밀번호를 건드리지 않는 수정은 허용한다', async () => {
+      const socialOnly = await buildMember();
+      socialOnly.password = null;
+      repository.findOneBy.mockResolvedValue(socialOnly);
+
+      const result = await service.update('member-uuid', {
+        nickname: '새닉네임',
+      });
+
+      expect(result.nickname).toBe('새닉네임');
     });
 
     it('응답에 password를 포함하지 않는다', async () => {
@@ -283,6 +366,130 @@ describe('MembersService', () => {
       await expect(service.findOneOrThrow('없는-uuid')).rejects.toMatchObject({
         appError: MemberErrorCode.NOT_FOUND,
       });
+    });
+  });
+
+  describe('findByOAuthAccount', () => {
+    const googleAccount = {
+      provider: OAuthProviderType.GOOGLE,
+      providerId: 'google-sub-1',
+    };
+
+    it('연동 행이 없으면 null을 반환하고 회원을 조회하지 않는다', async () => {
+      oauthAccountRepository.findOneBy.mockResolvedValue(null);
+
+      const result = await service.findByOAuthAccount(
+        googleAccount.provider,
+        googleAccount.providerId,
+      );
+
+      expect(result).toBeNull();
+      expect(repository.findOneBy).not.toHaveBeenCalled();
+    });
+
+    it('연동된 회원을 status=NORMAL 조건으로 조회해 반환한다', async () => {
+      const member = await buildMember();
+      oauthAccountRepository.findOneBy.mockResolvedValue({
+        memberId: 'member-uuid',
+      });
+      repository.findOneBy.mockResolvedValue(member);
+
+      const result = await service.findByOAuthAccount(
+        googleAccount.provider,
+        googleAccount.providerId,
+      );
+
+      expect(result).toBe(member);
+      expect(repository.findOneBy).toHaveBeenCalledWith({
+        id: 'member-uuid',
+        status: ResourceStatus.NORMAL,
+      });
+    });
+
+    it('연동 행만 남고 회원이 탈퇴했으면 null을 반환한다', async () => {
+      oauthAccountRepository.findOneBy.mockResolvedValue({
+        memberId: 'member-uuid',
+      });
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.findByOAuthAccount(
+          googleAccount.provider,
+          googleAccount.providerId,
+        ),
+      ).resolves.toBeNull();
+    });
+  });
+
+  describe('linkOAuthAccount', () => {
+    it('기존 회원에 연동 행을 저장한다', async () => {
+      oauthAccountRepository.save.mockImplementation(
+        (account: MemberOAuthAccount) => Promise.resolve(account),
+      );
+
+      const result = await service.linkOAuthAccount('member-uuid', {
+        provider: OAuthProviderType.GOOGLE,
+        providerId: 'google-sub-1',
+        email: signUpDto.email,
+      });
+
+      expect(result).toMatchObject({
+        memberId: 'member-uuid',
+        provider: OAuthProviderType.GOOGLE,
+        providerId: 'google-sub-1',
+        email: signUpDto.email,
+      });
+    });
+  });
+
+  describe('createWithOAuth', () => {
+    const profile = {
+      provider: OAuthProviderType.GOOGLE,
+      providerId: 'google-sub-1',
+      email: 'social@example.com',
+      nickname: '소셜회원',
+      profileImageUrl: 'https://cdn.example.com/profile/1.png',
+    };
+
+    it('비밀번호 없는 회원과 연동 행을 한 트랜잭션으로 저장한다', async () => {
+      const result = await service.createWithOAuth(profile);
+
+      expect(repository.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(entityManager.save).toHaveBeenCalledTimes(2);
+
+      const [savedMember, savedAccount] = entityManager.save.mock.calls.map(
+        (call: [unknown]) => call[0],
+      ) as [Member, MemberOAuthAccount];
+
+      expect(savedMember.password).toBeNull();
+      expect(savedMember.hasPassword()).toBe(false);
+      expect(savedMember.email).toBe(profile.email);
+      expect(savedMember.nickname).toBe(profile.nickname);
+      expect(savedMember.profileImageUrl).toBe(profile.profileImageUrl);
+      expect(savedMember.status).toBe(ResourceStatus.NORMAL);
+
+      expect(savedAccount.memberId).toBe(savedMember.id);
+      expect(savedAccount.provider).toBe(profile.provider);
+      expect(savedAccount.providerId).toBe(profile.providerId);
+
+      expect(result).toBe(savedMember);
+    });
+
+    it('동시 가입으로 unique 위반이 나면 EMAIL_ALREADY_EXISTS 에러를 던진다', async () => {
+      repository.manager.transaction.mockRejectedValue(
+        new QueryFailedError('INSERT', [], pgDriverError('23505')),
+      );
+
+      await expect(service.createWithOAuth(profile)).rejects.toMatchObject({
+        appError: MemberErrorCode.EMAIL_ALREADY_EXISTS,
+      });
+    });
+
+    it('unique 위반이 아닌 DB 에러는 그대로 전파한다', async () => {
+      const error = new QueryFailedError('INSERT', [], pgDriverError('08006'));
+      repository.manager.transaction.mockRejectedValue(error);
+
+      await expect(service.createWithOAuth(profile)).rejects.toBe(error);
     });
   });
 

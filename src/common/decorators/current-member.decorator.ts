@@ -1,22 +1,20 @@
-import {
-  createParamDecorator,
-  ExecutionContext,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { isUUID } from 'class-validator';
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { AuthErrorCode } from '../../auth/exceptions/auth-error-code';
+import { GeneralException } from '../exceptions/general.exception';
+import { AuthenticatedRequest } from '../types/authenticated-request';
 
-export const CURRENT_MEMBER_HEADER = 'x-member-id';
-
-// X-Member-Id 헤더에서 현재 회원 id를 추출한다. 헤더가 없거나 UUID가 아니면 401.
+/**
+ * 전역 OptionalJwtAuthGuard가 채워 둔 request.user에서 현재 회원 id를 꺼낸다.
+ * 가드는 토큰이 없으면 통과시키므로, 이 데코레이터를 쓰는 것이 곧 "인증 필수" 선언이다.
+ */
 export const CurrentMember = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): string => {
-    const request = ctx.switchToHttp().getRequest();
-    const memberId = request.headers[CURRENT_MEMBER_HEADER];
+    const { user } = ctx.switchToHttp().getRequest<AuthenticatedRequest>();
 
-    if (typeof memberId !== 'string' || !isUUID(memberId)) {
-      throw new UnauthorizedException('유효한 X-Member-Id 헤더가 필요합니다.');
+    if (!user) {
+      throw new GeneralException(AuthErrorCode.UNAUTHORIZED);
     }
 
-    return memberId;
+    return user.memberId;
   },
 );
