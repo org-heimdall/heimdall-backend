@@ -203,8 +203,9 @@ export class MembersService {
       );
     } catch (error) {
       // 동시 요청이 같은 이메일/연동을 먼저 만든 경우. 클라이언트가 재시도하면 연동 조회로 풀린다.
-      if (this.isUniqueViolation(error)) {
-        throw new GeneralException(MemberErrorCode.EMAIL_ALREADY_EXISTS);
+      const appError = this.resolveUniqueViolation(error);
+      if (appError) {
+        throw new GeneralException(appError);
       }
       throw error;
     }
