@@ -21,7 +21,7 @@ async function bootstrap() {
     .setTitle('Heimdall Backend API') // 팀 프로젝트 API 이름
     .setDescription('Heimdall 서비스의 백엔드 API 명세서')
     .setVersion('1.0')
-    .addBearerAuth() // JWT 토큰 인증이 필요할 경우 추가 (선택)
+    .addBearerAuth() // JWT Bearer 인증 스킴 정의 (요구는 @ApiAuthRequired() 라우트에만 적용)
     .build();
 
   // Swagger 문서 생성 및 엔드포인트 설정

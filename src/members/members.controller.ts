@@ -1,18 +1,12 @@
-import {
-  Body,
-  Controller,
-  HttpCode,
-  Param,
-  ParseUUIDPipe,
-  Patch,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, HttpCode, Patch, Post } from '@nestjs/common';
 import {
   ApiCreatedResponse,
-  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
 } from '@nestjs/swagger';
+import { AuthTokenDto } from '../auth/dto/auth-token.dto';
+import { ApiAuthRequired } from '../common/decorators/api-auth-required.decorator';
+import { CurrentMember } from '../common/decorators/current-member.decorator';
 import { ApiErrorResponses } from '../common/exceptions/api-error-responses.decorator';
 import { MembersService } from './members.service';
 import { CreateMemberDto } from './dto/create-member.dto';
@@ -38,44 +32,37 @@ export class MembersController {
 
   @ApiOperation({
     summary: '로그인',
-    description: '이메일과 비밀번호를 검증하고 memberId를 반환한다.',
+    description:
+      '이메일과 비밀번호를 검증하고 액세스/리프레시 토큰을 발급한다. ' +
+      '소셜 전용 계정(비밀번호 없음)은 이 경로로 로그인할 수 없다.',
   })
-  @ApiOkResponse({ description: '로그인 성공', type: MemberDto })
+  @ApiOkResponse({ description: '로그인 성공', type: AuthTokenDto })
   @ApiErrorResponses(MemberErrorCode.INVALID_CREDENTIALS)
   @Post('/login')
   @HttpCode(200)
-  async login(@Body() request: LoginMemberDto): Promise<MemberDto> {
+  async login(@Body() request: LoginMemberDto): Promise<AuthTokenDto> {
     return this.membersService.login(request);
   }
 
-  @ApiOperation({
-    summary: '로그아웃',
-    description:
-      '현재는 서버에 세션/토큰이 없어 무효화할 상태가 없다. ' +
-      '클라이언트가 보관 중인 memberId를 폐기하면 로그아웃이 완료된다. ' +
-      'JWT 또는 세션 도입 시 이 자리에 무효화 로직을 채운다.',
-  })
-  @ApiNoContentResponse({ description: '로그아웃 성공' })
-  @Post('/logout')
-  @HttpCode(204)
-  logout(): void {
-    return;
-  }
+  // 로그아웃은 리프레시 토큰 폐기가 필요해 인증 도메인이 소유한다(POST /api/auth/logout).
 
   @ApiOperation({
-    summary: '회원 정보 수정',
+    summary: '내 정보 수정',
     description:
-      '전달된 필드만 수정한다. 비밀번호를 바꾸려면 newPassword와 함께 ' +
-      'currentPassword를 보내야 한다. email 변경은 지원하지 않는다.',
+      '액세스 토큰의 주인만 자신의 정보를 수정한다. 전달된 필드만 수정하며, ' +
+      '비밀번호를 바꾸려면 newPassword와 함께 currentPassword를 보내야 한다. ' +
+      'email 변경은 지원하지 않는다.',
   })
   @ApiOkResponse({ description: '수정 성공', type: MemberDto })
   @ApiErrorResponses(
     MemberErrorCode.NOT_FOUND,
     MemberErrorCode.INVALID_CURRENT_PASSWORD,
+    MemberErrorCode.SOCIAL_ACCOUNT_NO_PASSWORD,
   )
-  @Patch('/:memberId')
-  async update(
-    @Param('memberId', ParseUUIDPipe) memberId: string,
+  @ApiAuthRequired()
+  @Patch('/me')
+  async updateMe(
+    @CurrentMember() memberId: string,
     @Body() request: UpdateMemberDto,
   ): Promise<MemberDto> {
     return this.membersService.update(memberId, request);
