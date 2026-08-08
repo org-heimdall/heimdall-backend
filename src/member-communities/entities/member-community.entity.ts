@@ -21,7 +21,7 @@ export class MemberCommunity {
   @Column({ type: 'uuid' })
   communityId: string;
 
-  @Column({ type: 'boolean' })
+  @Column({ type: 'boolean', default: false })
   isOnline: boolean;
 
   @Column({ type: 'varchar', nullable: true })
