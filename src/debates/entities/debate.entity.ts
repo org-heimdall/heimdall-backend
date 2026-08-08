@@ -36,14 +36,11 @@ export class Debate extends SoftDeletableEntity {
   @Column({ type: 'enum', enum: DebateTurn })
   currentTurn: DebateTurn;
 
-  @Column({ type: 'int' })
-  roundCount: number;
+  @Column({ type: 'uuid', nullable: true })
+  winnerId: string | null;
 
   @Column({ type: 'text', nullable: true })
   solution: string | null;
-
-  @Column({ type: 'uuid', nullable: true })
-  winnerId: string | null;
 
   @ManyToOne(() => Community, { nullable: false })
   @JoinColumn({ name: 'community_id' })
