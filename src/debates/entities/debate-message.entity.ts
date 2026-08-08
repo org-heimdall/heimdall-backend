@@ -9,8 +9,8 @@ import { Member } from '../../members/entities/member.entity';
 import { Debate } from './debate.entity';
 import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
-@Entity('debate_speech')
-export class DebateSpeech extends SoftDeletableEntity {
+@Entity('debate_message')
+export class DebateMessage extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -23,8 +23,17 @@ export class DebateSpeech extends SoftDeletableEntity {
   @Column({ type: 'varchar', length: 1000, nullable: true })
   body: string | null;
 
-  @Column({ type: 'text', array: true, nullable: true })
-  imageUrl: string[] | null;
+  @Column({ type: 'int', nullable: true })
+  debate_turn: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  remaining_length: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  remaining_images_count: number | null;
+
+  @Column({ type: 'text', nullable: true })
+  imageUrl: string | null;
 
   @ManyToOne(() => Member, { nullable: false })
   @JoinColumn({ name: 'member_id' })

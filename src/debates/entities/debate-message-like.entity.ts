@@ -7,11 +7,11 @@ import {
   Unique,
 } from 'typeorm';
 import { Member } from '../../members/entities/member.entity';
-import { DebateSpeech } from './debate-speech.entity';
+import { DebateMessage } from './debate-message.entity';
 
-@Entity('speech_like')
-@Unique(['memberId', 'speechId'])
-export class SpeechLike {
+@Entity('debate_message_like')
+@Unique(['memberId', 'messageId'])
+export class DebateMessageLike {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -19,7 +19,7 @@ export class SpeechLike {
   memberId: string;
 
   @Column({ type: 'uuid' })
-  speechId: string;
+  messageId: string;
 
   @Column({ type: 'boolean' })
   isLiked: boolean;
@@ -28,7 +28,7 @@ export class SpeechLike {
   @JoinColumn({ name: 'member_id' })
   member: Member;
 
-  @ManyToOne(() => DebateSpeech, { nullable: false })
-  @JoinColumn({ name: 'speech_id' })
-  speech: DebateSpeech;
+  @ManyToOne(() => DebateMessage, { nullable: false })
+  @JoinColumn({ name: 'message_id' })
+  debate_message: DebateMessage;
 }

@@ -5,7 +5,6 @@ import { CommunityErrorCode } from './exceptions/community-error-code';
 import { DataSource, Repository } from 'typeorm';
 import { Community } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
-import { CommunityTheme } from './entities/community-theme.entity';
 import { CommunityFavorite } from './entities/community-favorite.entity';
 import { ThemeDto } from './dto/theme.dto';
 import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
@@ -56,12 +55,7 @@ export class CommunitiesService {
       .take(size + 1);
 
     if (themeId) {
-      query.innerJoin(
-        CommunityTheme,
-        'communityTheme',
-        'communityTheme.communityId = community.id AND communityTheme.themeId = :themeId',
-        { themeId },
-      );
+      query.andWhere('community.themeId = :themeId', { themeId });
     }
 
     const rows = await query.getMany();
@@ -80,7 +74,7 @@ export class CommunitiesService {
     };
   }
 
-  // 커뮤니티 생성: community + community_theme + 호스트 member_community(기조발언)를 한 트랜잭션으로 저장
+  // 커뮤니티 생성: community + 호스트 member_community(기조발언)를 한 트랜잭션으로 저장
   async create(
     createCommunityDto: CreateCommunityDto,
     hostId: string,
@@ -89,17 +83,14 @@ export class CommunitiesService {
 
     const community = await this.dataSource.transaction(async (manager) => {
       const communityRepository = manager.getRepository(Community);
-      const communityThemeRepository = manager.getRepository(CommunityTheme);
 
       const saved = await communityRepository.save(
-        Community.open(hostId, host.nickname, createCommunityDto.topic),
-      );
-
-      await communityThemeRepository.save(
-        communityThemeRepository.create({
-          communityId: saved.id,
-          themeId: createCommunityDto.themeId,
-        }),
+        Community.open(
+          hostId,
+          createCommunityDto.themeId,
+          createCommunityDto.topic,
+          createCommunityDto.roundCount,
+        ),
       );
 
       await this.memberCommunitiesService.create(
@@ -110,7 +101,7 @@ export class CommunitiesService {
         manager,
       );
 
-      // TODO: debate 생성(roundCount 등)은 추후 구현
+      // TODO: debate 생성은 추후 구현
       return saved;
     });
 
@@ -118,7 +109,7 @@ export class CommunitiesService {
   }
 
   // 커뮤니티 삭제: host만 가능. 커뮤니티 엔티티만 soft-delete(상태 전환)하고
-  // 자식 리소스(theme/favorite/member_community)는 그대로 둔다.
+  // 자식 리소스(favorite/member_community)는 그대로 둔다.
   async delete(communityId: string, currentMemberId: string): Promise<void> {
     const community = await this.getCommunityOrThrow(communityId);
     if (community.hostId !== currentMemberId) {
