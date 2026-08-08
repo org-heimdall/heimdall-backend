@@ -8,7 +8,6 @@ import {
   Community,
   CommunityState,
 } from '../communities/entities/community.entity';
-import { CommunityTheme } from '../communities/entities/community-theme.entity';
 import { MemberCommunity } from '../member-communities/entities/member-community.entity';
 
 // members.service와 동일한 cost로 해싱해야 개발 계정으로 로그인이 된다.
@@ -138,7 +137,6 @@ export class SeedService implements OnApplicationBootstrap {
     themes: Theme[],
   ): Promise<void> {
     const communityRepository = manager.getRepository(Community);
-    const communityThemeRepository = manager.getRepository(CommunityTheme);
     const memberCommunityRepository = manager.getRepository(MemberCommunity);
 
     const [messi, ronaldo, mbappe, yamal, haaland] = members;
@@ -155,7 +153,8 @@ export class SeedService implements OnApplicationBootstrap {
           opinion: '찬성',
           reasons: ['기본 생계 보장', '소득 양극화 완화'],
         },
-        themes: [politics, economy],
+        theme: politics,
+        debateRoundCount: 3,
         others: [
           {
             member: ronaldo,
@@ -183,7 +182,8 @@ export class SeedService implements OnApplicationBootstrap {
           opinion: '찬성',
           reasons: ['생산성 향상', '워라밸 개선'],
         },
-        themes: [economy],
+        theme: economy,
+        debateRoundCount: 5,
         others: [
           {
             member: haaland,
@@ -216,20 +216,12 @@ export class SeedService implements OnApplicationBootstrap {
         communityRepository.create({
           state: seed.state,
           hostId: seed.host.id,
-          hostNickname: seed.host.nickname,
+          themeId: seed.theme.id,
           memberCount: participants.length,
           topic: seed.topic,
+          debateRoundCount: seed.debateRoundCount,
           communityLink: null,
         }),
-      );
-
-      await communityThemeRepository.save(
-        seed.themes.map((theme) =>
-          communityThemeRepository.create({
-            communityId: community.id,
-            themeId: theme.id,
-          }),
-        ),
       );
 
       await memberCommunityRepository.save(
