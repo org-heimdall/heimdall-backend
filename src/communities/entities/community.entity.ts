@@ -3,7 +3,7 @@ import {
   CreateDateColumn,
   Entity,
   JoinColumn,
-  ManyToOne,
+  OneToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
@@ -44,7 +44,7 @@ export class Community extends SoftDeletableEntity {
   @CreateDateColumn()
   createdAt: Date;
 
-  @ManyToOne(() => Theme, { nullable: false })
+  @OneToOne(() => Theme, { nullable: false })
   @JoinColumn({ name: 'theme_id' })
   theme: Theme;
 

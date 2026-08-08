@@ -10,7 +10,7 @@ import { Member } from '../../members/entities/member.entity';
 import { DebateMessage } from './debate-message.entity';
 
 @Entity('debate_message_like')
-@Unique(['memberId', 'speechId'])
+@Unique(['memberId', 'messageId'])
 export class DebateMessageLike {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -19,7 +19,7 @@ export class DebateMessageLike {
   memberId: string;
 
   @Column({ type: 'uuid' })
-  speechId: string;
+  messageId: string;
 
   @Column({ type: 'boolean' })
   isLiked: boolean;
@@ -30,5 +30,5 @@ export class DebateMessageLike {
 
   @ManyToOne(() => DebateMessage, { nullable: false })
   @JoinColumn({ name: 'message_id' })
-  speech: DebateMessage;
+  debate_message: DebateMessage;
 }
