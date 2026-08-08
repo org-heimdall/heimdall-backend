@@ -498,14 +498,26 @@ describe('MembersService', () => {
       expect(result).toBe(savedMember);
     });
 
-    it('동시 가입으로 unique 위반이 나면 EMAIL_ALREADY_EXISTS 에러를 던진다', async () => {
+    it('동시 가입으로 이메일 unique 위반이 나면 EMAIL_ALREADY_EXISTS 에러를 던진다', async () => {
       repository.manager.transaction.mockRejectedValue(
-        new QueryFailedError('INSERT', [], pgDriverError('23505')),
+        new QueryFailedError(
+          'INSERT',
+          [],
+          pgDriverError('23505', MEMBER_EMAIL_UNIQUE),
+        ),
       );
 
       await expect(service.createWithOAuth(profile)).rejects.toMatchObject({
         appError: MemberErrorCode.EMAIL_ALREADY_EXISTS,
       });
+    });
+
+    // 제약 이름을 모르면 이메일 중복으로 단정하지 않고 원본 에러를 전파해야 한다
+    it('제약 이름이 없는 unique 위반은 그대로 전파한다', async () => {
+      const error = new QueryFailedError('INSERT', [], pgDriverError('23505'));
+      repository.manager.transaction.mockRejectedValue(error);
+
+      await expect(service.createWithOAuth(profile)).rejects.toBe(error);
     });
 
     it('unique 위반이 아닌 DB 에러는 그대로 전파한다', async () => {

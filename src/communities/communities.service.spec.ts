@@ -6,7 +6,6 @@ import { CommunitiesService } from './communities.service';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
-import { CommunityTheme } from './entities/community-theme.entity';
 import { CommunityFavorite } from './entities/community-favorite.entity';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { MembersService } from '../members/members.service';
@@ -39,9 +38,9 @@ describe('CommunitiesService', () => {
   let queryBuilder: {
     where: jest.Mock;
     orderBy: jest.Mock;
+    andWhere: jest.Mock;
     skip: jest.Mock;
     take: jest.Mock;
-    innerJoin: jest.Mock;
     getMany: jest.Mock;
     getCount: jest.Mock;
   };
@@ -70,10 +69,10 @@ describe('CommunitiesService', () => {
   beforeEach(async () => {
     queryBuilder = {
       where: jest.fn(() => queryBuilder),
+      andWhere: jest.fn(() => queryBuilder),
       orderBy: jest.fn(() => queryBuilder),
       skip: jest.fn(() => queryBuilder),
       take: jest.fn(() => queryBuilder),
-      innerJoin: jest.fn(() => queryBuilder),
       getMany: jest.fn(),
       getCount: jest.fn(),
     };
@@ -126,7 +125,6 @@ describe('CommunitiesService', () => {
           useValue: communityRepository,
         },
         { provide: getRepositoryToken(Theme), useValue: themeRepository },
-        { provide: getRepositoryToken(CommunityTheme), useValue: {} },
         {
           provide: getRepositoryToken(CommunityFavorite),
           useValue: communityFavoriteRepository,
@@ -181,24 +179,27 @@ describe('CommunitiesService', () => {
       );
     });
 
-    it('themeId가 있으면 community_theme 조인 필터를 적용한다', async () => {
+    it('themeId가 있으면 community.themeId 필터를 적용한다', async () => {
       queryBuilder.getMany.mockResolvedValue([]);
       queryBuilder.getCount.mockResolvedValue(0);
       membersService.findByIds.mockResolvedValue([]);
 
       await service.findAll(1, 10, undefined, 'theme-uuid');
 
-      expect(queryBuilder.innerJoin).toHaveBeenCalled();
+      expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+        'community.themeId = :themeId',
+        { themeId: 'theme-uuid' },
+      );
     });
 
-    it('themeId가 없으면 조인을 적용하지 않는다', async () => {
+    it('themeId가 없으면 테마 필터를 적용하지 않는다', async () => {
       queryBuilder.getMany.mockResolvedValue([]);
       queryBuilder.getCount.mockResolvedValue(0);
       membersService.findByIds.mockResolvedValue([]);
 
       await service.findAll(1, 10);
 
-      expect(queryBuilder.innerJoin).not.toHaveBeenCalled();
+      expect(queryBuilder.andWhere).not.toHaveBeenCalled();
     });
 
     it('status=NORMAL 필터를 적용해 soft-delete된 커뮤니티를 제외한다', async () => {
@@ -223,7 +224,7 @@ describe('CommunitiesService', () => {
       keynoteDto: { opinion: '찬성', reasons: ['이유1'] },
     };
 
-    it('트랜잭션으로 community/community_theme/호스트 keynote를 생성한다', async () => {
+    it('트랜잭션으로 community/호스트 keynote를 생성한다', async () => {
       const host = buildMember({ id: 'host-uuid', nickname: '호스트' });
       membersService.findOneOrThrow.mockResolvedValue(host);
 
@@ -239,9 +240,10 @@ describe('CommunitiesService', () => {
           status: ResourceStatus.NORMAL,
           state: CommunityState.WAITING,
           hostId: 'host-uuid',
-          hostNickname: '호스트',
+          themeId: 'theme-uuid',
           memberCount: 1,
           topic: 'AI 규제',
+          debateRoundCount: 3,
           communityLink: null,
         }),
       );
