@@ -39,6 +39,9 @@ import * as Joi from 'joi';
         JWT_REFRESH_EXPIRES_IN: Joi.string().default('14d'),
 
         GOOGLE_CLIENT_ID: Joi.string().required(),
+
+        // 비공개 대화 시드 파일 경로(저장소 밖). 없으면 대화 시딩만 건너뛰므로 optional이다.
+        SEED_DEBATE_DATA_PATH: Joi.string().optional(),
       }),
     }),
     TypeOrmModule.forRootAsync({
