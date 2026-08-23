@@ -16,5 +16,6 @@ import { MemberCommunitiesModule } from '../member-communities/member-communitie
   ],
   controllers: [CommunitiesController],
   providers: [CommunitiesService],
+  exports: [CommunitiesService],
 })
 export class CommunitiesModule {}

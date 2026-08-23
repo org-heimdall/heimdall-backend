@@ -253,6 +253,12 @@ export class CommunitiesService {
     return new Map(members.map((member) => [member.id, member]));
   }
 
+  // id로 커뮤니티를 조회하고, 없으면 GeneralException(NOT_FOUND)을 던진다.
+  // 다른 도메인 서비스(debates 등)가 커뮤니티 존재/필드를 확인할 때 재사용한다.
+  async findOneOrThrow(communityId: string): Promise<Community> {
+    return this.getCommunityOrThrow(communityId);
+  }
+
   private async getCommunityOrThrow(communityId: string): Promise<Community> {
     const community = await this.communityRepository.findOneBy({
       id: communityId,

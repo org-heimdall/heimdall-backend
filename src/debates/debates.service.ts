@@ -1,11 +1,158 @@
 import { Injectable } from '@nestjs/common';
-import { CreateDebateDto } from './dto/create-debate.dto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Not, Repository } from 'typeorm';
+import { ResourceStatus } from '../common/entities/resource-status.enum';
+import { GeneralException } from '../common/exceptions/general.exception';
+import { CommunitiesService } from '../communities/communities.service';
+import { CommunityErrorCode } from '../communities/exceptions/community-error-code';
+import { MemberCommunitiesService } from '../member-communities/member-communities.service';
+import { MembersService } from '../members/members.service';
+import { AcceptDebateResultDto } from './dto/accept-debate.dto';
+import {
+  CreateDebateDto,
+  CreateDebateResultDto,
+} from './dto/create-debate.dto';
 import { UpdateDebateDto } from './dto/update-debate.dto';
+import { Debate, DebateTurn } from './entities/debate.entity';
+import { DebateErrorCode } from './exceptions/debate-error-code';
+import { DebateEventsPublisher } from './room/debate-events-publisher.interface';
 
 @Injectable()
 export class DebatesService {
-  create(createDebateDto: CreateDebateDto) {
-    return 'This action adds a new debate';
+  private publisher: DebateEventsPublisher | null = null;
+
+  constructor(
+    @InjectRepository(Debate)
+    private readonly debateRepository: Repository<Debate>,
+    private readonly communitiesService: CommunitiesService,
+    private readonly memberCommunitiesService: MemberCommunitiesService,
+    private readonly membersService: MembersService,
+  ) {}
+
+  // 게이트웨이가 afterInit에서 자신을 등록한다(서비스가 게이트웨이를 직접 주입받지 않기 위한 경계).
+  bindPublisher(publisher: DebateEventsPublisher): void {
+    this.publisher = publisher;
+  }
+
+  // 토론 요청 생성: 커뮤니티 호스트만 가능하며, 상대 토론자는 해당 커뮤니티 멤버이면서
+  // 기조발언을 작성했어야 한다. 통과 시 PENDING 상태로 저장하고 상대에게 소켓으로 알린다.
+  // 실제 토론 시작은 상대가 accept()로 수락해야 이루어진다.
+  async create(
+    createDebateDto: CreateDebateDto,
+    hostId: string,
+  ): Promise<CreateDebateResultDto> {
+    const community = await this.communitiesService.findOneOrThrow(
+      createDebateDto.communityId,
+    );
+    if (community.hostId !== hostId) {
+      throw new GeneralException(DebateErrorCode.NOT_HOST);
+    }
+
+    const opponentMembership = await this.memberCommunitiesService.findOne(
+      createDebateDto.opponentId,
+      createDebateDto.communityId,
+    );
+    if (!opponentMembership) {
+      throw new GeneralException(DebateErrorCode.OPPONENT_NOT_IN_COMMUNITY);
+    }
+
+    // 기조발언 미작성 회원에게는 토론을 요청할 수 없다. KEYNOTE_NOT_FOUND는 이미
+    // 분류가 끝난 기대 가능한 에러이므로 cause 없이 도메인 에러로 재던진다.
+    try {
+      await this.communitiesService.getMemberKeynote(
+        createDebateDto.communityId,
+        createDebateDto.opponentId,
+      );
+    } catch (error) {
+      if (
+        error instanceof GeneralException &&
+        error.appError === CommunityErrorCode.KEYNOTE_NOT_FOUND
+      ) {
+        throw new GeneralException(DebateErrorCode.OPPONENT_KEYNOTE_REQUIRED);
+      }
+      throw error;
+    }
+
+    const hasActiveDebate = await this.debateRepository.exists({
+      where: {
+        communityId: createDebateDto.communityId,
+        status: ResourceStatus.NORMAL,
+        currentTurn: Not(DebateTurn.FINISHED),
+      },
+    });
+    if (hasActiveDebate) {
+      throw new GeneralException(DebateErrorCode.DEBATE_ALREADY_ACTIVE);
+    }
+
+    const [host, opponent] = await Promise.all([
+      this.membersService.findOneOrThrow(hostId),
+      this.membersService.findOneOrThrow(createDebateDto.opponentId),
+    ]);
+
+    const debate = Debate.open({
+      communityId: createDebateDto.communityId,
+      hostId,
+      hostNickname: host.nickname,
+      opponentId: createDebateDto.opponentId,
+      opponentNickname: opponent.nickname,
+    });
+
+    const saved = await this.debateRepository.save(debate);
+
+    this.publisher?.emitDebateRequested(saved.opponentId!, {
+      debateId: saved.id,
+      communityId: saved.communityId,
+      hostId: saved.hostId,
+      hostNickname: saved.hostNickname,
+    });
+
+    return { debateId: saved.id, createdAt: saved.createdAt };
+  }
+
+  // 토론 요청 수락: 요청받은 당사자(opponent)만 가능. PENDING → STARTING 전환 후
+  // 실제 토론 시작(양측 join 시 첫 턴 진입)은 소켓 join_room 흐름을 그대로 탄다.
+  async accept(
+    debateId: string,
+    memberId: string,
+  ): Promise<AcceptDebateResultDto> {
+    const debate = await this.getDebateOrThrow(debateId);
+    if (debate.opponentId !== memberId) {
+      throw new GeneralException(DebateErrorCode.NOT_REQUEST_OPPONENT);
+    }
+    if (debate.currentTurn !== DebateTurn.PENDING) {
+      throw new GeneralException(DebateErrorCode.REQUEST_NOT_PENDING);
+    }
+
+    debate.currentTurn = DebateTurn.STARTING;
+    const saved = await this.debateRepository.save(debate);
+
+    this.publisher?.emitDebateRequestAccepted(saved.hostId, {
+      debateId: saved.id,
+      opponentId: saved.opponentId!,
+      opponentNickname: saved.opponentNickname!,
+    });
+
+    return { debateId: saved.id };
+  }
+
+  // 토론 요청 거절: 요청받은 당사자(opponent)만 가능. 토론 행을 soft delete한다.
+  async reject(debateId: string, memberId: string): Promise<void> {
+    const debate = await this.getDebateOrThrow(debateId);
+    if (debate.opponentId !== memberId) {
+      throw new GeneralException(DebateErrorCode.NOT_REQUEST_OPPONENT);
+    }
+    if (debate.currentTurn !== DebateTurn.PENDING) {
+      throw new GeneralException(DebateErrorCode.REQUEST_NOT_PENDING);
+    }
+
+    debate.softDelete();
+    const saved = await this.debateRepository.save(debate);
+
+    this.publisher?.emitDebateRequestRejected(saved.hostId, {
+      debateId: saved.id,
+      opponentId: saved.opponentId!,
+      opponentNickname: saved.opponentNickname!,
+    });
   }
 
   // TODO: 실제 조회 구현 시 debate.status = NORMAL 필터를 적용해 soft-delete된 토론을 제외한다.
@@ -18,11 +165,23 @@ export class DebatesService {
     return `This action returns a #${id} debate`;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   update(id: string, updateDebateDto: UpdateDebateDto) {
     return `This action updates a #${id} debate`;
   }
 
   remove(id: string) {
     return `This action removes a #${id} debate`;
+  }
+
+  private async getDebateOrThrow(debateId: string): Promise<Debate> {
+    const debate = await this.debateRepository.findOneBy({
+      id: debateId,
+      status: ResourceStatus.NORMAL,
+    });
+    if (!debate) {
+      throw new GeneralException(DebateErrorCode.NOT_FOUND);
+    }
+    return debate;
   }
 }
