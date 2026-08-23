@@ -32,7 +32,7 @@
 
 NestJS 도메인 모듈 구조입니다.
 
-- `src/<domain>/`: 도메인 모듈 (`controller`, `service`, `module`, `gateway`, `dto`, `entities`).
+- `src/<domain>/`: 도메인 모듈 (`controller`, `service`, `module`, `gateway`, `dto`, `entities`). 실시간(소켓) 기능 등은 도메인 모듈 내 하위 디렉토리(예: `src/debates/room/`)로 응집할 수 있습니다.
 - `src/common/`: 전역 공통 (필터, 가드, 데코레이터, 공통 DTO).
 - `docs/`: 코드 컨벤션·소켓 명세·협업 가이드.
 - 도메인 간 참조는 Module `imports`/`exports`를 통해서만. 엔티티는 소유 도메인에만 두고 다른 도메인은 ID로 참조.

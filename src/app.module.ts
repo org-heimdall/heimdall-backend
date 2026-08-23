@@ -39,6 +39,9 @@ import * as Joi from 'joi';
         JWT_REFRESH_EXPIRES_IN: Joi.string().default('14d'),
 
         GOOGLE_CLIENT_ID: Joi.string().required(),
+
+        // 토론 발언 턴 제한시간(초). 턴 시작 시 endsAt = now + 이 값*1000 으로 클라이언트에 통지된다.
+        DEBATE_TURN_SECONDS: Joi.number().default(180),
       }),
     }),
     TypeOrmModule.forRootAsync({
