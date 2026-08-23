@@ -24,13 +24,13 @@ export class DebateMessage extends SoftDeletableEntity {
   body: string | null;
 
   @Column({ type: 'int', nullable: true })
-  debate_turn: number | null;
+  debateTurn: number | null;
 
   @Column({ type: 'int', nullable: true })
-  remaining_length: number | null;
+  remainingLength: number | null;
 
   @Column({ type: 'int', nullable: true })
-  remaining_images_count: number | null;
+  remainingImagesCount: number | null;
 
   @Column({ type: 'text', nullable: true })
   imageUrl: string | null;
