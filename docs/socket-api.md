@@ -11,7 +11,7 @@ socket.io 기반 토론방 실시간 이벤트 명세입니다. 커뮤니티 채
 3. 상대가 `PATCH /api/debates/:debateId/accept`로 수락한다 → 토론이 `STARTING` 상태로 전환된다.
    (거절 시 `PATCH /api/debates/:debateId/reject`, 토론 행이 soft delete된다. 같은 host가 같은 상대에게든 다른 상대에게든 재요청하면 새 행을 만들지 않고 이 거절된 행이 재사용된다.)
 4. host에게 소켓 이벤트 `debate_request_accepted`(또는 `debate_request_rejected`)가 전달된다.
-5. 양측이 `join_room`으로 입장하면(아래 3번) 첫 턴(`OPENING`, host 차례)이 시작된다.
+5. 양측이 `join_debate`으로 입장하면(아래 3번) 첫 턴(`OPENING`, host 차례)이 시작된다.
 
 `debate_requested` / `debate_request_accepted` / `debate_request_rejected`는 REST 처리 결과에 대한 알림이며, 수신 대상 회원에게만 전달됩니다(서버 내부적으로 연결 시 개인 알림용 room에 자동 join되어 있어 별도 구독 절차는 없습니다).
 
@@ -37,9 +37,11 @@ socket.on('connect_error', (err) => {
 
 ## 2. 수신 이벤트 (클라이언트 → 서버)
 
-### `join_room`
+### `join_debate`
 
 토론방(관전 포함) 입장. `roomId`는 **debateId**입니다.
+
+> 명명 원칙: 입장 이벤트는 방 종류별로 분리합니다(구 명세의 공용 `join_room` 폐기). 커뮤니티 단톡방 입장은 후속 구현에서 `join_community`로 추가됩니다.
 
 ```json
 { "roomId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60" }
@@ -143,7 +145,7 @@ socket.on('connect_error', (err) => {
 
 ### `error_from_debate_room`
 
-`join_room` / `send_debate_message` / `next_turn` 처리 중 발생한 모든 오류(payload 검증 실패 포함)를 **해당 소켓에만** 전달합니다.
+`join_debate` / `send_debate_message` / `next_turn` 처리 중 발생한 모든 오류(payload 검증 실패 포함)를 **해당 소켓에만** 전달합니다.
 
 ```json
 { "msg": "현재 발언할 차례가 아닙니다." }
@@ -162,7 +164,7 @@ socket.on('connect_error', (err) => {
 | `DEBATE.INVALID_PHASE` | 발언 불가 단계(STARTING/JUDGING 등)에서 발언 시도 | 지금은 발언할 수 있는 단계가 아닙니다. |
 | `DEBATE.NOT_YOUR_TURN` | 발언 차례가 아닌 사람이 발언/턴 넘기기 시도 | 현재 발언할 차례가 아닙니다. |
 | `DEBATE.MESSAGE_BUDGET_EXCEEDED` | 턴 누적 1000자 초과 | 이번 턴에 발언할 수 있는 글자 수를 초과했습니다. |
-| `DEBATE.REQUEST_NOT_ACCEPTED` | 수락 전(`PENDING`)인 토론에 `join_room` 시도 | 아직 수락되지 않은 토론입니다. |
+| `DEBATE.REQUEST_NOT_ACCEPTED` | 수락 전(`PENDING`)인 토론에 `join_debate` 시도 | 아직 수락되지 않은 토론입니다. |
 | `COMMON.INVALID_INPUT` | payload class-validator 검증 실패 | 입력값이 올바르지 않습니다. |
 
 토론 요청/수락/거절(REST) 관련 에러 코드(`DEBATE.NOT_HOST`, `DEBATE.OPPONENT_NOT_IN_COMMUNITY`, `DEBATE.OPPONENT_KEYNOTE_REQUIRED`, `DEBATE.DEBATE_ALREADY_ACTIVE`, `DEBATE.REQUEST_NOT_PENDING`, `DEBATE.NOT_REQUEST_OPPONENT`)는 REST 응답(`ProblemDetail`)으로 내려가며 이 문서(소켓 API) 범위 밖입니다. Swagger 문서를 참고하세요.

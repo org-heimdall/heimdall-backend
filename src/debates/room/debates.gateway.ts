@@ -79,7 +79,7 @@ export class DebatesGateway
     void socket.join(memberRoomName(this.memberIdOf(socket)));
   }
 
-  @SubscribeMessage('join_room')
+  @SubscribeMessage('join_debate')
   async handleJoinRoom(
     @ConnectedSocket() socket: Socket,
     @MessageBody() body: unknown,

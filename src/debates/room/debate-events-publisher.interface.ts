@@ -1,6 +1,6 @@
 import { DebateTurn } from '../entities/debate.entity';
 
-// 턴 전환 시 소켓으로 나가는 payload. roomId는 클라이언트가 보낸 join_room/next_turn과 동일하게
+// 턴 전환 시 소켓으로 나가는 payload. roomId는 클라이언트가 보낸 join_debate/next_turn과 동일하게
 // debateId 그대로(내부 socket.io room 이름인 'debate:'+id가 아님)를 담는다.
 export interface TurnChangedPayload {
   roomId: string;

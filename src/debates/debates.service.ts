@@ -141,7 +141,7 @@ export class DebatesService {
   }
 
   // 토론 요청 수락: 요청받은 당사자(opponent)만 가능. PENDING → STARTING 전환 후
-  // 실제 토론 시작(양측 join 시 첫 턴 진입)은 소켓 join_room 흐름을 그대로 탄다.
+  // 실제 토론 시작(양측 join 시 첫 턴 진입)은 소켓 join_debate 흐름을 그대로 탄다.
   async accept(
     debateId: string,
     memberId: string,
