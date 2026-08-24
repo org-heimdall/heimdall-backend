@@ -38,19 +38,18 @@ export class DebatesService {
   // 기조발언을 작성했어야 한다. 통과 시 PENDING 상태로 저장하고 상대에게 소켓으로 알린다.
   // 실제 토론 시작은 상대가 accept()로 수락해야 이루어진다.
   async create(
-    createDebateDto: CreateDebateDto,
+    dto: CreateDebateDto,
     hostId: string,
   ): Promise<CreateDebateResultDto> {
-    const community = await this.communitiesService.findOneOrThrow(
-      createDebateDto.communityId,
-    );
+    const { opponentId, communityId } = dto;
+    const community = await this.communitiesService.findOneOrThrow(communityId);
     if (community.hostId !== hostId) {
       throw new GeneralException(DebateErrorCode.NOT_HOST);
     }
 
     const opponentMembership = await this.memberCommunitiesService.findOne(
-      createDebateDto.opponentId,
-      createDebateDto.communityId,
+      opponentId,
+      communityId,
     );
     if (!opponentMembership) {
       throw new GeneralException(DebateErrorCode.OPPONENT_NOT_IN_COMMUNITY);
@@ -59,10 +58,7 @@ export class DebatesService {
     // 기조발언 미작성 회원에게는 토론을 요청할 수 없다. KEYNOTE_NOT_FOUND는 이미
     // 분류가 끝난 기대 가능한 에러이므로 cause 없이 도메인 에러로 재던진다.
     try {
-      await this.communitiesService.getMemberKeynote(
-        createDebateDto.communityId,
-        createDebateDto.opponentId,
-      );
+      await this.communitiesService.getMemberKeynote(communityId, opponentId);
     } catch (error) {
       if (
         error instanceof GeneralException &&
@@ -75,7 +71,7 @@ export class DebatesService {
 
     const hasActiveDebate = await this.debateRepository.exists({
       where: {
-        communityId: createDebateDto.communityId,
+        communityId: communityId,
         status: ResourceStatus.NORMAL,
         currentTurn: Not(DebateTurn.FINISHED),
       },
@@ -86,20 +82,20 @@ export class DebatesService {
 
     const [host, opponent] = await Promise.all([
       this.membersService.findOneOrThrow(hostId),
-      this.membersService.findOneOrThrow(createDebateDto.opponentId),
+      this.membersService.findOneOrThrow(opponentId),
     ]);
 
     const debate = Debate.open({
-      communityId: createDebateDto.communityId,
+      communityId: communityId,
       hostId,
       hostNickname: host.nickname,
-      opponentId: createDebateDto.opponentId,
+      opponentId,
       opponentNickname: opponent.nickname,
     });
 
     const saved = await this.debateRepository.save(debate);
 
-    this.publisher?.emitDebateRequested(saved.opponentId!, {
+    this.publisher?.emitDebateRequested(saved.opponentId, {
       debateId: saved.id,
       communityId: saved.communityId,
       hostId: saved.hostId,
@@ -128,8 +124,8 @@ export class DebatesService {
 
     this.publisher?.emitDebateRequestAccepted(saved.hostId, {
       debateId: saved.id,
-      opponentId: saved.opponentId!,
-      opponentNickname: saved.opponentNickname!,
+      opponentId: saved.opponentId,
+      opponentNickname: saved.opponentNickname,
     });
 
     return { debateId: saved.id };
@@ -150,8 +146,8 @@ export class DebatesService {
 
     this.publisher?.emitDebateRequestRejected(saved.hostId, {
       debateId: saved.id,
-      opponentId: saved.opponentId!,
-      opponentNickname: saved.opponentNickname!,
+      opponentId: saved.opponentId,
+      opponentNickname: saved.opponentNickname,
     });
   }
 

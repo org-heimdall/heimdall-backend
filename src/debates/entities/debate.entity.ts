@@ -33,11 +33,11 @@ export class Debate extends SoftDeletableEntity {
   @Column({ type: 'varchar' })
   hostNickname: string;
 
-  @Column({ type: 'uuid', nullable: true })
-  opponentId: string | null;
+  @Column({ type: 'uuid' })
+  opponentId: string;
 
-  @Column({ type: 'varchar', nullable: true })
-  opponentNickname: string | null;
+  @Column({ type: 'varchar' })
+  opponentNickname: string;
 
   @Column({ type: 'enum', enum: DebateTurn, default: DebateTurn.PENDING })
   currentTurn: DebateTurn;

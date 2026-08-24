@@ -93,7 +93,6 @@ export class DebateRoomService {
     state.joinedDebaterIds.add(memberId);
 
     const bothDebatersJoined =
-      debate.opponentId !== null &&
       state.joinedDebaterIds.has(debate.hostId) &&
       state.joinedDebaterIds.has(debate.opponentId);
 
