@@ -34,8 +34,9 @@ interface DebateRuntimeState {
   turnSeq: number;
 }
 
+// 서비스 내부 반환 타입: socketRoom은 실제 socket.io room 이름(debateRoomName() 결과)
 export interface JoinResult {
-  roomId: string;
+  socketRoom: string;
 }
 
 export interface SendMessageResult {
@@ -86,7 +87,7 @@ export class DebateRoomService {
       if (!membership) {
         throw new GeneralException(DebateErrorCode.NOT_COMMUNITY_MEMBER);
       }
-      return { roomId: debateRoomName(debateId) };
+      return { socketRoom: debateRoomName(debateId) };
     }
 
     const state = this.getOrCreateState(debateId);
@@ -100,7 +101,7 @@ export class DebateRoomService {
       await this.advance(debate);
     }
 
-    return { roomId: debateRoomName(debateId) };
+    return { socketRoom: debateRoomName(debateId) };
   }
 
   // 발언 메시지 처리: 단계/차례/글자 예산을 검증한 뒤 저장한다.
@@ -194,7 +195,7 @@ export class DebateRoomService {
     }
 
     const payload: TurnChangedPayload = {
-      roomId: debate.id,
+      debateId: debate.id,
       turn: next.turn,
       currentSpeakerId: next.speakerId,
       currentSpeakerNickname: this.resolveNickname(debate, next.speakerId),

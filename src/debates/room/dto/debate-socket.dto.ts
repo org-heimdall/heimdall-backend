@@ -1,19 +1,18 @@
 import { IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
-// join_debate / next_turn 공용: roomId는 debateId 그대로다.
 export class JoinDebateRoomDto {
   @IsUUID()
-  roomId: string;
+  debateId: string;
 }
 
 export class NextTurnDto {
   @IsUUID()
-  roomId: string;
+  debateId: string;
 }
 
 export class SendDebateMessageDto {
   @IsUUID()
-  roomId: string;
+  debateId: string;
 
   @IsString()
   @MinLength(1)

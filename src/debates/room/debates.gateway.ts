@@ -86,11 +86,11 @@ export class DebatesGateway
   ): Promise<void> {
     try {
       const dto = await this.parse(JoinDebateRoomDto, body);
-      const { roomId } = await this.debateRoomService.join(
+      const { socketRoom } = await this.debateRoomService.join(
         this.memberIdOf(socket),
-        dto.roomId,
+        dto.debateId,
       );
-      await socket.join(roomId);
+      await socket.join(socketRoom);
     } catch (error) {
       this.emitError(socket, error);
     }
@@ -105,11 +105,11 @@ export class DebatesGateway
       const dto = await this.parse(SendDebateMessageDto, body);
       const result = await this.debateRoomService.sendMessage(
         this.memberIdOf(socket),
-        dto.roomId,
+        dto.debateId,
         dto.msg,
       );
       this.server
-        .to(debateRoomName(dto.roomId))
+        .to(debateRoomName(dto.debateId))
         .emit('receive_debate_message', {
           senderId: result.senderId,
           senderNickname: result.senderNickname,
@@ -130,7 +130,7 @@ export class DebatesGateway
       const dto = await this.parse(NextTurnDto, body);
       await this.debateRoomService.nextTurn(
         this.memberIdOf(socket),
-        dto.roomId,
+        dto.debateId,
       );
     } catch (error) {
       this.emitError(socket, error);

@@ -105,13 +105,13 @@ describe('DebateRoomService', () => {
 
       const result = await service.join(OPPONENT, DEBATE_ID);
 
-      expect(result.roomId).toBe(debateRoomName(DEBATE_ID));
+      expect(result.socketRoom).toBe(debateRoomName(DEBATE_ID));
       expect(debate.currentTurn).toBe(DebateTurn.OPENING);
       expect(debate.currentSpeakerId).toBe(HOST);
       expect(publisher.emitTurnChanged).toHaveBeenCalledWith(
         debateRoomName(DEBATE_ID),
         expect.objectContaining({
-          roomId: DEBATE_ID,
+          debateId: DEBATE_ID,
           turn: DebateTurn.OPENING,
           currentSpeakerId: HOST,
           currentSpeakerNickname: '호스트',
@@ -137,7 +137,7 @@ describe('DebateRoomService', () => {
 
       const result = await service.join('spectator-uuid', DEBATE_ID);
 
-      expect(result.roomId).toBe(debateRoomName(DEBATE_ID));
+      expect(result.socketRoom).toBe(debateRoomName(DEBATE_ID));
       // 관전자는 상태 전환에 관여하지 않는다
       expect(debate.currentTurn).toBe(DebateTurn.STARTING);
     });

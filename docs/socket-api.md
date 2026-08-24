@@ -11,7 +11,7 @@ socket.io 기반 토론방 실시간 이벤트 명세입니다. 커뮤니티 채
 3. 상대가 `PATCH /api/debates/:debateId/accept`로 수락한다 → 토론이 `STARTING` 상태로 전환된다.
    (거절 시 `PATCH /api/debates/:debateId/reject`, 토론 행이 soft delete된다. 같은 host가 같은 상대에게든 다른 상대에게든 재요청하면 새 행을 만들지 않고 이 거절된 행이 재사용된다.)
 4. host에게 소켓 이벤트 `debate_request_accepted`(또는 `debate_request_rejected`)가 전달된다.
-5. 양측이 `join_debate`으로 입장하면(아래 3번) 첫 턴(`OPENING`, host 차례)이 시작된다.
+5. 양측이 `join_debate`으로 입장하면(아래 2번) 첫 턴(`OPENING`, host 차례)이 시작된다.
 
 `debate_requested` / `debate_request_accepted` / `debate_request_rejected`는 REST 처리 결과에 대한 알림이며, 수신 대상 회원에게만 전달됩니다(서버 내부적으로 연결 시 개인 알림용 room에 자동 join되어 있어 별도 구독 절차는 없습니다).
 
@@ -39,12 +39,12 @@ socket.on('connect_error', (err) => {
 
 ### `join_debate`
 
-토론방(관전 포함) 입장. `roomId`는 **debateId**입니다.
+토론방(관전 포함) 입장.
 
-> 명명 원칙: 입장 이벤트는 방 종류별로 분리합니다(구 명세의 공용 `join_room` 폐기). 커뮤니티 단톡방 입장은 후속 구현에서 `join_community`로 추가됩니다.
+> 명명 원칙: 입장 이벤트는 방 종류별로 분리합니다(구 명세의 공용 `join_room` 폐기). payload 식별자도 도메인을 명시적으로 담습니다(debateId, 커뮤니티 단톡방은 후속에서 communityId). 커뮤니티 단톡방 입장은 후속 구현에서 `join_community`로 추가됩니다.
 
 ```json
-{ "roomId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60" }
+{ "debateId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60" }
 ```
 
 - 토론자(host/opponent)면 참여로 기록됩니다. **양측 토론자가 모두 입장하고 토론 상태가 `STARTING`이면, 이 시점에 자동으로 `OPENING`(host 차례)으로 전환**되고 `debate_turn_changed`가 브로드캐스트됩니다.
@@ -57,7 +57,7 @@ socket.on('connect_error', (err) => {
 발언 메시지 전송.
 
 ```json
-{ "roomId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60", "msg": "저는 찬성합니다." }
+{ "debateId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60", "msg": "저는 찬성합니다." }
 ```
 
 - 현재 발언 차례(`currentSpeakerId`)인 사람만 보낼 수 있습니다.
@@ -70,7 +70,7 @@ socket.on('connect_error', (err) => {
 발언 차례를 명시적으로 다음으로 넘깁니다(예: 발언을 마쳤을 때).
 
 ```json
-{ "roomId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60" }
+{ "debateId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60" }
 ```
 
 - 현재 발언 차례인 사람만 호출할 수 있습니다(아니면 `NOT_YOUR_TURN`).
@@ -86,7 +86,7 @@ socket.on('connect_error', (err) => {
 
 ```json
 {
-  "roomId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60",
+  "debateId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60",
   "turn": "OPENING",
   "currentSpeakerId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f61",
   "currentSpeakerNickname": "헤임달",
