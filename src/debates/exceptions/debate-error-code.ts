@@ -82,4 +82,10 @@ export const DebateErrorCode = {
     title: 'Debate Already Active',
     detail: '이 커뮤니티에 이미 진행 중인 토론이 있습니다.',
   },
+  REQUEST_ALREADY_PENDING: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'DEBATE.REQUEST_ALREADY_PENDING',
+    title: 'Request Already Pending',
+    detail: '아직 응답을 기다리는 토론 요청이 있습니다.',
+  },
 } as const satisfies Record<string, AppError>;

@@ -41,6 +41,7 @@ export class DebatesController {
     DebateErrorCode.NOT_HOST,
     DebateErrorCode.OPPONENT_NOT_IN_COMMUNITY,
     DebateErrorCode.OPPONENT_KEYNOTE_REQUIRED,
+    DebateErrorCode.REQUEST_ALREADY_PENDING,
     DebateErrorCode.DEBATE_ALREADY_ACTIVE,
   )
   @ApiAuthRequired()

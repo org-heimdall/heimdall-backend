@@ -74,15 +74,20 @@ export class DebatesService {
       throw error;
     }
 
-    const hasActiveDebate = await this.debateRepository.exists({
+    // 미응답 요청은 REQUEST_ALREADY_PENDING, 진행 중 토론은 DEBATE_ALREADY_ACTIVE로 분기
+    const active = await this.debateRepository.findOne({
       where: {
-        communityId: communityId,
+        communityId,
         status: ResourceStatus.NORMAL,
         currentTurn: Not(DebateTurn.FINISHED),
       },
     });
-    if (hasActiveDebate) {
-      throw new GeneralException(DebateErrorCode.DEBATE_ALREADY_ACTIVE);
+    if (active) {
+      throw new GeneralException(
+        active.currentTurn === DebateTurn.PENDING
+          ? DebateErrorCode.REQUEST_ALREADY_PENDING
+          : DebateErrorCode.DEBATE_ALREADY_ACTIVE,
+      );
     }
 
     const [host, opponent] = await Promise.all([
@@ -115,11 +120,12 @@ export class DebatesService {
     try {
       saved = await this.debateRepository.save(debate);
     } catch (error) {
-      // 동시 요청 레이스: 활성 검사와 save 사이에 다른 요청이 끼어들면 부분 유니크 인덱스가 막는다.
-      // 이미 unique_violation으로 분류가 끝난 기대 가능한 에러이므로 cause 없이 던진다.
+      // 동시 요청 레이스: 활성 검사와 save 사이에 다른 요청이 먼저 PENDING 슬롯을 차지하면
+      // 부분 유니크 인덱스가 막는다. 이미 unique_violation으로 분류가 끝난 기대 가능한
+      // 에러이므로 cause 없이 던진다.
       const constraint = getUniqueViolationConstraint(error);
       if (constraint === DEBATE_PENDING_REQUEST_UNIQUE) {
-        throw new GeneralException(DebateErrorCode.DEBATE_ALREADY_ACTIVE);
+        throw new GeneralException(DebateErrorCode.REQUEST_ALREADY_PENDING);
       }
       throw error;
     }

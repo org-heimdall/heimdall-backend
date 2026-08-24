@@ -157,7 +157,7 @@ describe('DebatesService', () => {
       expect(debateRepository.save).not.toHaveBeenCalled();
     });
 
-    it('같은 커뮤니티에 이미 진행 중인 토론이 있으면 DEBATE_ALREADY_ACTIVE 에러를 던진다', async () => {
+    it('같은 커뮤니티에 응답 대기 중인(PENDING) 토론 요청이 있으면 REQUEST_ALREADY_PENDING 에러를 던진다', async () => {
       communitiesService.findOneOrThrow.mockResolvedValue({
         hostId: 'host-uuid',
       });
@@ -165,7 +165,27 @@ describe('DebatesService', () => {
         memberId: 'opponent-uuid',
         communityId: 'community-uuid',
       });
-      debateRepository.exists.mockResolvedValue(true);
+      debateRepository.findOne.mockResolvedValue(
+        buildDebate({ currentTurn: DebateTurn.PENDING }),
+      );
+
+      await expect(service.create(dto, 'host-uuid')).rejects.toMatchObject({
+        appError: DebateErrorCode.REQUEST_ALREADY_PENDING,
+      });
+      expect(debateRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('같은 커뮤니티에 이미 진행 중인(PENDING이 아닌) 토론이 있으면 DEBATE_ALREADY_ACTIVE 에러를 던진다', async () => {
+      communitiesService.findOneOrThrow.mockResolvedValue({
+        hostId: 'host-uuid',
+      });
+      memberCommunitiesService.findOne.mockResolvedValue({
+        memberId: 'opponent-uuid',
+        communityId: 'community-uuid',
+      });
+      debateRepository.findOne.mockResolvedValue(
+        buildDebate({ currentTurn: DebateTurn.STARTING }),
+      );
 
       await expect(service.create(dto, 'host-uuid')).rejects.toMatchObject({
         appError: DebateErrorCode.DEBATE_ALREADY_ACTIVE,
@@ -232,7 +252,10 @@ describe('DebatesService', () => {
         opponentNickname: '이전 상대',
         status: ResourceStatus.DELETED,
       });
-      debateRepository.findOne.mockResolvedValue(rejectedDebate);
+      // 첫 호출(활성 검사)은 없음(null), 두 번째 호출(재사용 검사)에서 거절된 행을 반환
+      debateRepository.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(rejectedDebate);
 
       const result = await service.create(dto, 'host-uuid');
 
@@ -245,7 +268,7 @@ describe('DebatesService', () => {
       expect(result.debateId).toBe('debate-uuid');
     });
 
-    it('save에서 PENDING 요청 부분 유니크 인덱스 위반이 나면 DEBATE_ALREADY_ACTIVE 에러를 cause 없이 던진다', async () => {
+    it('save에서 PENDING 요청 부분 유니크 인덱스 위반이 나면 REQUEST_ALREADY_PENDING 에러를 cause 없이 던진다', async () => {
       communitiesService.findOneOrThrow.mockResolvedValue({
         hostId: 'host-uuid',
       });
@@ -272,7 +295,7 @@ describe('DebatesService', () => {
         .catch((e: unknown) => e)) as GeneralException;
 
       expect(error).toBeInstanceOf(GeneralException);
-      expect(error.appError).toBe(DebateErrorCode.DEBATE_ALREADY_ACTIVE);
+      expect(error.appError).toBe(DebateErrorCode.REQUEST_ALREADY_PENDING);
       expect(error.cause).toBeUndefined();
     });
 
