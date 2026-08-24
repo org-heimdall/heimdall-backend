@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { QueryFailedError } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { CommunitiesService } from '../communities/communities.service';
 import { CommunityErrorCode } from '../communities/exceptions/community-error-code';
@@ -7,7 +8,11 @@ import { GeneralException } from '../common/exceptions/general.exception';
 import { MemberCommunitiesService } from '../member-communities/member-communities.service';
 import { MembersService } from '../members/members.service';
 import { DebatesService } from './debates.service';
-import { Debate, DebateTurn } from './entities/debate.entity';
+import {
+  DEBATE_PENDING_REQUEST_UNIQUE,
+  Debate,
+  DebateTurn,
+} from './entities/debate.entity';
 import { DebateErrorCode } from './exceptions/debate-error-code';
 import { DebateEventsPublisher } from './room/debate-events-publisher.interface';
 
@@ -17,6 +22,7 @@ describe('DebatesService', () => {
     save: jest.Mock;
     exists: jest.Mock;
     findOneBy: jest.Mock;
+    findOne: jest.Mock;
   };
   let communitiesService: {
     findOneOrThrow: jest.Mock;
@@ -31,6 +37,10 @@ describe('DebatesService', () => {
   };
 
   const dto = { communityId: 'community-uuid', opponentId: 'opponent-uuid' };
+
+  /** pg 드라이버가 던지는 에러 모양(code=SQLSTATE, unique 위반이면 constraint=제약 이름) */
+  const pgDriverError = (code: string, constraint?: string): Error =>
+    Object.assign(new Error(`pg error ${code}`), { code, constraint });
 
   const buildDebate = (overrides: Partial<Debate> = {}): Debate =>
     Object.assign(new Debate(), {
@@ -61,6 +71,7 @@ describe('DebatesService', () => {
       ),
       exists: jest.fn().mockResolvedValue(false),
       findOneBy: jest.fn(),
+      findOne: jest.fn().mockResolvedValue(null),
     };
     communitiesService = {
       findOneOrThrow: jest.fn(),
@@ -200,6 +211,93 @@ describe('DebatesService', () => {
           hostNickname: '호스트',
         }),
       );
+    });
+
+    it('거절되어 재사용 가능한 PENDING 행이 있으면 새로 만들지 않고 그 행을 재사용한다', async () => {
+      communitiesService.findOneOrThrow.mockResolvedValue({
+        hostId: 'host-uuid',
+      });
+      memberCommunitiesService.findOne.mockResolvedValue({
+        memberId: 'opponent-uuid',
+        communityId: 'community-uuid',
+      });
+      membersService.findOneOrThrow.mockImplementation((memberId: string) =>
+        Promise.resolve({
+          id: memberId,
+          nickname: memberId === 'host-uuid' ? '호스트' : '상대',
+        }),
+      );
+      const rejectedDebate = buildDebate({
+        opponentId: 'old-opponent-uuid',
+        opponentNickname: '이전 상대',
+        status: ResourceStatus.DELETED,
+      });
+      debateRepository.findOne.mockResolvedValue(rejectedDebate);
+
+      const result = await service.create(dto, 'host-uuid');
+
+      // 새 행이 아니라 거절된 행 자체가 재사용됐는지 확인
+      expect(debateRepository.save).toHaveBeenCalledWith(rejectedDebate);
+      expect(rejectedDebate.opponentId).toBe('opponent-uuid');
+      expect(rejectedDebate.opponentNickname).toBe('상대');
+      expect(rejectedDebate.currentTurn).toBe(DebateTurn.PENDING);
+      expect(rejectedDebate.status).toBe(ResourceStatus.NORMAL);
+      expect(result.debateId).toBe('debate-uuid');
+    });
+
+    it('save에서 PENDING 요청 부분 유니크 인덱스 위반이 나면 DEBATE_ALREADY_ACTIVE 에러를 cause 없이 던진다', async () => {
+      communitiesService.findOneOrThrow.mockResolvedValue({
+        hostId: 'host-uuid',
+      });
+      memberCommunitiesService.findOne.mockResolvedValue({
+        memberId: 'opponent-uuid',
+        communityId: 'community-uuid',
+      });
+      membersService.findOneOrThrow.mockImplementation((memberId: string) =>
+        Promise.resolve({
+          id: memberId,
+          nickname: memberId === 'host-uuid' ? '호스트' : '상대',
+        }),
+      );
+      debateRepository.save.mockRejectedValue(
+        new QueryFailedError(
+          'INSERT',
+          [],
+          pgDriverError('23505', DEBATE_PENDING_REQUEST_UNIQUE),
+        ),
+      );
+
+      const error = (await service
+        .create(dto, 'host-uuid')
+        .catch((e: unknown) => e)) as GeneralException;
+
+      expect(error).toBeInstanceOf(GeneralException);
+      expect(error.appError).toBe(DebateErrorCode.DEBATE_ALREADY_ACTIVE);
+      expect(error.cause).toBeUndefined();
+    });
+
+    it('매핑되지 않은 unique 위반은 그대로 전파한다', async () => {
+      communitiesService.findOneOrThrow.mockResolvedValue({
+        hostId: 'host-uuid',
+      });
+      memberCommunitiesService.findOne.mockResolvedValue({
+        memberId: 'opponent-uuid',
+        communityId: 'community-uuid',
+      });
+      membersService.findOneOrThrow.mockImplementation((memberId: string) =>
+        Promise.resolve({
+          id: memberId,
+          nickname: memberId === 'host-uuid' ? '호스트' : '상대',
+        }),
+      );
+      const error = new QueryFailedError(
+        'INSERT',
+        [],
+        pgDriverError('23505', 'UQ_some_other_constraint'),
+      );
+      debateRepository.save.mockRejectedValue(error);
+
+      await expect(service.create(dto, 'host-uuid')).rejects.toBe(error);
     });
   });
 

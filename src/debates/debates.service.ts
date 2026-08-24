@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { GeneralException } from '../common/exceptions/general.exception';
+import { getUniqueViolationConstraint } from '../common/exceptions/unique-violation.util';
 import { CommunitiesService } from '../communities/communities.service';
 import { CommunityErrorCode } from '../communities/exceptions/community-error-code';
 import { MemberCommunitiesService } from '../member-communities/member-communities.service';
@@ -13,7 +14,11 @@ import {
   CreateDebateResultDto,
 } from './dto/create-debate.dto';
 import { UpdateDebateDto } from './dto/update-debate.dto';
-import { Debate, DebateTurn } from './entities/debate.entity';
+import {
+  DEBATE_PENDING_REQUEST_UNIQUE,
+  Debate,
+  DebateTurn,
+} from './entities/debate.entity';
 import { DebateErrorCode } from './exceptions/debate-error-code';
 import { DebateEventsPublisher } from './room/debate-events-publisher.interface';
 
@@ -85,15 +90,39 @@ export class DebatesService {
       this.membersService.findOneOrThrow(opponentId),
     ]);
 
-    const debate = Debate.open({
-      communityId: communityId,
-      hostId,
-      hostNickname: host.nickname,
-      opponentId,
-      opponentNickname: opponent.nickname,
+    // status 필터를 의도적으로 걸지 않는다: 위 활성 차단 검사를 통과했다면 이 (community, host)
+    // PENDING 행은 존재하더라도 거절되어 DELETED 상태인 것뿐이므로, 그 행을 되살려 재사용한다.
+    // (soft-delete.md의 조회 규칙에 대한 의도적 예외.)
+    const reusable = await this.debateRepository.findOne({
+      where: { communityId, hostId, currentTurn: DebateTurn.PENDING },
     });
 
-    const saved = await this.debateRepository.save(debate);
+    let debate: Debate;
+    if (reusable) {
+      reusable.reopenRequest(host.nickname, opponentId, opponent.nickname);
+      debate = reusable;
+    } else {
+      debate = Debate.open({
+        communityId: communityId,
+        hostId,
+        hostNickname: host.nickname,
+        opponentId,
+        opponentNickname: opponent.nickname,
+      });
+    }
+
+    let saved: Debate;
+    try {
+      saved = await this.debateRepository.save(debate);
+    } catch (error) {
+      // 동시 요청 레이스: 활성 검사와 save 사이에 다른 요청이 끼어들면 부분 유니크 인덱스가 막는다.
+      // 이미 unique_violation으로 분류가 끝난 기대 가능한 에러이므로 cause 없이 던진다.
+      const constraint = getUniqueViolationConstraint(error);
+      if (constraint === DEBATE_PENDING_REQUEST_UNIQUE) {
+        throw new GeneralException(DebateErrorCode.DEBATE_ALREADY_ACTIVE);
+      }
+      throw error;
+    }
 
     this.publisher?.emitDebateRequested(saved.opponentId, {
       debateId: saved.id,

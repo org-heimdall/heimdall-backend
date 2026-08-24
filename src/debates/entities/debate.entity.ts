@@ -2,11 +2,13 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Community } from '../../communities/entities/community.entity';
+import { ResourceStatus } from '../../common/entities/resource-status.enum';
 import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
 export enum DebateTurn {
@@ -19,7 +21,18 @@ export enum DebateTurn {
   FINISHED = 'FINISHED',
 }
 
+/**
+ * (community, host)당 PENDING 요청은 하나만 존재할 수 있는 부분 유니크 인덱스 이름.
+ * 자동 생성 이름(IDX_<해시>)은 코드에서 참조할 수 없어 명시적으로 부여한다.
+ * 서비스가 unique 위반을 이 이름으로 분류해 동시 요청 레이스를 DEBATE_ALREADY_ACTIVE로 처리한다.
+ */
+export const DEBATE_PENDING_REQUEST_UNIQUE = 'UQ_debate_community_host_pending';
+
 @Entity('debate')
+@Index(DEBATE_PENDING_REQUEST_UNIQUE, ['communityId', 'hostId'], {
+  unique: true,
+  where: '"current_turn" = \'PENDING\'',
+})
 export class Debate extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -83,5 +96,24 @@ export class Debate extends SoftDeletableEntity {
     debate.winnerId = null;
     debate.solution = null;
     return debate;
+  }
+
+  // PENDING 요청 슬롯 재사용: 거절(soft delete)된 요청 행을 새 요청으로 되살린다.
+  // 닉네임 스냅샷은 이전 요청 이후 변경됐을 수 있어 둘 다 갱신하고,
+  // 나머지는 open()과 동일한 초기 불변식으로 리셋한다.
+  reopenRequest(
+    hostNickname: string,
+    opponentId: string,
+    opponentNickname: string,
+  ): void {
+    this.hostNickname = hostNickname;
+    this.opponentId = opponentId;
+    this.opponentNickname = opponentNickname;
+    this.currentTurn = DebateTurn.PENDING;
+    this.currentSpeakerId = null;
+    this.freetalkingRound = 0;
+    this.winnerId = null;
+    this.solution = null;
+    this.status = ResourceStatus.NORMAL;
   }
 }

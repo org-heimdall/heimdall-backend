@@ -9,7 +9,7 @@ socket.io 기반 토론방 실시간 이벤트 명세입니다. 커뮤니티 채
 1. host가 `POST /api/debates`로 토론을 요청한다 → 토론이 `PENDING` 상태로 생성된다.
 2. 상대에게 소켓 이벤트 `debate_requested`가 전달된다.
 3. 상대가 `PATCH /api/debates/:debateId/accept`로 수락한다 → 토론이 `STARTING` 상태로 전환된다.
-   (거절 시 `PATCH /api/debates/:debateId/reject`, 토론 행이 soft delete된다.)
+   (거절 시 `PATCH /api/debates/:debateId/reject`, 토론 행이 soft delete된다. 같은 host가 같은 상대에게든 다른 상대에게든 재요청하면 새 행을 만들지 않고 이 거절된 행이 재사용된다.)
 4. host에게 소켓 이벤트 `debate_request_accepted`(또는 `debate_request_rejected`)가 전달된다.
 5. 양측이 `join_room`으로 입장하면(아래 3번) 첫 턴(`OPENING`, host 차례)이 시작된다.
 
