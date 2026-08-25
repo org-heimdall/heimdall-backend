@@ -11,7 +11,7 @@ socket.io 기반 토론방 실시간 이벤트 명세입니다. 커뮤니티 채
 3. 상대가 `PATCH /api/debates/:debateId/accept`로 수락한다 → 토론이 `STARTING` 상태로 전환된다.
    (거절 시 `PATCH /api/debates/:debateId/reject`, 토론 행이 soft delete된다. 같은 host가 같은 상대에게든 다른 상대에게든 재요청하면 새 행을 만들지 않고 이 거절된 행이 재사용된다.)
 4. host에게 소켓 이벤트 `debate_request_accepted`(또는 `debate_request_rejected`)가 전달된다.
-5. 양측이 `join_debate`으로 입장하면(아래 2번) 첫 턴(`OPENING`, host 차례)이 시작된다.
+5. 양측이 `join_debate`으로 입장하면(아래 2번) 약 10초(`DEBATE_STARTING_SECONDS`)의 `STARTING` 인사 시간이 시작되고, 종료 후 자동으로 첫 턴(`OPENING`, host 차례)에 진입한다.
 
 `debate_requested` / `debate_request_accepted` / `debate_request_rejected`는 REST 처리 결과에 대한 알림이며, 수신 대상 회원에게만 전달됩니다(서버 내부적으로 연결 시 개인 알림용 room에 자동 join되어 있어 별도 구독 절차는 없습니다).
 
@@ -47,7 +47,7 @@ socket.on('connect_error', (err) => {
 { "debateId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60" }
 ```
 
-- 토론자(host/opponent)면 참여로 기록됩니다. **양측 토론자가 모두 입장하고 토론 상태가 `STARTING`이면, 이 시점에 자동으로 `OPENING`(host 차례)으로 전환**되고 `debate_turn_changed`가 브로드캐스트됩니다.
+- 토론자(host/opponent)면 참여로 기록됩니다. **양측 토론자가 모두 입장하고 토론 상태가 `STARTING`이면, 이 시점에 약 10초(`DEBATE_STARTING_SECONDS`)의 자유 인사 카운트다운이 시작**되고, `endsAt`이 채워진 `debate_turn_changed`(`turn: "STARTING"`)가 브로드캐스트됩니다. 카운트다운 종료 시 자동으로 `OPENING`(host 차례)으로 전환되고 별도의 `debate_turn_changed`가 다시 브로드캐스트됩니다. 카운트다운 도중 토론자가 재접속해 다시 `join_debate`해도 카운트다운이 중복 시작되지 않습니다.
 - 토론자가 아니면 해당 토론이 속한 커뮤니티의 멤버인지만 확인합니다(관전).
 - **수락 전(`PENDING`)에는 입장할 수 없습니다.** 토론자든 관전자든 `REQUEST_NOT_ACCEPTED` 에러를 받습니다. 먼저 상대가 REST로 수락해야 합니다(위 0번 흐름 참고).
 - **성공 시 별도 응답 이벤트가 없습니다.** 실패하면 `error_from_debate_room`을 받습니다.
@@ -60,9 +60,9 @@ socket.on('connect_error', (err) => {
 { "debateId": "3f0c1b2e-9a1d-4c8e-8f3a-1b2c3d4e5f60", "msg": "저는 찬성합니다." }
 ```
 
-- 현재 발언 차례(`currentSpeakerId`)인 사람만 보낼 수 있습니다.
-- `OPENING` / `FREETALKING` / `CLOSING` 단계에서만 가능합니다(그 외 단계는 `INVALID_PHASE`).
-- 한 턴에 누적 **1000자**까지 발언할 수 있습니다(초과 시 `MESSAGE_BUDGET_EXCEEDED`, 정확히 1000자는 허용).
+- **`STARTING`(인사 시간)**: 발언 차례 개념이 없습니다. 토론자(host/opponent)면 순서와 무관하게 자유롭게 보낼 수 있고(관전자는 `NOT_YOUR_TURN`), 누적 글자 수 예산도 적용되지 않습니다(메시지 1건당 1000자 제한은 아래와 동일).
+- **`OPENING` / `FREETALKING` / `CLOSING`(발언권 턴)**: 현재 발언 차례(`currentSpeakerId`)인 사람만 보낼 수 있고(아니면 `NOT_YOUR_TURN`), 한 턴에 누적 **1000자**까지만 발언할 수 있습니다(초과 시 `MESSAGE_BUDGET_EXCEEDED`, 정확히 1000자는 허용).
+- 그 외 단계(`JUDGING` 등)에서는 `INVALID_PHASE`를 받습니다.
 - 성공 시 방 전체(발신자 본인 포함)에 `receive_debate_message`가 브로드캐스트됩니다.
 
 ### `next_turn`
@@ -94,9 +94,11 @@ socket.on('connect_error', (err) => {
 }
 ```
 
-- `turn`: `DebateTurn` 단계 enum. `STARTING`(대기) → `OPENING`(입론, host→opponent) → `FREETALKING`(자유발언, host↔opponent를 커뮤니티 `debateRoundCount`회 반복) → `CLOSING`(최종발언, host→opponent) → `JUDGING`(판정) → `FINISHED`.
-- `STARTING`(양측 join 전)과 `JUDGING`(발언자 없음, 타이머 없음) 단계에서는 `currentSpeakerId`/`currentSpeakerNickname`/`endsAt`이 모두 **null**입니다.
-- `endsAt`: 해당 턴의 발언 제한시간 종료 시각(UTC epoch **ms**, `number`). 서버 기준 `Date.now() + DEBATE_TURN_SECONDS(기본 180)*1000`.
+- `turn`: `DebateTurn` 단계 enum. `STARTING`(양측 join 완료 후 자유 인사) → `OPENING`(입론, host→opponent) → `FREETALKING`(자유발언, host↔opponent를 커뮤니티 `debateRoundCount`회 반복) → `CLOSING`(최종발언, host→opponent) → `JUDGING`(판정) → `FINISHED`.
+- `endsAt`이 `null`인 단계는 `JUDGING`(발언자 없음, 타이머 없음)뿐입니다. 그 외(`STARTING` 포함)는 모두 타이머가 도는 단계입니다.
+- `STARTING`: `currentSpeakerId`/`currentSpeakerNickname`은 **null**(발언권 없는 자유 인사 시간)이지만 `endsAt`은 채워집니다. 서버 기준 `Date.now() + DEBATE_STARTING_SECONDS(기본 10)*1000`. 양측 join이 모두 끝나야 최초 1회 브로드캐스트됩니다.
+- `OPENING` / `FREETALKING` / `CLOSING`: `currentSpeakerId`/`currentSpeakerNickname`이 채워지고, `endsAt`은 `Date.now() + DEBATE_TURN_SECONDS(기본 180)*1000`.
+- `JUDGING`: `currentSpeakerId`/`currentSpeakerNickname`/`endsAt`이 모두 **null**입니다.
 - `JUDGING` 진입 이후 AI 판정 연동은 **후속 작업**입니다(현재는 여기서 멈춥니다).
 
 ### `receive_debate_message`
@@ -161,8 +163,8 @@ socket.on('connect_error', (err) => {
 |------|------|------|
 | `DEBATE.NOT_FOUND` | 존재하지 않는(또는 삭제된) 토론 | 토론방을 찾을 수 없습니다. |
 | `DEBATE.NOT_COMMUNITY_MEMBER` | 토론자가 아닌데 커뮤니티 멤버도 아님 | 해당 커뮤니티에 참여한 회원만 이용할 수 있습니다. |
-| `DEBATE.INVALID_PHASE` | 발언 불가 단계(STARTING/JUDGING 등)에서 발언 시도 | 지금은 발언할 수 있는 단계가 아닙니다. |
-| `DEBATE.NOT_YOUR_TURN` | 발언 차례가 아닌 사람이 발언/턴 넘기기 시도 | 현재 발언할 차례가 아닙니다. |
+| `DEBATE.INVALID_PHASE` | 발언 불가 단계(JUDGING 등)에서 발언 시도 | 지금은 발언할 수 있는 단계가 아닙니다. |
+| `DEBATE.NOT_YOUR_TURN` | 발언 차례가 아닌 사람이 발언/턴 넘기기 시도, 또는 STARTING 단계에서 토론자가 아닌 사람(관전자)이 발언 시도 | 현재 발언할 차례가 아닙니다. |
 | `DEBATE.MESSAGE_BUDGET_EXCEEDED` | 턴 누적 1000자 초과 | 이번 턴에 발언할 수 있는 글자 수를 초과했습니다. |
 | `DEBATE.REQUEST_NOT_ACCEPTED` | 수락 전(`PENDING`)인 토론에 `join_debate` 시도 | 아직 수락되지 않은 토론입니다. |
 | `COMMON.INVALID_INPUT` | payload class-validator 검증 실패 | 입력값이 올바르지 않습니다. |

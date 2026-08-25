@@ -13,10 +13,10 @@ import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity
 
 export enum DebateTurn {
   PENDING = 'PENDING',
-  STARTING = 'STARTING',
-  OPENING = 'OPENING',
-  FREETALKING = 'FREETALKING',
-  CLOSING = 'CLOSING',
+  STARTING = 'STARTING', // 토론자 결정 직후
+  OPENING = 'OPENING', // 입론
+  FREETALKING = 'FREETALKING', // 자유 발언
+  CLOSING = 'CLOSING', // 최종 변론
   JUDGING = 'JUDGING',
   FINISHED = 'FINISHED',
 }

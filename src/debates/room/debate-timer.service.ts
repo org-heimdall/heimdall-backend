@@ -25,4 +25,9 @@ export class DebateTimerService {
       this.timers.delete(debateId);
     }
   }
+
+  // debateId에 예약된 타이머가 있는지 여부. 중복 스케줄(예: STARTING 카운트다운 중 재-join) 방지용.
+  has(debateId: string): boolean {
+    return this.timers.has(debateId);
+  }
 }

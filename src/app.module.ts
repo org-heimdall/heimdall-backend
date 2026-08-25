@@ -42,6 +42,8 @@ import * as Joi from 'joi';
 
         // 토론 발언 턴 제한시간(초). 턴 시작 시 endsAt = now + 이 값*1000 으로 클라이언트에 통지된다.
         DEBATE_TURN_SECONDS: Joi.number().default(180),
+        // 토론 STARTING(양측 join 완료 후 자유 인사) 대기시간(초).
+        DEBATE_STARTING_SECONDS: Joi.number().default(10),
       }),
     }),
     TypeOrmModule.forRootAsync({
