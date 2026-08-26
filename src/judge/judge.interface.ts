@@ -22,13 +22,35 @@ export interface ParticipantJudgment {
   judgeReason: string[];
 }
 
+export type ViolationType =
+  | 'profanity'
+  | 'personal_attack'
+  | 'disrespect'
+  | 'off_topic'
+  | 'threat';
+
+/**
+ * 위반 정도. LLM 스키마의 'none'은 계약에 두지 않는다 —
+ * "위반 없음"은 빈 배열 하나로만 표현해야 차감 합산에 특수 케이스가 생기지 않는다.
+ */
+export type ViolationSeverity = 'minor' | 'moderate' | 'high' | 'severe';
+
+export interface DebateViolation {
+  type: ViolationType;
+  severity: ViolationSeverity;
+  evidence: string; // 근거가 된 발언. 상대 발언 원문이므로 API로 내보내지 않는다.
+}
+
 export interface JudgeResult {
   performance: {
     host: ParticipantJudgment;
     opponent: ParticipantJudgment;
     winner: DebateSide | 'draw';
   };
-  // TODO: violation의 경우는? 새로운 필드 만들어서 어떻게 정보 저장할건지?
+  violation: {
+    host: DebateViolation[];
+    opponent: DebateViolation[];
+  };
   model: string; // 어떤 모델이 판정했는지 (감사·재현용)
 }
 

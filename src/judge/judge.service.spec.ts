@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { ErrorCode } from '../common/exceptions/error-code';
 import { GeneralException } from '../common/exceptions/general.exception';
@@ -7,6 +8,7 @@ import { Community } from '../communities/entities/community.entity';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate, DebateTurn } from '../debates/entities/debate.entity';
 import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
+import { MembersService } from '../members/members.service';
 import { DebateSolution } from './debate-solution';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
 import { JUDGE, JudgeResult } from './judge.interface';
@@ -21,6 +23,10 @@ describe('JudgeService', () => {
   };
   let debateMessageRepository: { find: jest.Mock };
   let judge: { judge: jest.Mock };
+  let membersService: { deductSocialCredit: jest.Mock };
+  // 트랜잭션 콜백에 넘길 가짜 manager. 판정 저장은 이 manager로 이뤄진다.
+  let manager: { save: jest.Mock };
+  let dataSource: { transaction: jest.Mock };
 
   const HOST_ID = 'host-uuid';
   const OPPONENT_ID = 'opponent-uuid';
@@ -63,16 +69,22 @@ describe('JudgeService', () => {
     });
 
   const buildResult = (overrides: Partial<JudgeResult> = {}): JudgeResult => ({
-    host: { score: 90, winner: 'host', judgeReason: ['근거가 구체적이다'] },
-    opponent: { score: 70, winner: 'host', judgeReason: ['반론이 약하다'] },
-    model: 'gpt-5',
+    performance: {
+      host: { score: 90, judgeReason: ['근거가 구체적이다'] },
+      opponent: { score: 70, judgeReason: ['반론이 약하다'] },
+      winner: 'host',
+    },
+    violation: { host: [], opponent: [] },
+    model: 'gpt-5.6-luna',
     ...overrides,
   });
 
-  // 저장된 엔티티의 solution을 읽어 상태를 검증하기 위한 헬퍼
+  // 저장된 엔티티의 solution을 읽어 상태를 검증하기 위한 헬퍼.
+  // PENDING은 레포지토리로, 판정 결과는 트랜잭션 manager로 저장된다.
   const savedDebate = (): Debate => {
-    const [entity] = debateRepository.save.mock.calls[0] as [Debate];
-    return entity;
+    const call = (debateRepository.save.mock.calls[0] ??
+      manager.save.mock.calls[0]) as [Debate];
+    return call[0];
   };
   const savedSolution = (): DebateSolution =>
     savedDebate().solution as DebateSolution;
@@ -85,6 +97,13 @@ describe('JudgeService', () => {
     };
     debateMessageRepository = { find: jest.fn().mockResolvedValue([]) };
     judge = { judge: jest.fn() };
+    membersService = {
+      deductSocialCredit: jest.fn().mockResolvedValue(undefined),
+    };
+    manager = { save: jest.fn((entity: Debate) => Promise.resolve(entity)) };
+    dataSource = {
+      transaction: jest.fn((cb: (m: typeof manager) => unknown) => cb(manager)),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -98,6 +117,8 @@ describe('JudgeService', () => {
           useValue: debateMessageRepository,
         },
         { provide: JUDGE, useValue: judge },
+        { provide: MembersService, useValue: membersService },
+        { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
 
@@ -166,9 +187,20 @@ describe('JudgeService', () => {
         {
           status: 'JUDGED',
           judgedAt: '2026-08-26T00:00:00.000Z',
-          model: 'gpt-5',
-          host: { score: 90, judgeReason: ['a'] },
-          opponent: { score: 70, judgeReason: ['b'] },
+          model: 'gpt-5.6-luna',
+          winner: 'host',
+          host: {
+            score: 90,
+            judgeReason: ['a'],
+            violations: [],
+            socialCreditPenalty: 0,
+          },
+          opponent: {
+            score: 70,
+            judgeReason: ['b'],
+            violations: [],
+            socialCreditPenalty: 0,
+          },
         },
       ],
     ])(
@@ -211,27 +243,32 @@ describe('JudgeService', () => {
       expect(savedSolution()).toEqual({
         status: 'JUDGED',
         judgedAt: expect.any(String) as string,
-        model: 'gpt-5',
-        host: { score: 90, judgeReason: ['근거가 구체적이다'] },
-        opponent: { score: 70, judgeReason: ['반론이 약하다'] },
+        model: 'gpt-5.6-luna',
+        winner: 'host',
+        host: {
+          score: 90,
+          judgeReason: ['근거가 구체적이다'],
+          violations: [],
+          socialCreditPenalty: 0,
+        },
+        opponent: {
+          score: 70,
+          judgeReason: ['반론이 약하다'],
+          violations: [],
+          socialCreditPenalty: 0,
+        },
       });
     });
 
-    it('host 판정의 winner가 opponent면 상대가 승자로 기록된다', async () => {
+    it('winner가 opponent면 상대가 승자로 기록된다', async () => {
       debateRepository.findOne.mockResolvedValue(buildDebate());
       debateMessageRepository.find.mockResolvedValue([buildMessage()]);
-      // opponent.winner는 무시되므로 일부러 반대 값을 넣는다.
       judge.judge.mockResolvedValue(
         buildResult({
-          host: {
-            score: 70,
+          performance: {
+            host: { score: 70, judgeReason: ['근거가 부족하다'] },
+            opponent: { score: 90, judgeReason: ['반론이 날카롭다'] },
             winner: 'opponent',
-            judgeReason: ['근거가 부족하다'],
-          },
-          opponent: {
-            score: 90,
-            winner: 'host',
-            judgeReason: ['반론이 날카롭다'],
           },
         }),
       );
@@ -239,6 +276,79 @@ describe('JudgeService', () => {
       await service.executeJudgment(DEBATE_ID);
 
       expect(savedDebate().winnerId).toBe(OPPONENT_ID);
+    });
+
+    it('무승부면 winnerId를 비우고 solution에 draw로 남긴다', async () => {
+      debateRepository.findOne.mockResolvedValue(buildDebate());
+      debateMessageRepository.find.mockResolvedValue([buildMessage()]);
+      judge.judge.mockResolvedValue(
+        buildResult({
+          performance: {
+            host: { score: 80, judgeReason: ['팽팽했다'] },
+            opponent: { score: 80, judgeReason: ['팽팽했다'] },
+            winner: 'draw',
+          },
+        }),
+      );
+
+      await service.executeJudgment(DEBATE_ID);
+
+      expect(savedDebate().winnerId).toBeNull();
+      expect(savedSolution()).toMatchObject({
+        status: 'JUDGED',
+        winner: 'draw',
+      });
+    });
+
+    it('위반 severity를 합산해 양측의 신뢰도를 차감한다', async () => {
+      debateRepository.findOne.mockResolvedValue(buildDebate());
+      debateMessageRepository.find.mockResolvedValue([buildMessage()]);
+      judge.judge.mockResolvedValue(
+        buildResult({
+          violation: {
+            // minor(1) + high(7) = 8
+            host: [
+              {
+                type: 'disrespect',
+                severity: 'minor',
+                evidence: '무례한 표현',
+              },
+              { type: 'profanity', severity: 'high', evidence: '욕설' },
+            ],
+            opponent: [],
+          },
+        }),
+      );
+
+      await service.executeJudgment(DEBATE_ID);
+
+      expect(membersService.deductSocialCredit).toHaveBeenCalledWith(
+        HOST_ID,
+        8,
+        manager,
+      );
+      expect(membersService.deductSocialCredit).toHaveBeenCalledWith(
+        OPPONENT_ID,
+        0,
+        manager,
+      );
+      // 차감 근거는 solution에 감사 기록으로 남는다.
+      expect(savedSolution()).toMatchObject({
+        host: { socialCreditPenalty: 8 },
+        opponent: { socialCreditPenalty: 0 },
+      });
+    });
+
+    it('판정 저장과 신뢰도 차감을 한 트랜잭션에서 처리한다', async () => {
+      debateRepository.findOne.mockResolvedValue(buildDebate());
+      debateMessageRepository.find.mockResolvedValue([buildMessage()]);
+      judge.judge.mockResolvedValue(buildResult());
+
+      await service.executeJudgment(DEBATE_ID);
+
+      // 따로 커밋되면 한쪽만 성공했을 때 이중 차감되거나 차감이 누락된다.
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+      expect(manager.save).toHaveBeenCalledWith(expect.any(Debate));
     });
 
     it('삭제되지 않은 메시지만 debate_turn 오름차순으로 읽어 발화자를 표시한다', async () => {
@@ -353,6 +463,7 @@ describe('JudgeService', () => {
       await expect(service.getJudgment(DEBATE_ID)).resolves.toEqual({
         debateId: DEBATE_ID,
         status,
+        winner: null,
         winnerId: null,
         model: null,
         judgedAt: null,
@@ -361,16 +472,33 @@ describe('JudgeService', () => {
       });
     });
 
-    it('JUDGED면 점수·승자·판정이유를 응답한다', async () => {
+    it('JUDGED면 점수·승부·판정이유·위반을 응답한다', async () => {
       debateRepository.findOne.mockResolvedValue(
         buildDebate({
           winnerId: HOST_ID,
           solution: {
             status: 'JUDGED',
             judgedAt: '2026-08-26T00:00:00.000Z',
-            model: 'gpt-5',
-            host: { score: 90, judgeReason: ['근거가 구체적이다'] },
-            opponent: { score: 70, judgeReason: ['반론이 약하다'] },
+            model: 'gpt-5.6-luna',
+            winner: 'host',
+            host: {
+              score: 90,
+              judgeReason: ['근거가 구체적이다'],
+              violations: [],
+              socialCreditPenalty: 0,
+            },
+            opponent: {
+              score: 70,
+              judgeReason: ['반론이 약하다'],
+              violations: [
+                {
+                  type: 'personal_attack',
+                  severity: 'moderate',
+                  evidence: '상대를 비하하는 발언',
+                },
+              ],
+              socialCreditPenalty: 3,
+            },
           },
         }),
       );
@@ -378,20 +506,26 @@ describe('JudgeService', () => {
       await expect(service.getJudgment(DEBATE_ID)).resolves.toEqual({
         debateId: DEBATE_ID,
         status: 'JUDGED',
+        winner: 'host',
         winnerId: HOST_ID,
-        model: 'gpt-5',
+        model: 'gpt-5.6-luna',
         judgedAt: '2026-08-26T00:00:00.000Z',
         host: {
           memberId: HOST_ID,
           nickname: '메시',
           score: 90,
           judgeReason: ['근거가 구체적이다'],
+          violations: [],
+          socialCreditPenalty: 0,
         },
         opponent: {
           memberId: OPPONENT_ID,
           nickname: '호날두',
           score: 70,
           judgeReason: ['반론이 약하다'],
+          // evidence는 상대 발언 원문이라 응답에 실리지 않는다.
+          violations: [{ type: 'personal_attack', severity: 'moderate' }],
+          socialCreditPenalty: 3,
         },
       });
     });

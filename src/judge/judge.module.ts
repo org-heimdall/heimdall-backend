@@ -2,14 +2,14 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
+import { MembersModule } from '../members/members.module';
 import { JudgeController } from './judge.controller';
 import { JUDGE } from './judge.interface';
 import { JudgeService } from './judge.service';
 import { OpenAiJudge } from './openai-judge';
 
 @Module({
-  // 엔티티는 debates 도메인 소유로 두고 레포지토리만 주입받는다.
-  imports: [TypeOrmModule.forFeature([Debate, DebateMessage])],
+  imports: [TypeOrmModule.forFeature([Debate, DebateMessage]), MembersModule],
   controllers: [JudgeController],
   providers: [
     JudgeService,

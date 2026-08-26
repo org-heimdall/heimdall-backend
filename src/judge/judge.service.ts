@@ -1,29 +1,34 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { ErrorCode } from '../common/exceptions/error-code';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
 import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
+import { MembersService } from '../members/members.service';
 import {
   createFailedSolution,
   createJudgedSolution,
   createPendingSolution,
   toDebateSolution,
 } from './debate-solution';
+import type { JudgmentWinner, ParticipantSolution } from './debate-solution';
 import { DebateJudgmentDto } from './dto/debate-judgment.dto';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
 import { JUDGE } from './judge.interface';
+import { toSocialCreditPenalty } from './violation-penalty';
 // 데코레이터가 붙은 시그니처의 타입은 isolatedModules + emitDecoratorMetadata 조합에서
 // 반드시 type-only로 가져와야 한다.
 import type {
   DebateSide,
   DebateTranscriptTurn,
+  DebateViolation,
   Judge,
   JudgeRequest,
   JudgeResult,
+  ParticipantJudgment,
 } from './judge.interface';
 
 @Injectable()
@@ -37,6 +42,8 @@ export class JudgeService {
     private readonly debateMessageRepository: Repository<DebateMessage>,
     @Inject(JUDGE)
     private readonly judge: Judge,
+    private readonly membersService: MembersService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -76,8 +83,10 @@ export class JudgeService {
       const debate = await this.getDebateOrThrow(debateId);
       const result = await this.judge.judge(await this.buildRequest(debate));
 
-      this.applyJudgment(debate, result);
-      await this.debateRepository.save(debate);
+      // 판정 저장과 신뢰도 차감은 원자적
+      await this.dataSource.transaction((manager) =>
+        this.applyJudgment(debate, result, manager),
+      );
     } catch (error) {
       this.logger.error(`토론 판정 실패: debateId=${debateId}`, error);
       await this.markFailed(debateId);
@@ -143,23 +152,80 @@ export class JudgeService {
       .filter((turn): turn is DebateTranscriptTurn => turn !== null);
   }
 
-  // 판정 결과를 엔티티에 반영한다. 승자는 host 판정만 사용하고 opponent.winner는 무시한다.
-  private applyJudgment(debate: Debate, result: JudgeResult): void {
-    if (result.performance.winner === 'host') debate.winnerId = debate.hostId;
-    if (result.performance.winner === 'opponent')
-      debate.winnerId = debate.opponentId;
-    // TODO: result.winner === 'draw' 일 땐?
+  private async applyJudgment(
+    debate: Debate,
+    result: JudgeResult,
+    manager: EntityManager,
+  ): Promise<void> {
+    const { winner } = result.performance;
+    const penalties: Record<DebateSide, number> = {
+      host: toSocialCreditPenalty(result.violation.host),
+      opponent: toSocialCreditPenalty(result.violation.opponent),
+    };
 
-    debate.solution = createJudgedSolution(result.model, {
-      host: {
-        score: result.performance.host.score,
-        judgeReason: result.performance.host.judgeReason,
-      },
-      opponent: {
-        score: result.performance.opponent.score,
-        judgeReason: result.performance.opponent.judgeReason,
-      },
+    debate.winnerId = this.resolveWinnerId(debate, winner);
+    debate.solution = createJudgedSolution(result.model, winner, {
+      host: this.toParticipantSolution(
+        result.performance.host,
+        result.violation.host,
+        penalties.host,
+      ),
+      opponent: this.toParticipantSolution(
+        result.performance.opponent,
+        result.violation.opponent,
+        penalties.opponent,
+      ),
     });
+
+    await manager.save(debate);
+    await this.deductPenalties(debate, penalties, manager);
+  }
+
+  // 판정 결과와 위반 내역을 solution에 남길 형태로 묶는다(차감 근거를 되짚기 위한 감사 기록).
+  private toParticipantSolution(
+    judgment: ParticipantJudgment,
+    violations: DebateViolation[],
+    socialCreditPenalty: number,
+  ): ParticipantSolution {
+    return {
+      score: judgment.score,
+      judgeReason: judgment.judgeReason,
+      violations,
+      socialCreditPenalty,
+    };
+  }
+
+  // 양측의 신뢰도를 차감한다. 차감량이 0이면 MembersService가 조회 없이 넘긴다.
+  private async deductPenalties(
+    debate: Debate,
+    penalties: Record<DebateSide, number>,
+    manager: EntityManager,
+  ): Promise<void> {
+    await this.membersService.deductSocialCredit(
+      debate.hostId,
+      penalties.host,
+      manager,
+    );
+
+    // 판정까지 온 토론은 상대가 반드시 있지만, 타입상 null이 가능하므로 방어한다.
+    if (debate.opponentId !== null) {
+      await this.membersService.deductSocialCredit(
+        debate.opponentId,
+        penalties.opponent,
+        manager,
+      );
+    }
+  }
+
+  // 무승부는 winnerId를 비워 둔다. 판정 여부는 solution의 winner로 구분되므로 모호하지 않다.
+  private resolveWinnerId(
+    debate: Debate,
+    winner: JudgmentWinner,
+  ): string | null {
+    if (winner === 'host') {
+      return debate.hostId;
+    }
+    return winner === 'opponent' ? debate.opponentId : null;
   }
 
   // 실패 기록. 백그라운드 흐름이라 기록마저 실패해도 예외를 올리지 않고 로그만 남긴다.

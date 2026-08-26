@@ -78,6 +78,14 @@ export class Member extends SoftDeletableEntity {
     return this.password !== null;
   }
 
+  // 위반 판정에 따른 신뢰도 차감.
+  deductSocialCredit(amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
+    this.socialCredit = Math.max(0, this.socialCredit - amount);
+  }
+
   // 전달된 필드만 갱신한다(undefined는 미변경). 부분 수정 규칙을 엔티티가 소유
   updateProfile(profile: {
     nickname?: string;

@@ -7,6 +7,7 @@ import { GeneralException } from '../common/exceptions/general.exception';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
 import type {
   DebateSide,
+  DebateViolation,
   Judge,
   JudgeRequest,
   JudgeResult,
@@ -53,15 +54,11 @@ export class OpenAiJudge implements Judge {
       throw new GeneralException(JudgeErrorCode.UNAVAILABLE);
     }
 
-    const output_performance = await this.parseJudgingPerformance(
-      this.client,
-      request,
-    );
-
-    const output_violation = await this.parseJudgingViolation(
-      this.client,
-      request,
-    );
+    // 두 판정은 서로 독립이라 순차로 기다릴 이유가 없다(폴링 대기 시간에 직결된다).
+    const [output_performance, output_violation] = await Promise.all([
+      this.parseJudgingPerformance(this.client, request),
+      this.parseJudgingViolation(this.client, request),
+    ]);
 
     const host_participant_judgement = toParticipantJudgment(
       output_performance.host,
@@ -78,12 +75,15 @@ export class OpenAiJudge implements Judge {
     )
       winner = 'draw';
 
-    // TODO: output_violation은 어떻게 처리해서 리턴시킬지?
     return {
       performance: {
         host: host_participant_judgement,
         opponent: opponent_participant_judgement,
         winner,
+      },
+      violation: {
+        host: toViolations(output_violation.host.violations),
+        opponent: toViolations(output_violation.opponent.violations),
       },
       model: this.model,
     };
@@ -158,6 +158,27 @@ export class OpenAiJudge implements Judge {
       throw new GeneralException(JudgeErrorCode.UNAVAILABLE, { cause: error });
     }
   }
+}
+
+/**
+ * LLM 응답의 위반 목록을 도메인 계약으로 옮긴다.
+ * severity 'none'은 "위반 없음"이므로 항목 자체를 뺀다 — 프롬프트가 넣지 말라고 지시하지만
+ * 스키마상으로는 넣을 수 있어 서버에서 한 번 더 거른다.
+ */
+function toViolations(
+  violations: JudgingDebateViolationOutput['host']['violations'],
+): DebateViolation[] {
+  return violations.flatMap((violation) =>
+    violation.severity === 'none'
+      ? []
+      : [
+          {
+            type: violation.type,
+            severity: violation.severity,
+            evidence: violation.evidence,
+          },
+        ],
+  );
 }
 
 function toParticipantJudgment(

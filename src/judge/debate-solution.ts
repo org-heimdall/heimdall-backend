@@ -1,10 +1,19 @@
-import { DebateSide } from './judge.interface';
+import type {
+  DebateSide,
+  DebateViolation,
+  ViolationSeverity,
+  ViolationType,
+} from './judge.interface';
 
 export type JudgmentStatus = 'PENDING' | 'FAILED' | 'JUDGED';
+
+export type JudgmentWinner = DebateSide | 'draw';
 
 export interface ParticipantSolution {
   score: number;
   judgeReason: string[];
+  violations: DebateViolation[];
+  socialCreditPenalty: number;
 }
 
 export type DebateSolution =
@@ -14,11 +23,27 @@ export type DebateSolution =
       status: 'JUDGED';
       judgedAt: string;
       model: string;
+      winner: JudgmentWinner;
       host: ParticipantSolution;
       opponent: ParticipantSolution;
     };
 
 export type JudgedSolution = Extract<DebateSolution, { status: 'JUDGED' }>;
+
+const VIOLATION_TYPES: ViolationType[] = [
+  'profanity',
+  'personal_attack',
+  'disrespect',
+  'off_topic',
+  'threat',
+];
+
+const VIOLATION_SEVERITIES: ViolationSeverity[] = [
+  'minor',
+  'moderate',
+  'high',
+  'severe',
+];
 
 // 판정 요청 시점의 페이로드
 export function createPendingSolution(): DebateSolution {
@@ -30,15 +55,16 @@ export function createFailedSolution(): DebateSolution {
   return { status: 'FAILED', failedAt: new Date().toISOString() };
 }
 
-// 판정 결과 페이로드. 승자는 Debate.winnerId에만 기록하므로 여기 담지 않는다.
 export function createJudgedSolution(
   model: string,
+  winner: JudgmentWinner,
   participants: Record<DebateSide, ParticipantSolution>,
 ): DebateSolution {
   return {
     status: 'JUDGED',
     judgedAt: new Date().toISOString(),
     model,
+    winner,
     host: participants.host,
     opponent: participants.opponent,
   };
@@ -84,6 +110,7 @@ function toJudgedSolution(
   if (
     !isString(value.judgedAt) ||
     !isString(value.model) ||
+    !isWinner(value.winner) ||
     !host ||
     !opponent
   ) {
@@ -94,6 +121,7 @@ function toJudgedSolution(
     status: 'JUDGED',
     judgedAt: value.judgedAt,
     model: value.model,
+    winner: value.winner,
     host,
     opponent,
   };
@@ -104,12 +132,49 @@ function toParticipantSolution(value: unknown): ParticipantSolution | null {
     return null;
   }
 
-  const { score, judgeReason } = value;
+  const { score, judgeReason, violations, socialCreditPenalty } = value;
   if (typeof score !== 'number' || !Array.isArray(judgeReason)) {
     return null;
   }
 
-  return { score, judgeReason: judgeReason.filter(isString) };
+  return {
+    score,
+    judgeReason: judgeReason.filter(isString),
+    // 위반 내역과 차감액은 감사용 부가 정보라, 없으면 "위반 없음"으로 읽는다.
+    violations: Array.isArray(violations)
+      ? violations.flatMap(toViolation)
+      : [],
+    socialCreditPenalty:
+      typeof socialCreditPenalty === 'number' ? socialCreditPenalty : 0,
+  };
+}
+
+// 알아볼 수 없는 항목은 빈 배열로 흘려보내 감사 기록 한 줄 때문에 판정 전체가 깨지지 않게 한다.
+function toViolation(value: unknown): DebateViolation[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const { type, severity, evidence } = value;
+  if (
+    !VIOLATION_TYPES.includes(type as ViolationType) ||
+    !VIOLATION_SEVERITIES.includes(severity as ViolationSeverity) ||
+    !isString(evidence)
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      type: type as ViolationType,
+      severity: severity as ViolationSeverity,
+      evidence,
+    },
+  ];
+}
+
+function isWinner(value: unknown): value is JudgmentWinner {
+  return value === 'host' || value === 'opponent' || value === 'draw';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
