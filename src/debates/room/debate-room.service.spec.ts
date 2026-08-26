@@ -241,7 +241,7 @@ describe('DebateRoomService', () => {
       expect(result.senderId).toBe(OPPONENT);
       expect(result.senderNickname).toBe('상대');
       expect(debateMessageRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ debateTurn: 0, remainingLength: null }),
+        expect.objectContaining({ debateTurn: 0 }),
       );
     });
 
@@ -281,9 +281,6 @@ describe('DebateRoomService', () => {
 
       expect(result.senderId).toBe(HOST);
       expect(result.senderNickname).toBe('호스트');
-      expect(debateMessageRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ remainingLength: 0 }),
-      );
     });
 
     it('턴 누적 글자 수가 1000자를 초과하면 MESSAGE_BUDGET_EXCEEDED 에러를 던진다', async () => {

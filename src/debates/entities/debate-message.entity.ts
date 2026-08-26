@@ -26,12 +26,6 @@ export class DebateMessage extends SoftDeletableEntity {
   @Column({ type: 'int', nullable: true })
   debateTurn: number | null;
 
-  @Column({ type: 'int', nullable: true })
-  remainingLength: number | null;
-
-  @Column({ type: 'int', nullable: true })
-  remainingImagesCount: number | null;
-
   @Column({ type: 'text', nullable: true })
   imageUrl: string | null;
 

@@ -172,7 +172,6 @@ export class DebateRoomService {
       debateId,
       body: msg,
       debateTurn: state.turnSeq,
-      remainingLength: MESSAGE_CHAR_BUDGET - usedChars,
     });
     const saved = await this.debateMessageRepository.save(message);
 
@@ -201,7 +200,6 @@ export class DebateRoomService {
       debateId: debate.id,
       body: msg,
       debateTurn: state.turnSeq,
-      remainingLength: null,
     });
     const saved = await this.debateMessageRepository.save(message);
 
