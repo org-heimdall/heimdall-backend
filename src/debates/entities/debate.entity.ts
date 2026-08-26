@@ -39,8 +39,8 @@ export class Debate extends SoftDeletableEntity {
   @Column({ type: 'uuid', nullable: true })
   winnerId: string | null;
 
-  @Column({ type: 'text', nullable: true })
-  solution: string | null;
+  @Column({ type: 'jsonb', nullable: true })
+  solution: object | null;
 
   @ManyToOne(() => Community, { nullable: false })
   @JoinColumn({ name: 'community_id' })
