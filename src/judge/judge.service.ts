@@ -13,6 +13,7 @@ import {
   createFailedSolution,
   createJudgedSolution,
   createPendingSolution,
+  isJudged,
   toDebateSolution,
 } from './debate-solution';
 import type { JudgmentWinner, ParticipantSolution } from './debate-solution';
@@ -125,10 +126,21 @@ export class JudgeService {
       const debate = await this.getDebateOrThrow(debateId);
       const result = await this.judge.judge(await this.buildRequest(debate));
 
-      // 판정 저장과 신뢰도 차감은 원자적
-      await this.dataSource.transaction((manager) =>
-        this.applyJudgment(debate, result, manager),
-      );
+      // 판정 저장과 신뢰도 차감은 원자적. 동시 실행(재시도 등)이 신뢰도를 이중 차감하거나
+      // 서로의 결과를 덮어쓰지 않도록, 트랜잭션 안에서 비관적 쓰기 락으로 다시 읽어
+      // 이미 JUDGED면 적용을 건너뛴다.
+      await this.dataSource.transaction(async (manager) => {
+        const locked = await manager.findOne(Debate, {
+          where: { id: debate.id },
+          lock: { mode: 'pessimistic_write' },
+        });
+
+        if (locked === null || isJudged(toDebateSolution(locked.solution))) {
+          return;
+        }
+
+        await this.applyJudgment(locked, result, manager);
+      });
     } catch (error) {
       this.logger.error(`토론 판정 실패: debateId=${debateId}`, error);
       await this.markFailed(debateId);

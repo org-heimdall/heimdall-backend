@@ -36,7 +36,7 @@ describe('JudgeService', () => {
   let membersService: { deductSocialCredit: jest.Mock };
   let configService: { getOrThrow: jest.Mock };
   // 트랜잭션 콜백에 넘길 가짜 manager. 판정 저장은 이 manager로 이뤄진다.
-  let manager: { save: jest.Mock };
+  let manager: { save: jest.Mock; findOne: jest.Mock };
   let dataSource: { transaction: jest.Mock };
 
   const HOST_ID = 'host-uuid';
@@ -134,7 +134,11 @@ describe('JudgeService', () => {
         throw new Error(`예상치 못한 설정 키: ${key}`);
       }),
     };
-    manager = { save: jest.fn((entity: Debate) => Promise.resolve(entity)) };
+    manager = {
+      save: jest.fn((entity: Debate) => Promise.resolve(entity)),
+      // 트랜잭션 안에서 비관적 락으로 다시 읽는 조회. 기본값은 아직 판정 전 토론.
+      findOne: jest.fn().mockResolvedValue(buildDebate()),
+    };
     dataSource = {
       transaction: jest.fn((cb: (m: typeof manager) => unknown) => cb(manager)),
     };
@@ -429,6 +433,46 @@ describe('JudgeService', () => {
       // 따로 커밋되면 한쪽만 성공했을 때 이중 차감되거나 차감이 누락된다.
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
       expect(manager.save).toHaveBeenCalledWith(expect.any(Debate));
+      // LLM 호출 이후 저장 직전, 비관적 쓰기 락으로 최신 상태를 다시 읽는다.
+      expect(manager.findOne).toHaveBeenCalledWith(Debate, {
+        where: { id: DEBATE_ID },
+        lock: { mode: 'pessimistic_write' },
+      });
+    });
+
+    it('트랜잭션 안에서 다시 읽었을 때 이미 JUDGED면 적용을 건너뛴다', async () => {
+      debateRepository.findOne.mockResolvedValue(buildDebate());
+      debateMessageRepository.find.mockResolvedValue([buildMessage()]);
+      judge.judge.mockResolvedValue(buildResult());
+      // 동시 실행으로 락 획득 시점엔 이미 다른 트랜잭션이 판정을 끝낸 상태.
+      manager.findOne.mockResolvedValue(
+        buildDebate({
+          winnerId: HOST_ID,
+          solution: {
+            status: 'JUDGED',
+            judgedAt: '2026-08-26T00:00:00.000Z',
+            model: 'gpt-5.6-luna',
+            winner: 'host',
+            host: {
+              score: 90,
+              judgeReason: ['이미 처리됨'],
+              violations: [],
+              socialCreditPenalty: 0,
+            },
+            opponent: {
+              score: 70,
+              judgeReason: ['이미 처리됨'],
+              violations: [],
+              socialCreditPenalty: 0,
+            },
+          },
+        }),
+      );
+
+      await service.executeJudgment(DEBATE_ID);
+
+      expect(manager.save).not.toHaveBeenCalled();
+      expect(membersService.deductSocialCredit).not.toHaveBeenCalled();
     });
 
     it('삭제되지 않은 메시지만 debate_turn 오름차순으로 읽어 발화자를 표시한다', async () => {
