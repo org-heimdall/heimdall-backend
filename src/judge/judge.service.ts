@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,7 +14,7 @@ import {
   createFailedSolution,
   createJudgedSolution,
   createPendingSolution,
-  isJudged,
+  isPendingOwnedBy,
   toDebateSolution,
 } from './debate-solution';
 import type { JudgmentWinner, ParticipantSolution } from './debate-solution';
@@ -65,12 +66,15 @@ export class JudgeService {
       throw new GeneralException(JudgeErrorCode.NOT_JUDGEABLE);
     }
 
-    const acquired = await this.tryAcquirePendingSolution(debate.id);
+    // 이 시도만의 식별자. PENDING 선점부터 결과 저장까지 같은 값을 들고 다니며, 다른
+    // 시도가 선점해 갔거나 이미 결과가 저장된 뒤에는 내 결과를 적용하지 않도록 막는다.
+    const requestId = randomUUID();
+    const acquired = await this.tryAcquirePendingSolution(debate.id, requestId);
     if (!acquired) {
       throw new GeneralException(JudgeErrorCode.ALREADY_REQUESTED);
     }
 
-    void this.executeJudgment(debate.id);
+    void this.executeJudgment(debate.id, requestId);
   }
 
   /**
@@ -80,7 +84,10 @@ export class JudgeService {
    *
    * read-then-write 대신 조건부 UPDATE 하나로 처리해 동시 요청 중 하나만 성공시킨다.
    */
-  private async tryAcquirePendingSolution(debateId: string): Promise<boolean> {
+  private async tryAcquirePendingSolution(
+    debateId: string,
+    requestId: string,
+  ): Promise<boolean> {
     const expiredBefore = new Date(
       Date.now() - this.resolveJudgmentExpirationMs(),
     ).toISOString();
@@ -88,7 +95,7 @@ export class JudgeService {
     const result = await this.debateRepository
       .createQueryBuilder()
       .update(Debate)
-      .set({ solution: createPendingSolution() })
+      .set({ solution: createPendingSolution(requestId) })
       .where('id = :debateId', { debateId })
       .andWhere('status = :status', { status: ResourceStatus.NORMAL })
       .andWhere(
@@ -120,22 +127,30 @@ export class JudgeService {
   /**
    * 백그라운드 판정 본체. 호출자가 응답을 기다리지 않으므로 예외를 밖으로 내보내지 않고,
    * 실패는 solution을 FAILED로 남겨 재요청할 수 있게 한다.
+   *
+   * requestId는 이 실행이 선점했던 PENDING의 식별자다. LLM 호출이 오래 걸리는 동안
+   * 만료된 것으로 간주되어 다른 요청이 새 PENDING을 선점했을 수 있으므로, 결과를 저장하기
+   * 직전 "지금도 내가 선점한 PENDING이 맞는지"를 확인해 stale한 결과가 최신 시도를
+   * 덮어쓰지 않도록 한다.
    */
-  async executeJudgment(debateId: string): Promise<void> {
+  async executeJudgment(debateId: string, requestId: string): Promise<void> {
     try {
       const debate = await this.getDebateOrThrow(debateId);
       const result = await this.judge.judge(await this.buildRequest(debate));
 
       // 판정 저장과 신뢰도 차감은 원자적. 동시 실행(재시도 등)이 신뢰도를 이중 차감하거나
       // 서로의 결과를 덮어쓰지 않도록, 트랜잭션 안에서 비관적 쓰기 락으로 다시 읽어
-      // 이미 JUDGED면 적용을 건너뛴다.
+      // 내가 선점한 PENDING이 아니면(이미 JUDGED됐거나 다른 요청이 선점) 적용을 건너뛴다.
       await this.dataSource.transaction(async (manager) => {
         const locked = await manager.findOne(Debate, {
           where: { id: debate.id },
           lock: { mode: 'pessimistic_write' },
         });
 
-        if (locked === null || isJudged(toDebateSolution(locked.solution))) {
+        if (
+          locked === null ||
+          !isPendingOwnedBy(toDebateSolution(locked.solution), requestId)
+        ) {
           return;
         }
 
@@ -143,7 +158,7 @@ export class JudgeService {
       });
     } catch (error) {
       this.logger.error(`토론 판정 실패: debateId=${debateId}`, error);
-      await this.markFailed(debateId);
+      await this.markFailed(debateId, requestId);
     }
   }
 
@@ -282,13 +297,24 @@ export class JudgeService {
     return winner === 'opponent' ? debate.opponentId : null;
   }
 
-  // 실패 기록. 백그라운드 흐름이라 기록마저 실패해도 예외를 올리지 않고 로그만 남긴다.
-  private async markFailed(debateId: string): Promise<void> {
+  /**
+   * 실패 기록. 백그라운드 흐름이라 기록마저 실패해도 예외를 올리지 않고 로그만 남긴다.
+   *
+   * tryAcquirePendingSolution과 마찬가지로 조건부 UPDATE 한 번으로 처리한다: 지금도
+   * 내가 선점한(requestId 일치) PENDING일 때만 FAILED로 바꾼다. 이미 다른 요청이
+   * 선점해 갔거나(다른 requestId) 결과가 저장된 뒤라면(JUDGED) 조건이 맞지 않아
+   * 아무 행도 바뀌지 않으므로, 최신 시도의 결과를 stale한 실패로 덮어쓰지 않는다.
+   */
+  private async markFailed(debateId: string, requestId: string): Promise<void> {
     try {
-      await this.debateRepository.update(
-        { id: debateId },
-        { solution: createFailedSolution() },
-      );
+      await this.debateRepository
+        .createQueryBuilder()
+        .update(Debate)
+        .set({ solution: createFailedSolution() })
+        .where('id = :debateId', { debateId })
+        .andWhere(`solution ->> 'status' = 'PENDING'`)
+        .andWhere(`solution ->> 'requestId' = :requestId`, { requestId })
+        .execute();
     } catch (error) {
       this.logger.error(
         `판정 실패 상태 기록 실패: debateId=${debateId}`,

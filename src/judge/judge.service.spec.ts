@@ -42,6 +42,16 @@ describe('JudgeService', () => {
   const HOST_ID = 'host-uuid';
   const OPPONENT_ID = 'opponent-uuid';
   const DEBATE_ID = 'debate-uuid';
+  // executeJudgment를 직접 호출하는 테스트에서 "이 실행이 선점한 PENDING"을 나타내는 식별자.
+  const REQUEST_ID = 'request-uuid';
+
+  const buildPendingSolution = (
+    requestId: string = REQUEST_ID,
+  ): DebateSolution => ({
+    status: 'PENDING',
+    requestedAt: new Date().toISOString(),
+    requestId,
+  });
 
   const buildDebate = (overrides: Partial<Debate> = {}): Debate =>
     Object.assign(new Debate(), {
@@ -101,9 +111,12 @@ describe('JudgeService', () => {
     savedDebate().solution as DebateSolution;
 
   // 조건부 UPDATE의 set()에 넘긴 solution(PENDING 선점 시도 내용)을 읽는다.
-  const pendingSolution = (): DebateSolution => {
+  const pendingSolution = (): Extract<
+    DebateSolution,
+    { status: 'PENDING' }
+  > => {
     const call = updateQueryBuilder.set.mock.calls[0] as [
-      { solution: DebateSolution },
+      { solution: Extract<DebateSolution, { status: 'PENDING' }> },
     ];
     return call[0].solution;
   };
@@ -136,8 +149,11 @@ describe('JudgeService', () => {
     };
     manager = {
       save: jest.fn((entity: Debate) => Promise.resolve(entity)),
-      // 트랜잭션 안에서 비관적 락으로 다시 읽는 조회. 기본값은 아직 판정 전 토론.
-      findOne: jest.fn().mockResolvedValue(buildDebate()),
+      // 트랜잭션 안에서 비관적 락으로 다시 읽는 조회. 기본값은 이 실행(REQUEST_ID)이
+      // 방금 선점한 PENDING 그대로인 상태 — 즉 다른 시도의 개입 없이 정상 진행되는 경우.
+      findOne: jest
+        .fn()
+        .mockResolvedValue(buildDebate({ solution: buildPendingSolution() })),
     };
     dataSource = {
       transaction: jest.fn((cb: (m: typeof manager) => unknown) => cb(manager)),
@@ -173,11 +189,14 @@ describe('JudgeService', () => {
 
       await service.requestJudgment(DEBATE_ID, HOST_ID);
 
-      expect(pendingSolution()).toEqual({
+      const solution = pendingSolution();
+      expect(solution).toEqual({
         status: 'PENDING',
         requestedAt: expect.any(String) as string,
+        requestId: expect.any(String) as string,
       });
-      expect(execute).toHaveBeenCalledWith(DEBATE_ID);
+      // PENDING 선점과 백그라운드 실행이 같은 requestId를 공유해야 이후 소유권을 검증할 수 있다.
+      expect(execute).toHaveBeenCalledWith(DEBATE_ID, solution.requestId);
     });
 
     it('PENDING 만료 기준을 OpenAI 타임아웃·재시도 설정으로 계산해 조건부 UPDATE에 사용한다', async () => {
@@ -310,8 +329,9 @@ describe('JudgeService', () => {
 
       await service.requestJudgment(DEBATE_ID, HOST_ID);
 
-      expect(pendingSolution().status).toBe('PENDING');
-      expect(execute).toHaveBeenCalledWith(DEBATE_ID);
+      const solution = pendingSolution();
+      expect(solution.status).toBe('PENDING');
+      expect(execute).toHaveBeenCalledWith(DEBATE_ID, solution.requestId);
     });
   });
 
@@ -321,7 +341,7 @@ describe('JudgeService', () => {
       debateMessageRepository.find.mockResolvedValue([buildMessage()]);
       judge.judge.mockResolvedValue(buildResult());
 
-      await service.executeJudgment(DEBATE_ID);
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
 
       expect(savedDebate().winnerId).toBe(HOST_ID);
       expect(savedSolution()).toEqual({
@@ -357,7 +377,7 @@ describe('JudgeService', () => {
         }),
       );
 
-      await service.executeJudgment(DEBATE_ID);
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
 
       expect(savedDebate().winnerId).toBe(OPPONENT_ID);
     });
@@ -375,7 +395,7 @@ describe('JudgeService', () => {
         }),
       );
 
-      await service.executeJudgment(DEBATE_ID);
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
 
       expect(savedDebate().winnerId).toBeNull();
       expect(savedSolution()).toMatchObject({
@@ -404,7 +424,7 @@ describe('JudgeService', () => {
         }),
       );
 
-      await service.executeJudgment(DEBATE_ID);
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
 
       expect(membersService.deductSocialCredit).toHaveBeenCalledWith(
         HOST_ID,
@@ -428,7 +448,7 @@ describe('JudgeService', () => {
       debateMessageRepository.find.mockResolvedValue([buildMessage()]);
       judge.judge.mockResolvedValue(buildResult());
 
-      await service.executeJudgment(DEBATE_ID);
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
 
       // 따로 커밋되면 한쪽만 성공했을 때 이중 차감되거나 차감이 누락된다.
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
@@ -469,8 +489,25 @@ describe('JudgeService', () => {
         }),
       );
 
-      await service.executeJudgment(DEBATE_ID);
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
 
+      expect(manager.save).not.toHaveBeenCalled();
+      expect(membersService.deductSocialCredit).not.toHaveBeenCalled();
+    });
+
+    it('A 성공 후 B 선점: 다시 읽었을 때 다른 요청이 선점한 PENDING이면 stale한 판정 결과를 적용하지 않는다', async () => {
+      debateRepository.findOne.mockResolvedValue(buildDebate());
+      debateMessageRepository.find.mockResolvedValue([buildMessage()]);
+      judge.judge.mockResolvedValue(buildResult());
+      // 내(A=REQUEST_ID)가 LLM 호출을 기다리는 동안 만료된 것으로 간주되어, 다른
+      // 요청(B)이 새 PENDING을 선점한 상태 — requestId가 나와 다르다.
+      manager.findOne.mockResolvedValue(
+        buildDebate({ solution: buildPendingSolution('other-request-uuid') }),
+      );
+
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
+
+      // B가 진행 중인 시도 위에 A의 낡은 결과를 덮어써 socialCredit을 잘못 차감하면 안 된다.
       expect(manager.save).not.toHaveBeenCalled();
       expect(membersService.deductSocialCredit).not.toHaveBeenCalled();
     });
@@ -490,7 +527,7 @@ describe('JudgeService', () => {
       ]);
       judge.judge.mockResolvedValue(buildResult());
 
-      await service.executeJudgment(DEBATE_ID);
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
 
       expect(debateMessageRepository.find).toHaveBeenCalledWith({
         where: { debateId: DEBATE_ID, status: ResourceStatus.NORMAL },
@@ -519,17 +556,25 @@ describe('JudgeService', () => {
         new GeneralException(JudgeErrorCode.UNAVAILABLE),
       );
 
-      await expect(service.executeJudgment(DEBATE_ID)).resolves.toBeUndefined();
+      await expect(
+        service.executeJudgment(DEBATE_ID, REQUEST_ID),
+      ).resolves.toBeUndefined();
 
       expect(debateRepository.save).not.toHaveBeenCalled();
-      expect(debateRepository.update).toHaveBeenCalledWith(
-        { id: DEBATE_ID },
-        {
-          solution: {
-            status: 'FAILED',
-            failedAt: expect.any(String) as string,
-          },
-        },
+      // 지금도 내(REQUEST_ID)가 선점한 PENDING일 때만 FAILED로 바꾸는 조건부 UPDATE여야
+      // 이미 다른 요청이 선점했거나(다른 requestId) 결과가 저장된 뒤(JUDGED)라면 덮어쓰지 않는다.
+      expect(updateQueryBuilder.set).toHaveBeenCalledWith({
+        solution: { status: 'FAILED', failedAt: expect.any(String) as string },
+      });
+      expect(updateQueryBuilder.where).toHaveBeenCalledWith('id = :debateId', {
+        debateId: DEBATE_ID,
+      });
+      expect(updateQueryBuilder.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining("status' = 'PENDING'") as string,
+      );
+      expect(updateQueryBuilder.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining('requestId') as string,
+        { requestId: REQUEST_ID },
       );
     });
 
@@ -537,18 +582,59 @@ describe('JudgeService', () => {
       debateRepository.findOne.mockResolvedValue(buildDebate());
       debateMessageRepository.find.mockResolvedValue([]);
 
-      await service.executeJudgment(DEBATE_ID);
+      await service.executeJudgment(DEBATE_ID, REQUEST_ID);
 
       expect(judge.judge).not.toHaveBeenCalled();
-      expect(debateRepository.update).toHaveBeenCalledWith(
-        { id: DEBATE_ID },
-        {
-          solution: {
-            status: 'FAILED',
-            failedAt: expect.any(String) as string,
-          },
-        },
+      expect(updateQueryBuilder.set).toHaveBeenCalledWith({
+        solution: { status: 'FAILED', failedAt: expect.any(String) as string },
+      });
+      expect(updateQueryBuilder.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining('requestId') as string,
+        { requestId: REQUEST_ID },
       );
+    });
+
+    describe('PENDING 선점 경쟁 (만료된 시도 A vs 새로 선점한 시도 B)', () => {
+      const REQUEST_ID_A = 'request-a-uuid';
+      const REQUEST_ID_B = 'request-b-uuid';
+
+      it('A 실패 후 B 성공: markFailed는 A 자신의 requestId로만 조건부 UPDATE하므로 B가 저장한 JUDGED를 덮어쓰지 못한다', async () => {
+        debateRepository.findOne.mockResolvedValue(buildDebate());
+        debateMessageRepository.find.mockResolvedValue([buildMessage()]);
+        // A는 뒤늦게 실패로 끝난다. 이 시점 실제 DB의 solution은 B가 이미 저장한 JUDGED.
+        judge.judge.mockRejectedValue(new Error('OpenAI 호출 실패'));
+
+        await service.executeJudgment(DEBATE_ID, REQUEST_ID_A);
+
+        // 조건이 requestId = A로 한정되므로, 실제 DB에서 B가 저장한 JUDGED 행(requestId가
+        // 다르고 status도 PENDING이 아님)과는 일치하지 않아 0행이 바뀐다 — B의 결과와 이미
+        // 차감된 socialCredit이 그대로 유지된다.
+        expect(updateQueryBuilder.andWhere).toHaveBeenCalledWith(
+          expect.stringContaining('requestId') as string,
+          { requestId: REQUEST_ID_A },
+        );
+        expect(updateQueryBuilder.andWhere).not.toHaveBeenCalledWith(
+          expect.anything(),
+          { requestId: REQUEST_ID_B },
+        );
+      });
+
+      it('A 실패 후 B 진행 중: markFailed는 B가 선점한 PENDING(다른 requestId)을 FAILED로 덮어쓰지 않는다', async () => {
+        debateRepository.findOne.mockResolvedValue(buildDebate());
+        debateMessageRepository.find.mockResolvedValue([buildMessage()]);
+        // A는 실패하지만, B는 A가 만료된 뒤 선점해 아직 LLM 호출 중(PENDING)이다.
+        judge.judge.mockRejectedValue(new Error('OpenAI 호출 실패'));
+
+        await service.executeJudgment(DEBATE_ID, REQUEST_ID_A);
+
+        // A의 조건은 requestId = A로 한정되므로, 실제 DB에서 B의 PENDING(requestId = B)
+        // 행과는 일치하지 않아 B는 방해받지 않고 계속 진행되어 이후 정상적으로 JUDGED를
+        // 저장할 수 있다.
+        expect(updateQueryBuilder.andWhere).toHaveBeenCalledWith(
+          expect.stringContaining('requestId') as string,
+          { requestId: REQUEST_ID_A },
+        );
+      });
     });
   });
 
@@ -576,7 +662,11 @@ describe('JudgeService', () => {
     it.each([
       [
         'PENDING',
-        { status: 'PENDING', requestedAt: '2026-08-26T00:00:00.000Z' },
+        {
+          status: 'PENDING',
+          requestedAt: '2026-08-26T00:00:00.000Z',
+          requestId: 'request-uuid',
+        },
       ],
       ['FAILED', { status: 'FAILED', failedAt: '2026-08-26T00:00:00.000Z' }],
     ])('%s면 상태만 응답한다', async (status, solution) => {

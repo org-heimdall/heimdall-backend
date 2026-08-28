@@ -17,7 +17,7 @@ export interface ParticipantSolution {
 }
 
 export type DebateSolution =
-  | { status: 'PENDING'; requestedAt: string }
+  | { status: 'PENDING'; requestedAt: string; requestId: string }
   | { status: 'FAILED'; failedAt: string }
   | {
       status: 'JUDGED';
@@ -45,9 +45,14 @@ const VIOLATION_SEVERITIES: ViolationSeverity[] = [
   'severe',
 ];
 
-// 판정 요청 시점의 페이로드
-export function createPendingSolution(): DebateSolution {
-  return { status: 'PENDING', requestedAt: new Date().toISOString() };
+// 판정 요청 시점의 페이로드. requestId는 이 선점을 시도한 요청의 식별자로,
+// 나중에 결과를 저장/실패 처리할 때 "지금도 내가 선점한 PENDING이 맞는지" 확인하는 데 쓰인다.
+export function createPendingSolution(requestId: string): DebateSolution {
+  return {
+    status: 'PENDING',
+    requestedAt: new Date().toISOString(),
+    requestId,
+  };
 }
 
 // 판정 실패 페이로드. FAILED는 재요청 검증을 통과하므로 다시 요청할 수 있다.
@@ -81,8 +86,12 @@ export function toDebateSolution(value: unknown): DebateSolution | null {
 
   switch (value.status) {
     case 'PENDING':
-      return isString(value.requestedAt)
-        ? { status: 'PENDING', requestedAt: value.requestedAt }
+      return isString(value.requestedAt) && isString(value.requestId)
+        ? {
+            status: 'PENDING',
+            requestedAt: value.requestedAt,
+            requestId: value.requestId,
+          }
         : null;
     case 'FAILED':
       return isString(value.failedAt)
@@ -99,6 +108,16 @@ export function isJudged(
   solution: DebateSolution | null,
 ): solution is JudgedSolution {
   return solution?.status === 'JUDGED';
+}
+
+// 이 requestId가 선점한 PENDING이 지금도 유효한 소유자인지 확인한다. 이미 결과가
+// 저장됐거나(JUDGED) 다른 요청이 선점해 갔다면(다른 requestId) false — 그 경우
+// 이 요청이 만든 결과(성공/실패)는 stale하므로 적용하면 안 된다.
+export function isPendingOwnedBy(
+  solution: DebateSolution | null,
+  requestId: string,
+): boolean {
+  return solution?.status === 'PENDING' && solution.requestId === requestId;
 }
 
 function toJudgedSolution(
