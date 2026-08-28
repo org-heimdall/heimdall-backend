@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
@@ -44,14 +45,15 @@ export class JudgeService {
     private readonly judge: Judge,
     private readonly membersService: MembersService,
     private readonly dataSource: DataSource,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
    * 판정 요청. 검증 후 solution을 PENDING으로 표시하고 즉시 반환하며,
    * 실제 LLM 호출은 백그라운드로 넘긴다(클라이언트는 폴링으로 결과를 받는다).
    *
-   * 검증과 PENDING 기록은 read-then-write라 동시 요청이 둘 다 통과할 수 있으나,
-   * 최악의 결과가 LLM 중복 호출뿐이라 락은 두지 않는다.
+   * PENDING 선점은 조건부 UPDATE 한 번으로 처리한다(read-then-write가 아니므로
+   * 동시 요청이 둘 다 통과할 수 없고, 영향받은 행이 없으면 이미 선점된 것이다).
    */
   async requestJudgment(debateId: string, memberId: string): Promise<void> {
     const debate = await this.getDebateOrThrow(debateId);
@@ -62,16 +64,56 @@ export class JudgeService {
       throw new GeneralException(JudgeErrorCode.NOT_JUDGEABLE);
     }
 
-    // FAILED만 재요청을 허용한다(PENDING은 진행 중, JUDGED는 이미 완료).
-    const solution = toDebateSolution(debate.solution);
-    if (solution !== null && solution.status !== 'FAILED') {
+    const acquired = await this.tryAcquirePendingSolution(debate.id);
+    if (!acquired) {
       throw new GeneralException(JudgeErrorCode.ALREADY_REQUESTED);
     }
 
-    debate.solution = createPendingSolution();
-    await this.debateRepository.save(debate);
-
     void this.executeJudgment(debate.id);
+  }
+
+  /**
+   * solution이 없거나 FAILED이거나, PENDING인데 LLM 호출이 정상적으로 끝날 수 없는
+   * 시간(=OpenAI 타임아웃 * 재시도 포함 시도 횟수)을 넘긴 경우에만 PENDING으로 선점한다.
+   * 갓 요청된 PENDING과 JUDGED는 계속 거부한다.
+   *
+   * read-then-write 대신 조건부 UPDATE 하나로 처리해 동시 요청 중 하나만 성공시킨다.
+   */
+  private async tryAcquirePendingSolution(debateId: string): Promise<boolean> {
+    const expiredBefore = new Date(
+      Date.now() - this.resolveJudgmentExpirationMs(),
+    ).toISOString();
+
+    const result = await this.debateRepository
+      .createQueryBuilder()
+      .update(Debate)
+      .set({ solution: createPendingSolution() })
+      .where('id = :debateId', { debateId })
+      .andWhere('status = :status', { status: ResourceStatus.NORMAL })
+      .andWhere(
+        `(
+          solution IS NULL
+          OR solution ->> 'status' = 'FAILED'
+          OR (
+            solution ->> 'status' = 'PENDING'
+            AND (solution ->> 'requestedAt')::timestamptz < :expiredBefore
+          )
+        )`,
+        { expiredBefore },
+      )
+      .execute();
+
+    return (result.affected ?? 0) > 0;
+  }
+
+  // 판정 1건은 성능/위반 평가를 병렬로 호출하므로(각각 SDK 자체 재시도 포함), 이 시간을
+  // 넘겨도 여전히 PENDING이면 프로세스 재시작 등으로 결과를 영영 못 받은 것으로 간주한다.
+  private resolveJudgmentExpirationMs(): number {
+    const timeoutMs =
+      this.configService.getOrThrow<number>('OPENAI_TIMEOUT_MS');
+    const maxRetries =
+      this.configService.getOrThrow<number>('OPENAI_MAX_RETRIES');
+    return timeoutMs * (maxRetries + 1);
   }
 
   /**

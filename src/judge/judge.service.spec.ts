@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -20,10 +21,20 @@ describe('JudgeService', () => {
     findOne: jest.Mock;
     save: jest.Mock;
     update: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
+  // PENDING 선점은 조건부 UPDATE 쿼리빌더 체인으로 이뤄지므로 체이닝 가능한 형태로 흉내낸다.
+  let updateQueryBuilder: {
+    update: jest.Mock;
+    set: jest.Mock;
+    where: jest.Mock;
+    andWhere: jest.Mock;
+    execute: jest.Mock;
   };
   let debateMessageRepository: { find: jest.Mock };
   let judge: { judge: jest.Mock };
   let membersService: { deductSocialCredit: jest.Mock };
+  let configService: { getOrThrow: jest.Mock };
   // 트랜잭션 콜백에 넘길 가짜 manager. 판정 저장은 이 manager로 이뤄진다.
   let manager: { save: jest.Mock };
   let dataSource: { transaction: jest.Mock };
@@ -89,16 +100,39 @@ describe('JudgeService', () => {
   const savedSolution = (): DebateSolution =>
     savedDebate().solution as DebateSolution;
 
+  // 조건부 UPDATE의 set()에 넘긴 solution(PENDING 선점 시도 내용)을 읽는다.
+  const pendingSolution = (): DebateSolution => {
+    const call = updateQueryBuilder.set.mock.calls[0] as [
+      { solution: DebateSolution },
+    ];
+    return call[0].solution;
+  };
+
   beforeEach(async () => {
+    updateQueryBuilder = {
+      update: jest.fn().mockReturnThis(),
+      set: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
     debateRepository = {
       findOne: jest.fn(),
       save: jest.fn((entity: Debate) => Promise.resolve(entity)),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
+      createQueryBuilder: jest.fn().mockReturnValue(updateQueryBuilder),
     };
     debateMessageRepository = { find: jest.fn().mockResolvedValue([]) };
     judge = { judge: jest.fn() };
     membersService = {
       deductSocialCredit: jest.fn().mockResolvedValue(undefined),
+    };
+    configService = {
+      getOrThrow: jest.fn((key: string) => {
+        if (key === 'OPENAI_TIMEOUT_MS') return 60000;
+        if (key === 'OPENAI_MAX_RETRIES') return 2;
+        throw new Error(`예상치 못한 설정 키: ${key}`);
+      }),
     };
     manager = { save: jest.fn((entity: Debate) => Promise.resolve(entity)) };
     dataSource = {
@@ -119,6 +153,7 @@ describe('JudgeService', () => {
         { provide: JUDGE, useValue: judge },
         { provide: MembersService, useValue: membersService },
         { provide: DataSource, useValue: dataSource },
+        { provide: ConfigService, useValue: configService },
       ],
     }).compile();
 
@@ -134,11 +169,30 @@ describe('JudgeService', () => {
 
       await service.requestJudgment(DEBATE_ID, HOST_ID);
 
-      expect(savedSolution()).toEqual({
+      expect(pendingSolution()).toEqual({
         status: 'PENDING',
         requestedAt: expect.any(String) as string,
       });
       expect(execute).toHaveBeenCalledWith(DEBATE_ID);
+    });
+
+    it('PENDING 만료 기준을 OpenAI 타임아웃·재시도 설정으로 계산해 조건부 UPDATE에 사용한다', async () => {
+      debateRepository.findOne.mockResolvedValue(buildDebate());
+      jest.spyOn(service, 'executeJudgment').mockResolvedValue(undefined);
+
+      await service.requestJudgment(DEBATE_ID, HOST_ID);
+
+      expect(configService.getOrThrow).toHaveBeenCalledWith(
+        'OPENAI_TIMEOUT_MS',
+      );
+      expect(configService.getOrThrow).toHaveBeenCalledWith(
+        'OPENAI_MAX_RETRIES',
+      );
+      // read-then-write가 아니라 조건부 UPDATE 한 번으로 선점해야 동시 요청이 경합하지 않는다.
+      expect(updateQueryBuilder.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining('requestedAt') as string,
+        { expiredBefore: expect.any(String) as string },
+      );
     });
 
     it('soft-delete된 토론은 조회되지 않아 NOT_FOUND를 던진다', async () => {
@@ -164,7 +218,7 @@ describe('JudgeService', () => {
       await expect(
         service.requestJudgment(DEBATE_ID, 'spectator-uuid'),
       ).rejects.toThrow(new GeneralException(ErrorCode.FORBIDDEN));
-      expect(debateRepository.save).not.toHaveBeenCalled();
+      expect(debateRepository.createQueryBuilder).not.toHaveBeenCalled();
     });
 
     it('상대가 없는 토론은 NOT_JUDGEABLE을 던진다', async () => {
@@ -207,13 +261,18 @@ describe('JudgeService', () => {
       '%s 상태의 토론을 재요청하면 ALREADY_REQUESTED를 던진다',
       async (_, solution) => {
         debateRepository.findOne.mockResolvedValue(buildDebate({ solution }));
+        // 갓 생긴 PENDING·JUDGED는 조건부 UPDATE의 WHERE를 만족하지 못해 DB에서도 0행이 바뀐다.
+        updateQueryBuilder.execute.mockResolvedValue({ affected: 0 });
+        const execute = jest
+          .spyOn(service, 'executeJudgment')
+          .mockResolvedValue(undefined);
 
         await expect(
           service.requestJudgment(DEBATE_ID, HOST_ID),
         ).rejects.toThrow(
           new GeneralException(JudgeErrorCode.ALREADY_REQUESTED),
         );
-        expect(debateRepository.save).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
       },
     );
 
@@ -227,7 +286,28 @@ describe('JudgeService', () => {
 
       await service.requestJudgment(DEBATE_ID, OPPONENT_ID);
 
-      expect(savedSolution().status).toBe('PENDING');
+      expect(pendingSolution().status).toBe('PENDING');
+    });
+
+    it('오래 지난 PENDING은 만료된 것으로 보고 재요청을 허용한다', async () => {
+      debateRepository.findOne.mockResolvedValue(
+        buildDebate({
+          solution: {
+            status: 'PENDING',
+            requestedAt: '2020-01-01T00:00:00.000Z',
+          },
+        }),
+      );
+      // 실제 DB라면 requestedAt이 만료 기준보다 오래돼 조건부 UPDATE가 적중해 1행이 바뀐다.
+      updateQueryBuilder.execute.mockResolvedValue({ affected: 1 });
+      const execute = jest
+        .spyOn(service, 'executeJudgment')
+        .mockResolvedValue(undefined);
+
+      await service.requestJudgment(DEBATE_ID, HOST_ID);
+
+      expect(pendingSolution().status).toBe('PENDING');
+      expect(execute).toHaveBeenCalledWith(DEBATE_ID);
     });
   });
 
