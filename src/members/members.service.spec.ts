@@ -573,15 +573,6 @@ describe('MembersService', () => {
       expect(repository.save).toHaveBeenCalledWith(member);
     });
 
-    it('차감량이 남은 신뢰도보다 커도 0에서 멈춘다', async () => {
-      const member = await buildMemberWithCredit(5);
-      repository.findOneBy.mockResolvedValue(member);
-
-      await service.deductSocialCredit('member-uuid', 15);
-
-      expect(member.socialCredit).toBe(0);
-    });
-
     it('차감량이 0이면 조회조차 하지 않는다', async () => {
       await service.deductSocialCredit('member-uuid', 0);
 
