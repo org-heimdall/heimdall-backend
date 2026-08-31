@@ -32,7 +32,9 @@ const SPEAKING_TURNS: ReadonlySet<DebateTurn> = new Set([
 // 옮기고 DebateTimerService도 분산 스케줄러로 교체해야 한다(참여자 join 여부, 턴 발언 카운터는
 // DB 왕복 없이 소켓 이벤트마다 확인해야 하므로 in-memory로 둔다).
 interface DebateRuntimeState {
-  joinedDebaterIds: Set<string>;
+  // memberId → 현재 연결 수. 동일 회원이 여러 탭으로 접속할 수 있어 boolean/Set이 아닌 카운트로
+  // 관리한다: 탭 하나가 끊겨도 다른 탭이 남아 있으면 여전히 "입장 중"이어야 한다.
+  debaterConnections: Map<string, number>;
   turnUsedChars: number;
 }
 
@@ -43,9 +45,12 @@ interface TurnSlot {
   freetalkingRound: number;
 }
 
-// 서비스 내부 반환 타입: roomName은 실제 socket.io room 이름(debateRoomName() 결과)
+// 서비스 내부 반환 타입: roomName은 실제 socket.io room 이름(debateRoomName() 결과).
+// isDebater는 게이트웨이가 disconnect 시 handleDebaterDisconnect 정리 대상 소켓인지 판단하는 데 쓴다
+// (관전자는 연결 수 추적 대상이 아니므로 false).
 export interface JoinResult {
   roomName: string;
+  isDebater: boolean;
 }
 
 export interface SendMessageResult {
@@ -104,11 +109,14 @@ export class DebateRoomService {
       if (!membership) {
         throw new GeneralException(DebateErrorCode.NOT_COMMUNITY_MEMBER);
       }
-      return { roomName: debateRoomName(debateId) };
+      return { roomName: debateRoomName(debateId), isDebater: false };
     }
 
     const state = this.getOrCreateState(debateId);
-    state.joinedDebaterIds.add(memberId);
+    state.debaterConnections.set(
+      memberId,
+      (state.debaterConnections.get(memberId) ?? 0) + 1,
+    );
 
     // 양측이 다 모이면 STARTING 인사 카운트다운을 시작한다. 재-join(재접속)으로 이 조건이
     // 다시 참이 되어도 이미 타이머가 돌고 있으면(has) 중복 브로드캐스트·재예약을 하지 않는다.
@@ -120,7 +128,26 @@ export class DebateRoomService {
       this.startStartingCountdown(debate);
     }
 
-    return { roomName: debateRoomName(debateId) };
+    return { roomName: debateRoomName(debateId), isDebater: true };
+  }
+
+  // 토론자 소켓 하나가 끊겼을 때 연결 수를 감소시킨다(0이 되면 제거). 이미 시작된 STARTING
+  // 카운트다운·턴 타이머는 취소하지 않는다 — 부재 중에도 턴이 흘러가는 것이 정해진 동작이고,
+  // 이 정리는 "양측 입장 전 카운트다운 시작 방지" 판정을 정확하게 만들기 위한 것이다.
+  handleDebaterDisconnect(memberId: string, debateId: string): void {
+    const state = this.runtimeStates.get(debateId);
+    if (!state) {
+      return;
+    }
+    const count = state.debaterConnections.get(memberId);
+    if (!count) {
+      return;
+    }
+    if (count <= 1) {
+      state.debaterConnections.delete(memberId);
+    } else {
+      state.debaterConnections.set(memberId, count - 1);
+    }
   }
 
   // STARTING 인사 시간 시작: DB 상태(currentTurn)는 STARTING 그대로 두고 타이머만 예약한 뒤,
@@ -407,8 +434,8 @@ export class DebateRoomService {
   private bothDebatersJoined(debate: Debate): boolean {
     const state = this.getOrCreateState(debate.id);
     return (
-      state.joinedDebaterIds.has(debate.hostId) &&
-      state.joinedDebaterIds.has(debate.opponentId)
+      (state.debaterConnections.get(debate.hostId) ?? 0) > 0 &&
+      (state.debaterConnections.get(debate.opponentId) ?? 0) > 0
     );
   }
 
@@ -431,7 +458,7 @@ export class DebateRoomService {
   private getOrCreateState(debateId: string): DebateRuntimeState {
     let state = this.runtimeStates.get(debateId);
     if (!state) {
-      state = { joinedDebaterIds: new Set(), turnUsedChars: 0 };
+      state = { debaterConnections: new Map(), turnUsedChars: 0 };
       this.runtimeStates.set(debateId, state);
     }
     return state;

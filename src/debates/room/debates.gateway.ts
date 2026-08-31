@@ -3,6 +3,7 @@ import {
   ConnectedSocket,
   MessageBody,
   OnGatewayConnection,
+  OnGatewayDisconnect,
   OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
@@ -33,12 +34,19 @@ import {
 
 interface DebateSocketData {
   memberId: string;
+  // 이 소켓이 토론자로 join한 토론 id 목록. handleDisconnect에서 연결 수 정리 대상을 판별하는 데 쓴다
+  // (관전자로 join한 토론은 연결 수 추적 대상이 아니므로 포함하지 않는다).
+  joinedDebateIds: Set<string>;
 }
 
 // 게이트웨이는 파싱·인증·emit만 담당한다. 비즈니스 로직은 전부 DebateRoomService/DebatesService에 있다.
 @WebSocketGateway({ cors: { origin: true } })
 export class DebatesGateway
-  implements OnGatewayInit, OnGatewayConnection, DebateEventsPublisher
+  implements
+    OnGatewayInit,
+    OnGatewayConnection,
+    OnGatewayDisconnect,
+    DebateEventsPublisher
 {
   @WebSocketServer()
   private readonly server: DebateSocketServer;
@@ -77,7 +85,18 @@ export class DebatesGateway
   // 인증 미들웨어(afterInit) 이후 호출되므로 memberIdOf가 항상 값을 반환한다.
   // 개인 알림(debate_requested 등)을 이 회원에게만 보내기 위해 전용 room에 join시킨다.
   handleConnection(socket: DebateSocket): void {
+    (socket.data as DebateSocketData).joinedDebateIds = new Set();
     void socket.join(memberRoomName(this.memberIdOf(socket)));
+  }
+
+  // 소켓 연결이 끊기면 이 소켓이 토론자로 join했던 토론들의 연결 수를 정리한다. 그래야 이탈한
+  // 토론자가 여전히 입장 중인 것처럼 취급되어 STARTING 카운트다운이 잘못 시작되지 않는다.
+  handleDisconnect(socket: DebateSocket): void {
+    const data = socket.data as DebateSocketData;
+    const memberId = this.memberIdOf(socket);
+    for (const debateId of data.joinedDebateIds ?? []) {
+      this.debateRoomService.handleDebaterDisconnect(memberId, debateId);
+    }
   }
 
   @SubscribeMessage('join_debate')
@@ -87,11 +106,23 @@ export class DebatesGateway
   ): Promise<void> {
     try {
       const dto = await this.parse(JoinDebateDto, body);
-      const { roomName } = await this.debateRoomService.join(
+      const data = socket.data as DebateSocketData;
+
+      // 이 소켓이 이미 토론자로 join한 토론이면(재수신) 서비스 호출 없이 room 재입장만 한다.
+      // 그렇지 않으면 재전송마다 연결 수(debaterConnections)가 중복 증가한다.
+      if (data.joinedDebateIds.has(dto.debateId)) {
+        await socket.join(debateRoomName(dto.debateId));
+        return;
+      }
+
+      const result = await this.debateRoomService.join(
         this.memberIdOf(socket),
         dto.debateId,
       );
-      await socket.join(roomName);
+      await socket.join(result.roomName);
+      if (result.isDebater) {
+        data.joinedDebateIds.add(dto.debateId);
+      }
     } catch (error) {
       this.emitError(socket, error);
     }

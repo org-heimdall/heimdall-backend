@@ -220,6 +220,75 @@ describe('DebateRoomService', () => {
     });
   });
 
+  describe('handleDebaterDisconnect', () => {
+    it('host가 join 후 이탈하면, 이후 opponent가 join해도 STARTING 카운트다운이 시작되지 않는다', async () => {
+      const debate = buildDebate();
+      debateRepository.findOneBy.mockResolvedValue(debate);
+
+      await service.join(HOST, DEBATE_ID);
+      service.handleDebaterDisconnect(HOST, DEBATE_ID);
+
+      await service.join(OPPONENT, DEBATE_ID);
+
+      expect(debate.currentTurn).toBe(DebateTurn.STARTING);
+      expect(publisher.emitTurnChanged).not.toHaveBeenCalled();
+    });
+
+    it('다중 탭: host가 두 소켓으로 join한 뒤 한 소켓만 끊겨도 나머지 연결이 남아 opponent join 시 카운트다운이 정상적으로 시작된다', async () => {
+      const debate = buildDebate();
+      debateRepository.findOneBy.mockResolvedValue(debate);
+
+      await service.join(HOST, DEBATE_ID); // 탭 1
+      await service.join(HOST, DEBATE_ID); // 탭 2
+      service.handleDebaterDisconnect(HOST, DEBATE_ID); // 탭 1 종료(탭 2는 여전히 연결됨)
+
+      await service.join(OPPONENT, DEBATE_ID);
+
+      expect(debate.currentTurn).toBe(DebateTurn.STARTING);
+      expect(publisher.emitTurnChanged).toHaveBeenCalledTimes(1);
+      expect(publisher.emitTurnChanged).toHaveBeenCalledWith(
+        debateRoomName(DEBATE_ID),
+        expect.objectContaining({ turn: DebateTurn.STARTING }),
+      );
+    });
+
+    it('host가 이탈 후 재-join하면(타이머가 아직 시작되지 않았다면) STARTING 카운트다운이 정상적으로 시작된다', async () => {
+      const debate = buildDebate();
+      debateRepository.findOneBy.mockResolvedValue(debate);
+
+      await service.join(HOST, DEBATE_ID);
+      // opponent가 들어오기 전이라 아직 카운트다운은 시작되지 않은 상태에서 host가 이탈한다
+      service.handleDebaterDisconnect(HOST, DEBATE_ID);
+      expect(publisher.emitTurnChanged).not.toHaveBeenCalled();
+
+      await service.join(HOST, DEBATE_ID); // 재-join
+      await service.join(OPPONENT, DEBATE_ID);
+
+      expect(debate.currentTurn).toBe(DebateTurn.STARTING);
+      expect(publisher.emitTurnChanged).toHaveBeenCalledTimes(1);
+      expect(publisher.emitTurnChanged).toHaveBeenCalledWith(
+        debateRoomName(DEBATE_ID),
+        expect.objectContaining({ turn: DebateTurn.STARTING }),
+      );
+    });
+
+    it('상태가 없는 토론이나 연결 기록이 없는 관전자 memberId로 호출해도 예외 없이 무시된다', async () => {
+      const debate = buildDebate();
+      debateRepository.findOneBy.mockResolvedValue(debate);
+
+      // 상태 자체가 없는 토론
+      expect(() =>
+        service.handleDebaterDisconnect(HOST, 'unknown-debate-id'),
+      ).not.toThrow();
+
+      // 상태는 있지만 연결 기록이 없는 memberId(관전자)
+      await service.join(HOST, DEBATE_ID);
+      expect(() =>
+        service.handleDebaterDisconnect('spectator-uuid', DEBATE_ID),
+      ).not.toThrow();
+    });
+  });
+
   describe('sendMessage', () => {
     it('발언자가 아니면 NOT_YOUR_TURN 에러를 던진다', async () => {
       const debate = buildDebate({
