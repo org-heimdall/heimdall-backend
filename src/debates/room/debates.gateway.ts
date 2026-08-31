@@ -10,7 +10,6 @@ import {
 } from '@nestjs/websockets';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { Server, Socket } from 'socket.io';
 import { TokenService } from '../../auth/token.service';
 import { AuthErrorCode } from '../../auth/exceptions/auth-error-code';
 import { ErrorCode } from '../../common/exceptions/error-code';
@@ -18,12 +17,14 @@ import { GeneralException } from '../../common/exceptions/general.exception';
 import { DebatesService } from '../debates.service';
 import { debateRoomName, memberRoomName } from './debate-room-name.util';
 import { DebateRoomService } from './debate-room.service';
-import {
-  DebateEventsPublisher,
+import { DebateEventsPublisher } from './debate-events-publisher.interface';
+import type {
   DebateRequestedPayload,
   DebateRequestRespondedPayload,
+  DebateSocket,
+  DebateSocketServer,
   TurnChangedPayload,
-} from './debate-events-publisher.interface';
+} from './debate-socket-events';
 import {
   JoinDebateDto,
   NextTurnDto,
@@ -40,7 +41,7 @@ export class DebatesGateway
   implements OnGatewayInit, OnGatewayConnection, DebateEventsPublisher
 {
   @WebSocketServer()
-  private readonly server: Server;
+  private readonly server: DebateSocketServer;
 
   private readonly logger = new Logger(DebatesGateway.name);
 
@@ -52,7 +53,7 @@ export class DebatesGateway
 
   // 서비스들이 브로드캐스트를 쓸 수 있도록 자신을 publisher로 등록하고(순환 DI 회피),
   // 핸드셰이크 인증 미들웨어를 붙인다.
-  afterInit(server: Server): void {
+  afterInit(server: DebateSocketServer): void {
     this.debateRoomService.bindPublisher(this);
     this.debatesService.bindPublisher(this);
 
@@ -75,13 +76,13 @@ export class DebatesGateway
 
   // 인증 미들웨어(afterInit) 이후 호출되므로 memberIdOf가 항상 값을 반환한다.
   // 개인 알림(debate_requested 등)을 이 회원에게만 보내기 위해 전용 room에 join시킨다.
-  handleConnection(socket: Socket): void {
+  handleConnection(socket: DebateSocket): void {
     void socket.join(memberRoomName(this.memberIdOf(socket)));
   }
 
   @SubscribeMessage('join_debate')
   async handleJoinDebate(
-    @ConnectedSocket() socket: Socket,
+    @ConnectedSocket() socket: DebateSocket,
     @MessageBody() body: unknown,
   ): Promise<void> {
     try {
@@ -98,7 +99,7 @@ export class DebatesGateway
 
   @SubscribeMessage('send_debate_message')
   async handleSendDebateMessage(
-    @ConnectedSocket() socket: Socket,
+    @ConnectedSocket() socket: DebateSocket,
     @MessageBody() body: unknown,
   ): Promise<void> {
     try {
@@ -123,7 +124,7 @@ export class DebatesGateway
 
   @SubscribeMessage('next_turn')
   async handleNextTurn(
-    @ConnectedSocket() socket: Socket,
+    @ConnectedSocket() socket: DebateSocket,
     @MessageBody() body: unknown,
   ): Promise<void> {
     try {
@@ -169,7 +170,7 @@ export class DebatesGateway
       .emit('debate_request_rejected', payload);
   }
 
-  private memberIdOf(socket: Socket): string {
+  private memberIdOf(socket: DebateSocket): string {
     return (socket.data as DebateSocketData).memberId;
   }
 
@@ -187,7 +188,7 @@ export class DebatesGateway
   }
 
   // 모든 GeneralException(검증 실패 포함)은 해당 소켓에만 error_from_debate_room으로 알린다.
-  private emitError(socket: Socket, error: unknown): void {
+  private emitError(socket: DebateSocket, error: unknown): void {
     if (error instanceof GeneralException) {
       socket.emit('error_from_debate_room', { msg: error.detail });
       return;

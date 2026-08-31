@@ -176,5 +176,6 @@ socket.on('connect_error', (err) => {
 ## 5. 구현 메모
 
 - 서버 프로세스 1대를 전제로 참여자 join 여부·턴 타이머를 인메모리로 관리합니다. 스케일아웃 시 Redis adapter(및 상태 공유 스토어)로 교체가 필요합니다(`src/debates/room/debate-room.service.ts`, `src/debates/room/debate-timer.service.ts` 주석 참고).
+- 이 문서의 모든 이벤트 이름·payload는 `src/debates/room/debate-socket-events.ts`에 socket.io 타입드 이벤트 인터페이스(`DebateServerToClientEvents`/`DebateClientToServerEvents`)로 정의되어 있으며, 이 파일이 소켓 와이어 계약의 단일 출처입니다. 프론트도 이벤트 이름·payload 타입 참조용으로 사용할 수 있습니다.
 - `DebateMessage.status = NORMAL` 등 조회 규칙은 [`docs/soft-delete.md`](./soft-delete.md)를 따릅니다.
 - 커뮤니티 채팅, 메시지 리액션(좋아요), AI 판정(`JUDGING` 이후) 이벤트는 이 문서 범위 밖이며 **미구현(후속)**입니다.

@@ -8,10 +8,8 @@ import { CommunitiesService } from '../../communities/communities.service';
 import { MemberCommunitiesService } from '../../member-communities/member-communities.service';
 import { DebateTimerService } from './debate-timer.service';
 import { debateRoomName } from './debate-room-name.util';
-import {
-  DebateEventsPublisher,
-  TurnChangedPayload,
-} from './debate-events-publisher.interface';
+import { DebateEventsPublisher } from './debate-events-publisher.interface';
+import { TurnChangedPayload } from './debate-socket-events';
 import {
   DebateMessage,
   DebateMessageTurn,
