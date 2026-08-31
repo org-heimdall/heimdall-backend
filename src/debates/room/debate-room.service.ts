@@ -99,14 +99,10 @@ export class DebateRoomService {
     const state = this.getOrCreateState(debateId);
     state.joinedDebaterIds.add(memberId);
 
-    const bothDebatersJoined =
-      state.joinedDebaterIds.has(debate.hostId) &&
-      state.joinedDebaterIds.has(debate.opponentId);
-
     // 양측이 다 모이면 STARTING 인사 카운트다운을 시작한다. 재-join(재접속)으로 이 조건이
     // 다시 참이 되어도 이미 타이머가 돌고 있으면(has) 중복 브로드캐스트·재예약을 하지 않는다.
     if (
-      bothDebatersJoined &&
+      this.bothDebatersJoined(debate) &&
       debate.currentTurn === DebateTurn.STARTING &&
       !this.timerService.has(debate.id)
     ) {
@@ -149,8 +145,12 @@ export class DebateRoomService {
     }
 
     // STARTING은 발언권 없는 자유 인사 시간이라 발언자(currentSpeakerId)/예산 규칙이 아닌
-    // 별도 검증(토론자 여부만)을 탄다.
+    // 별도 검증(토론자 여부만)을 탄다. 단, 양측이 모두 입장하기 전(카운트다운 시작 전)에는
+    // 인사 발언도 허용하지 않는다.
     if (turn === DebateTurn.STARTING) {
+      if (!this.bothDebatersJoined(debate)) {
+        throw new GeneralException(DebateErrorCode.INVALID_PHASE);
+      }
       return this.sendStartingGreeting(debate, memberId, msg);
     }
 
@@ -344,6 +344,16 @@ export class DebateRoomService {
 
   private isDebater(debate: Debate, memberId: string): boolean {
     return debate.hostId === memberId || debate.opponentId === memberId;
+  }
+
+  // 양측 토론자(host/opponent)가 모두 join_debate 했는지 확인한다. join()의 STARTING
+  // 카운트다운 시작 조건과 sendMessage()의 STARTING 인사 발언 허용 조건에서 공유한다.
+  private bothDebatersJoined(debate: Debate): boolean {
+    const state = this.getOrCreateState(debate.id);
+    return (
+      state.joinedDebaterIds.has(debate.hostId) &&
+      state.joinedDebaterIds.has(debate.opponentId)
+    );
   }
 
   private resolveNickname(

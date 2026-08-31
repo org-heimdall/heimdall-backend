@@ -237,6 +237,10 @@ describe('DebateRoomService', () => {
       const debate = buildDebate({ currentTurn: DebateTurn.STARTING });
       debateRepository.findOneBy.mockResolvedValue(debate);
 
+      // 양측이 모두 join해야 STARTING 인사 발언이 허용된다
+      await service.join(HOST, DEBATE_ID);
+      await service.join(OPPONENT, DEBATE_ID);
+
       const result = await service.sendMessage(
         OPPONENT,
         DEBATE_ID,
@@ -254,9 +258,29 @@ describe('DebateRoomService', () => {
       const debate = buildDebate({ currentTurn: DebateTurn.STARTING });
       debateRepository.findOneBy.mockResolvedValue(debate);
 
+      // 양측이 모두 join해야 STARTING 인사 발언이 허용된다
+      await service.join(HOST, DEBATE_ID);
+      await service.join(OPPONENT, DEBATE_ID);
+
       await expect(
         service.sendMessage('spectator-uuid', DEBATE_ID, '안녕하세요'),
       ).rejects.toMatchObject({ appError: DebateErrorCode.NOT_YOUR_TURN });
+    });
+
+    it('STARTING 단계에서 한쪽만 join한 상태로 발언하면 INVALID_PHASE 에러를 던지고 메시지를 저장하지 않는다', async () => {
+      const debate = buildDebate({ currentTurn: DebateTurn.STARTING });
+      debateRepository.findOneBy.mockResolvedValue(debate);
+
+      // host만 입장하고 opponent는 아직 join하지 않은 상태
+      await service.join(HOST, DEBATE_ID);
+
+      await expect(
+        service.sendMessage(OPPONENT, DEBATE_ID, '안녕하세요'),
+      ).rejects.toMatchObject({ appError: DebateErrorCode.INVALID_PHASE });
+      await expect(
+        service.sendMessage(HOST, DEBATE_ID, '안녕하세요'),
+      ).rejects.toMatchObject({ appError: DebateErrorCode.INVALID_PHASE });
+      expect(debateMessageRepository.save).not.toHaveBeenCalled();
     });
 
     it('JUDGING 단계에서 발언하면 INVALID_PHASE 에러를 던진다', async () => {
