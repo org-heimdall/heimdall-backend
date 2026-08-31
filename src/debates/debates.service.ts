@@ -99,26 +99,43 @@ export class DebatesService {
       this.membersService.findOneOrThrow(opponentId),
     ]);
 
-    // status 필터를 의도적으로 걸지 않는다: 위 활성 차단 검사를 통과했다면 이 (community, host)
-    // PENDING 행은 존재하더라도 거절되어 DELETED 상태인 것뿐이므로, 그 행을 되살려 재사용한다.
-    // (soft-delete.md의 조회 규칙에 대한 의도적 예외.)
-    const reusable = await this.debateRepository.findOne({
-      where: { communityId, hostId, currentTurn: DebateTurn.PENDING },
-    });
-
-    let debate: Debate;
-    if (reusable) {
-      reusable.reopenRequest(host.nickname, opponentId, opponent.nickname);
-      debate = reusable;
-    } else {
-      debate = Debate.open({
-        communityId: communityId,
+    // 거절(soft delete)된 (community, host)의 PENDING 행이 있으면 조건부 UPDATE로 원자적으로 되살린다.
+    // status != NORMAL 조건이 WHERE에 있어 동시 요청 중 한 쪽만 점유에 성공하고,
+    // 진 쪽은 아래 insert 경로의 부분 유니크 인덱스 위반으로 REQUEST_ALREADY_PENDING 처리된다.
+    // (참고: status 필터 없이 조회하던 기존 방식은 NORMAL PENDING 행까지 덮어쓸 잠재 위험이
+    // 있었는데, Not(NORMAL) 조건이 그 문제도 함께 막는다.)
+    const reopened = await this.debateRepository.update(
+      {
+        communityId,
         hostId,
-        hostNickname: host.nickname,
-        opponentId,
-        opponentNickname: opponent.nickname,
+        currentTurn: DebateTurn.PENDING,
+        status: Not(ResourceStatus.NORMAL),
+      },
+      Debate.reopenRequestValues(host.nickname, opponentId, opponent.nickname),
+    );
+
+    if (reopened.affected === 1) {
+      const revived = await this.debateRepository.findOneBy({
+        communityId,
+        hostId,
+        currentTurn: DebateTurn.PENDING,
+        status: ResourceStatus.NORMAL,
       });
+      if (revived) {
+        return this.emitCreated(revived);
+      }
+      // 점유 직후 상대가 거절한 극단 케이스: 아래 신규 요청 insert 경로로 폴스루한다.
+      // 되살린 행은 여전히 current_turn=PENDING이라 insert는 부분 유니크 인덱스 위반으로
+      // 실패하고, 아래 catch에서 REQUEST_ALREADY_PENDING으로 처리된다.
     }
+
+    const debate = Debate.open({
+      communityId: communityId,
+      hostId,
+      hostNickname: host.nickname,
+      opponentId,
+      opponentNickname: opponent.nickname,
+    });
 
     let saved: Debate;
     try {
@@ -134,6 +151,11 @@ export class DebatesService {
       throw error;
     }
 
+    return this.emitCreated(saved);
+  }
+
+  // 토론 요청 생성 성공(재사용/신규 공통) 처리: 상대에게 debate_requested를 발행하고 응답을 만든다.
+  private emitCreated(saved: Debate): CreateDebateResultDto {
     this.publisher?.emitDebateRequested(saved.opponentId, {
       debateId: saved.id,
       communityId: saved.communityId,
@@ -158,16 +180,28 @@ export class DebatesService {
       throw new GeneralException(DebateErrorCode.REQUEST_NOT_PENDING);
     }
 
-    debate.currentTurn = DebateTurn.STARTING;
-    const saved = await this.debateRepository.save(debate);
+    // 사전 검증과 UPDATE 사이에 다른 요청이 먼저 전이했을 레이스: 조건부 UPDATE로 한 쪽만
+    // 성공시킨다. affected가 0이면 이미 다른 요청(수락/거절)이 먼저 전이시킨 것이므로
+    // 재조회 없이 REQUEST_NOT_PENDING으로 처리한다.
+    const transition = await this.debateRepository.update(
+      {
+        id: debateId,
+        status: ResourceStatus.NORMAL,
+        currentTurn: DebateTurn.PENDING,
+      },
+      { currentTurn: DebateTurn.STARTING },
+    );
+    if (transition.affected !== 1) {
+      throw new GeneralException(DebateErrorCode.REQUEST_NOT_PENDING);
+    }
 
-    this.publisher?.emitDebateRequestAccepted(saved.hostId, {
-      debateId: saved.id,
-      opponentId: saved.opponentId,
-      opponentNickname: saved.opponentNickname,
+    this.publisher?.emitDebateRequestAccepted(debate.hostId, {
+      debateId: debate.id,
+      opponentId: debate.opponentId,
+      opponentNickname: debate.opponentNickname,
     });
 
-    return { debateId: saved.id };
+    return { debateId: debate.id };
   }
 
   // 토론 요청 거절: 요청받은 당사자(opponent)만 가능. 토론 행을 soft delete한다.
@@ -180,13 +214,24 @@ export class DebatesService {
       throw new GeneralException(DebateErrorCode.REQUEST_NOT_PENDING);
     }
 
-    debate.softDelete();
-    const saved = await this.debateRepository.save(debate);
+    // accept와 동일한 레이스 대비. 소프트 삭제 값은 SoftDeletableEntity.softDelete()의
+    // 일반 삭제(DELETED)와 동일해야 한다.
+    const transition = await this.debateRepository.update(
+      {
+        id: debateId,
+        status: ResourceStatus.NORMAL,
+        currentTurn: DebateTurn.PENDING,
+      },
+      { status: ResourceStatus.DELETED },
+    );
+    if (transition.affected !== 1) {
+      throw new GeneralException(DebateErrorCode.REQUEST_NOT_PENDING);
+    }
 
-    this.publisher?.emitDebateRequestRejected(saved.hostId, {
-      debateId: saved.id,
-      opponentId: saved.opponentId,
-      opponentNickname: saved.opponentNickname,
+    this.publisher?.emitDebateRequestRejected(debate.hostId, {
+      debateId: debate.id,
+      opponentId: debate.opponentId,
+      opponentNickname: debate.opponentNickname,
     });
   }
 

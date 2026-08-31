@@ -23,6 +23,7 @@ describe('DebatesService', () => {
     exists: jest.Mock;
     findOneBy: jest.Mock;
     findOne: jest.Mock;
+    update: jest.Mock;
   };
   let communitiesService: {
     findOneOrThrow: jest.Mock;
@@ -72,6 +73,9 @@ describe('DebatesService', () => {
       exists: jest.fn().mockResolvedValue(false),
       findOneBy: jest.fn(),
       findOne: jest.fn().mockResolvedValue(null),
+      // 기본값: 재사용할 PENDING 행도, 조건부 전이 레이스도 없는 흐름(0행 갱신).
+      // 재사용 성공/전이 성공을 검증하는 테스트에서만 { affected: 1 }로 개별 override한다.
+      update: jest.fn().mockResolvedValue({ affected: 0 }),
     };
     communitiesService = {
       findOneOrThrow: jest.fn(),
@@ -247,7 +251,7 @@ describe('DebatesService', () => {
       );
     });
 
-    it('거절되어 재사용 가능한 PENDING 행이 있으면 새로 만들지 않고 그 행을 재사용한다', async () => {
+    it('거절되어 재사용 가능한 PENDING 행이 있으면 조건부 UPDATE로 원자 점유해 되살린 행을 재사용한다', async () => {
       communitiesService.findOneOrThrow.mockResolvedValue({
         hostId: 'host-uuid',
       });
@@ -261,28 +265,48 @@ describe('DebatesService', () => {
           nickname: memberId === 'host-uuid' ? '호스트' : '상대',
         }),
       );
-      const rejectedDebate = buildDebate({
-        opponentId: 'old-opponent-uuid',
-        opponentNickname: '이전 상대',
-        status: ResourceStatus.DELETED,
+      // 활성 검사(findOne)는 통과, 재사용 점유(update)는 1행 성공
+      debateRepository.findOne.mockResolvedValue(null);
+      debateRepository.update.mockResolvedValue({ affected: 1 });
+      const revivedDebate = buildDebate({
+        opponentId: 'opponent-uuid',
+        opponentNickname: '상대',
+        status: ResourceStatus.NORMAL,
       });
-      // 첫 호출(활성 검사)은 없음(null), 두 번째 호출(재사용 검사)에서 거절된 행을 반환
-      debateRepository.findOne
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(rejectedDebate);
+      debateRepository.findOneBy.mockResolvedValue(revivedDebate);
 
       const result = await service.create(dto, 'host-uuid');
 
-      // 새 행이 아니라 거절된 행 자체가 재사용됐는지 확인
-      expect(debateRepository.save).toHaveBeenCalledWith(rejectedDebate);
-      expect(rejectedDebate.opponentId).toBe('opponent-uuid');
-      expect(rejectedDebate.opponentNickname).toBe('상대');
-      expect(rejectedDebate.currentTurn).toBe(DebateTurn.PENDING);
-      expect(rejectedDebate.status).toBe(ResourceStatus.NORMAL);
+      // 조건부 UPDATE가 Not(NORMAL) 조건과 리셋 값으로 호출됐는지 확인
+      expect(debateRepository.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          communityId: 'community-uuid',
+          hostId: 'host-uuid',
+          currentTurn: DebateTurn.PENDING,
+        }),
+        expect.objectContaining({
+          hostNickname: '호스트',
+          opponentId: 'opponent-uuid',
+          opponentNickname: '상대',
+          currentTurn: DebateTurn.PENDING,
+          status: ResourceStatus.NORMAL,
+        }),
+      );
+      // 새 insert가 아니라 되살린 행이 재사용됐는지 확인
+      expect(debateRepository.save).not.toHaveBeenCalled();
       expect(result.debateId).toBe('debate-uuid');
+      expect(publisher.emitDebateRequested).toHaveBeenCalledWith(
+        'opponent-uuid',
+        expect.objectContaining({
+          debateId: 'debate-uuid',
+          communityId: 'community-uuid',
+          hostId: 'host-uuid',
+          hostNickname: '호스트',
+        }),
+      );
     });
 
-    it('save에서 PENDING 요청 부분 유니크 인덱스 위반이 나면 REQUEST_ALREADY_PENDING 에러를 cause 없이 던진다', async () => {
+    it('재사용 점유(update)가 0행이면 신규 insert를 시도하고, 그 insert가 부분 유니크 인덱스 위반이면 REQUEST_ALREADY_PENDING 에러를 cause 없이 던지며 emit하지 않는다', async () => {
       communitiesService.findOneOrThrow.mockResolvedValue({
         hostId: 'host-uuid',
       });
@@ -296,6 +320,8 @@ describe('DebatesService', () => {
           nickname: memberId === 'host-uuid' ? '호스트' : '상대',
         }),
       );
+      // 재사용 점유 레이스에서 짐: 0행 갱신 → insert 경로로 폴스루
+      debateRepository.update.mockResolvedValue({ affected: 0 });
       debateRepository.save.mockRejectedValue(
         new QueryFailedError(
           'INSERT',
@@ -311,6 +337,8 @@ describe('DebatesService', () => {
       expect(error).toBeInstanceOf(GeneralException);
       expect(error.appError).toBe(DebateErrorCode.REQUEST_ALREADY_PENDING);
       expect(error.cause).toBeUndefined();
+      expect(debateRepository.findOneBy).not.toHaveBeenCalled();
+      expect(publisher.emitDebateRequested).not.toHaveBeenCalled();
     });
 
     it('매핑되지 않은 unique 위반은 그대로 전파한다', async () => {
@@ -371,15 +399,22 @@ describe('DebatesService', () => {
       expect(debateRepository.save).not.toHaveBeenCalled();
     });
 
-    it('정상 수락 시 STARTING으로 전환하고 host에게 알린다', async () => {
+    it('정상 수락 시 조건부 UPDATE로 STARTING 전환하고 host에게 알린다', async () => {
       debateRepository.findOneBy.mockResolvedValue(buildDebate());
+      debateRepository.update.mockResolvedValue({ affected: 1 });
 
       const result = await service.accept('debate-uuid', 'opponent-uuid');
 
       expect(result).toEqual({ debateId: 'debate-uuid' });
-      expect(debateRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ currentTurn: DebateTurn.STARTING }),
+      expect(debateRepository.update).toHaveBeenCalledWith(
+        {
+          id: 'debate-uuid',
+          status: ResourceStatus.NORMAL,
+          currentTurn: DebateTurn.PENDING,
+        },
+        { currentTurn: DebateTurn.STARTING },
       );
+      expect(debateRepository.save).not.toHaveBeenCalled();
       expect(publisher.emitDebateRequestAccepted).toHaveBeenCalledWith(
         'host-uuid',
         {
@@ -388,6 +423,18 @@ describe('DebatesService', () => {
           opponentNickname: '상대',
         },
       );
+    });
+
+    it('사전 검증 통과 후 다른 요청이 먼저 전이시킨 레이스면(UPDATE 0행) REQUEST_NOT_PENDING 에러를 던지고 emit하지 않는다', async () => {
+      debateRepository.findOneBy.mockResolvedValue(buildDebate());
+      debateRepository.update.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        service.accept('debate-uuid', 'opponent-uuid'),
+      ).rejects.toMatchObject({
+        appError: DebateErrorCode.REQUEST_NOT_PENDING,
+      });
+      expect(publisher.emitDebateRequestAccepted).not.toHaveBeenCalled();
     });
   });
 
@@ -416,16 +463,22 @@ describe('DebatesService', () => {
       expect(debateRepository.save).not.toHaveBeenCalled();
     });
 
-    it('정상 거절 시 soft delete하고 host에게 알린다', async () => {
+    it('정상 거절 시 조건부 UPDATE로 soft delete하고 host에게 알린다', async () => {
       const debate = buildDebate();
       debateRepository.findOneBy.mockResolvedValue(debate);
+      debateRepository.update.mockResolvedValue({ affected: 1 });
 
       await service.reject('debate-uuid', 'opponent-uuid');
 
-      expect(debate.status).toBe(ResourceStatus.DELETED);
-      expect(debateRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ status: ResourceStatus.DELETED }),
+      expect(debateRepository.update).toHaveBeenCalledWith(
+        {
+          id: 'debate-uuid',
+          status: ResourceStatus.NORMAL,
+          currentTurn: DebateTurn.PENDING,
+        },
+        { status: ResourceStatus.DELETED },
       );
+      expect(debateRepository.save).not.toHaveBeenCalled();
       expect(publisher.emitDebateRequestRejected).toHaveBeenCalledWith(
         'host-uuid',
         {
@@ -434,6 +487,18 @@ describe('DebatesService', () => {
           opponentNickname: '상대',
         },
       );
+    });
+
+    it('사전 검증 통과 후 다른 요청이 먼저 전이시킨 레이스면(UPDATE 0행) REQUEST_NOT_PENDING 에러를 던지고 emit하지 않는다', async () => {
+      debateRepository.findOneBy.mockResolvedValue(buildDebate());
+      debateRepository.update.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        service.reject('debate-uuid', 'opponent-uuid'),
+      ).rejects.toMatchObject({
+        appError: DebateErrorCode.REQUEST_NOT_PENDING,
+      });
+      expect(publisher.emitDebateRequestRejected).not.toHaveBeenCalled();
     });
   });
 });

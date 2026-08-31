@@ -98,22 +98,23 @@ export class Debate extends SoftDeletableEntity {
     return debate;
   }
 
-  // PENDING 요청 슬롯 재사용: 거절(soft delete)된 요청 행을 새 요청으로 되살린다.
-  // 닉네임 스냅샷은 이전 요청 이후 변경됐을 수 있어 둘 다 갱신하고,
-  // 나머지는 open()과 동일한 초기 불변식으로 리셋한다.
-  reopenRequest(
+  // PENDING 요청 슬롯 재사용 시 UPDATE에 쓸 리셋 값. 닉네임 스냅샷은 이전 요청 이후
+  // 변경됐을 수 있어 둘 다 갱신하고, 나머지는 open()과 동일한 초기 불변식으로 되돌린다.
+  static reopenRequestValues(
     hostNickname: string,
     opponentId: string,
     opponentNickname: string,
-  ): void {
-    this.hostNickname = hostNickname;
-    this.opponentId = opponentId;
-    this.opponentNickname = opponentNickname;
-    this.currentTurn = DebateTurn.PENDING;
-    this.currentSpeakerId = null;
-    this.freetalkingRound = 0;
-    this.winnerId = null;
-    this.solution = null;
-    this.status = ResourceStatus.NORMAL;
+  ) {
+    return {
+      hostNickname,
+      opponentId,
+      opponentNickname,
+      currentTurn: DebateTurn.PENDING,
+      currentSpeakerId: null,
+      freetalkingRound: 0,
+      winnerId: null,
+      solution: null,
+      status: ResourceStatus.NORMAL,
+    };
   }
 }
