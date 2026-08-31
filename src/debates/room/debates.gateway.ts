@@ -25,7 +25,7 @@ import {
   TurnChangedPayload,
 } from './debate-events-publisher.interface';
 import {
-  JoinDebateRoomDto,
+  JoinDebateDto,
   NextTurnDto,
   SendDebateMessageDto,
 } from './dto/debate-socket.dto';
@@ -80,17 +80,17 @@ export class DebatesGateway
   }
 
   @SubscribeMessage('join_debate')
-  async handleJoinRoom(
+  async handleJoinDebate(
     @ConnectedSocket() socket: Socket,
     @MessageBody() body: unknown,
   ): Promise<void> {
     try {
-      const dto = await this.parse(JoinDebateRoomDto, body);
-      const { socketRoom } = await this.debateRoomService.join(
+      const dto = await this.parse(JoinDebateDto, body);
+      const { roomName } = await this.debateRoomService.join(
         this.memberIdOf(socket),
         dto.debateId,
       );
-      await socket.join(socketRoom);
+      await socket.join(roomName);
     } catch (error) {
       this.emitError(socket, error);
     }
@@ -138,8 +138,8 @@ export class DebatesGateway
   }
 
   // DebateEventsPublisher 구현: DebateRoomService/DebatesService가 이 인터페이스로만 게이트웨이를 안다.
-  emitTurnChanged(socketRoom: string, payload: TurnChangedPayload): void {
-    this.server.to(socketRoom).emit('debate_turn_changed', payload);
+  emitTurnChanged(roomName: string, payload: TurnChangedPayload): void {
+    this.server.to(roomName).emit('debate_turn_changed', payload);
   }
 
   emitDebateRequested(

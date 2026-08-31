@@ -38,9 +38,9 @@ interface DebateRuntimeState {
   turnUsedChars: number;
 }
 
-// 서비스 내부 반환 타입: socketRoom은 실제 socket.io room 이름(debateRoomName() 결과)
+// 서비스 내부 반환 타입: roomName은 실제 socket.io room 이름(debateRoomName() 결과)
 export interface JoinResult {
-  socketRoom: string;
+  roomName: string;
 }
 
 export interface SendMessageResult {
@@ -79,7 +79,6 @@ export class DebateRoomService {
   }
 
   // 토론방 입장. 토론자(host/opponent)면 참여 기록을 남기고, 양측이 다 모이면 첫 턴을 시작한다.
-  //TODO 주석 점검 (관전자는 해당 커뮤니티 멤버인지만 확인한다.)
   async join(memberId: string, debateId: string): Promise<JoinResult> {
     const debate = await this.getDebateOrThrow(debateId);
     if (debate.currentTurn === DebateTurn.PENDING) {
@@ -96,11 +95,9 @@ export class DebateRoomService {
       if (!membership) {
         throw new GeneralException(DebateErrorCode.NOT_COMMUNITY_MEMBER);
       }
-      //TODO 관전자
-      return { socketRoom: debateRoomName(debateId) };
+      return { roomName: debateRoomName(debateId) };
     }
 
-    //TODO 만약 1대1 토론방이라면, State에서 Id Set(즉, joinedDebaterIds) 저장할 필요가 있을지..?
     const state = this.getOrCreateState(debateId);
     state.joinedDebaterIds.add(memberId);
 
@@ -118,7 +115,7 @@ export class DebateRoomService {
       this.startStartingCountdown(debate);
     }
 
-    return { socketRoom: debateRoomName(debateId) };
+    return { roomName: debateRoomName(debateId) };
   }
 
   // STARTING 인사 시간 시작: DB 상태(currentTurn)는 STARTING 그대로 두고 타이머만 예약한 뒤,
@@ -287,6 +284,7 @@ export class DebateRoomService {
               freetalkingRound: 1,
             }
           : {
+              // 실제로는 없는 케이스
               turn: DebateTurn.CLOSING,
               speakerId: hostId,
               freetalkingRound: 0,

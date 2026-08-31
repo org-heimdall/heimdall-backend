@@ -1,6 +1,6 @@
 import { IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
-export class JoinDebateRoomDto {
+export class JoinDebateDto {
   @IsUUID()
   debateId: string;
 }

@@ -117,7 +117,7 @@ describe('DebateRoomService', () => {
 
       const result = await service.join(OPPONENT, DEBATE_ID);
 
-      expect(result.socketRoom).toBe(debateRoomName(DEBATE_ID));
+      expect(result.roomName).toBe(debateRoomName(DEBATE_ID));
       // DB 상태는 그대로 STARTING이고, endsAt이 채워진 turn_changed만 나간다
       expect(debate.currentTurn).toBe(DebateTurn.STARTING);
       expect(publisher.emitTurnChanged).toHaveBeenCalledTimes(1);
@@ -186,7 +186,7 @@ describe('DebateRoomService', () => {
 
       const result = await service.join('spectator-uuid', DEBATE_ID);
 
-      expect(result.socketRoom).toBe(debateRoomName(DEBATE_ID));
+      expect(result.roomName).toBe(debateRoomName(DEBATE_ID));
       // 관전자는 상태 전환에 관여하지 않는다
       expect(debate.currentTurn).toBe(DebateTurn.STARTING);
     });
