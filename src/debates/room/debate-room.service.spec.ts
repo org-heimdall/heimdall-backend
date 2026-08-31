@@ -57,7 +57,12 @@ describe('DebateRoomService', () => {
     };
     memberCommunitiesService = { findOne: jest.fn() };
     communitiesService = { findOneOrThrow: jest.fn() };
-    publisher = { emitTurnChanged: jest.fn() };
+    publisher = {
+      emitTurnChanged: jest.fn(),
+      emitDebateRequested: jest.fn(),
+      emitDebateRequestAccepted: jest.fn(),
+      emitDebateRequestRejected: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
