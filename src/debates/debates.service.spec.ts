@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { QueryFailedError } from 'typeorm';
+import { Not, QueryFailedError } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { CommunitiesService } from '../communities/communities.service';
 import { CommunityErrorCode } from '../communities/exceptions/community-error-code';
@@ -283,6 +283,7 @@ describe('DebatesService', () => {
           communityId: 'community-uuid',
           hostId: 'host-uuid',
           currentTurn: DebateTurn.PENDING,
+          status: Not(ResourceStatus.NORMAL),
         }),
         expect.objectContaining({
           hostNickname: '호스트',
