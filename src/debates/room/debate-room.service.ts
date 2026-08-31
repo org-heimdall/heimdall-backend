@@ -36,6 +36,13 @@ interface DebateRuntimeState {
   turnUsedChars: number;
 }
 
+// 타이머가 예약된 시점의 턴 슬롯. 만료 시점에 이 슬롯이 그대로인지 확인해 스테일 콜백을 무시한다.
+interface TurnSlot {
+  turn: DebateTurn;
+  speakerId: string | null;
+  freetalkingRound: number;
+}
+
 // 서비스 내부 반환 타입: roomName은 실제 socket.io room 이름(debateRoomName() 결과)
 export interface JoinResult {
   roomName: string;
@@ -53,6 +60,10 @@ export class DebateRoomService {
   private readonly turnSeconds: number;
   private readonly startingSeconds: number;
   private publisher: DebateEventsPublisher | null = null;
+
+  // 토론별 턴 전환 직렬화 큐. 수동 next_turn과 타이머 만료가 겹쳐도 임계 구역(조회→검증→advance)이
+  // 한 번에 하나만 실행되게 한다. 서버 1대 전제의 in-memory 구조로, 스케일아웃 시 분산 락으로 교체 대상.
+  private readonly transitionLocks = new Map<string, Promise<void>>();
 
   constructor(
     @InjectRepository(Debate)
@@ -117,9 +128,14 @@ export class DebateRoomService {
   private startStartingCountdown(debate: Debate): void {
     const ms = this.startingSeconds * 1000;
     const endsAt = Date.now() + ms;
+    const slot: TurnSlot = {
+      turn: DebateTurn.STARTING,
+      speakerId: null,
+      freetalkingRound: debate.freetalkingRound,
+    };
 
     this.timerService.schedule(debate.id, ms, () => {
-      void this.handleTurnTimeout(debate.id);
+      void this.handleTurnTimeout(debate.id, slot);
     });
 
     const payload: TurnChangedPayload = {
@@ -183,26 +199,61 @@ export class DebateRoomService {
     return this.saveMessage(debate, memberId, msg, DebateTurn.STARTING);
   }
 
-  // 발언 차례인 사람의 명시적 턴 넘기기. 검증 후 상태머신을 한 칸 진행한다.
+  // 발언 차례인 사람의 명시적 턴 넘기기. 조회부터 advance까지 전체를 토론별로 직렬화해 타이머
+  // 만료(handleTurnTimeout)와 동시에 실행되어도 턴이 이중 전환되지 않게 한다.
   async nextTurn(memberId: string, debateId: string): Promise<void> {
-    const debate = await this.getDebateOrThrow(debateId);
-    if (debate.currentSpeakerId !== memberId) {
-      throw new GeneralException(DebateErrorCode.NOT_YOUR_TURN);
-    }
-    await this.advance(debate);
+    await this.runExclusive(debateId, async () => {
+      const debate = await this.getDebateOrThrow(debateId);
+      if (debate.currentSpeakerId !== memberId) {
+        throw new GeneralException(DebateErrorCode.NOT_YOUR_TURN);
+      }
+      await this.advance(debate);
+    });
   }
 
-  // 타이머 만료로 인한 자동 턴 넘기기. next_turn과 동일한 advance 경로를 탄다(발신자 검증 없음).
-  private async handleTurnTimeout(debateId: string): Promise<void> {
-    const debate = await this.debateRepository.findOneBy({
-      id: debateId,
-      status: ResourceStatus.NORMAL,
+  // 타이머 만료로 인한 자동 턴 넘기기. next_turn과 동일한 advance 경로를 타되(발신자 검증 없음),
+  // 조회부터 advance까지 전체를 토론별로 직렬화하고 예약 당시 슬롯(expected)이 아직 유효한지 검증한다.
+  private async handleTurnTimeout(
+    debateId: string,
+    expected: TurnSlot,
+  ): Promise<void> {
+    await this.runExclusive(debateId, async () => {
+      const debate = await this.debateRepository.findOneBy({
+        id: debateId,
+        status: ResourceStatus.NORMAL,
+      });
+      // 그 사이 토론이 삭제되었거나 이미 다른 경로로 턴이 넘어간 경우 방어적으로 무시한다.
+      if (!debate) {
+        return;
+      }
+      // 예약 이후 수동 next_turn 등으로 이미 슬롯이 바뀐 스테일 타이머면 무시한다
+      if (
+        debate.currentTurn !== expected.turn ||
+        debate.currentSpeakerId !== expected.speakerId ||
+        debate.freetalkingRound !== expected.freetalkingRound
+      ) {
+        return;
+      }
+      await this.advance(debate);
     });
-    // 그 사이 토론이 삭제되었거나 이미 다른 경로로 턴이 넘어간 경우 방어적으로 무시한다.
-    if (!debate) {
-      return;
-    }
-    await this.advance(debate);
+  }
+
+  // debateId 기준으로 fn을 직렬 실행한다. 앞선 작업의 성공/실패와 무관하게 다음 작업을 실행하고,
+  // 체인이 모두 소진되면 맵에서 제거해 누수를 막는다.
+  private runExclusive<T>(debateId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.transitionLocks.get(debateId) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.transitionLocks.set(debateId, settled);
+    void settled.then(() => {
+      if (this.transitionLocks.get(debateId) === settled) {
+        this.transitionLocks.delete(debateId);
+      }
+    });
+    return run;
   }
 
   // 턴 상태머신의 다음 슬롯을 계산하고, DB 반영/타이머 재예약/브로드캐스트까지 한 번에 처리한다.
@@ -227,8 +278,13 @@ export class DebateRoomService {
     if (SPEAKING_TURNS.has(next.turn)) {
       const ms = this.turnSeconds * 1000;
       endsAt = Date.now() + ms;
+      const slot: TurnSlot = {
+        turn: next.turn,
+        speakerId: next.speakerId,
+        freetalkingRound: next.freetalkingRound,
+      };
       this.timerService.schedule(debate.id, ms, () => {
-        void this.handleTurnTimeout(debate.id);
+        void this.handleTurnTimeout(debate.id, slot);
       });
     }
 

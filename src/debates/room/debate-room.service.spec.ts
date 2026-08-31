@@ -414,4 +414,134 @@ describe('DebateRoomService', () => {
       );
     });
   });
+
+  describe('턴 전환 동시성 가드', () => {
+    it('동시에 들어온 next_turn 요청은 직렬화되어 하나만 전환에 성공한다', async () => {
+      const debate = buildDebate({
+        currentTurn: DebateTurn.OPENING,
+        currentSpeakerId: HOST,
+      });
+      debateRepository.findOneBy.mockResolvedValue(debate);
+
+      // await 없이 동시에 두 번 호출한 뒤 둘 다 settle시킨다
+      const [first, second] = await Promise.allSettled([
+        service.nextTurn(HOST, DEBATE_ID),
+        service.nextTurn(HOST, DEBATE_ID),
+      ]);
+
+      // 직렬화 덕분에 첫 호출이 advance를 마친 뒤에야 두 번째 호출이 검증을 수행하므로,
+      // 두 번째 호출 시점엔 이미 발언자가 바뀌어 NOT_YOUR_TURN으로 거부된다
+      expect(first.status).toBe('fulfilled');
+      expect(second.status).toBe('rejected');
+      if (second.status === 'rejected') {
+        expect(second.reason).toMatchObject({
+          appError: DebateErrorCode.NOT_YOUR_TURN,
+        });
+      }
+
+      expect(debate.currentTurn).toBe(DebateTurn.OPENING);
+      expect(debate.currentSpeakerId).toBe(OPPONENT);
+      expect(publisher.emitTurnChanged).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('스테일 타이머 가드', () => {
+    let staleService: DebateRoomService;
+    let staleDebateRepository: { findOneBy: jest.Mock; save: jest.Mock };
+    let staleCommunitiesService: { findOneOrThrow: jest.Mock };
+    let stalePublisher: DebateEventsPublisher & { emitTurnChanged: jest.Mock };
+    let mockTimerService: {
+      schedule: jest.Mock<void, [string, number, () => void]>;
+      cancel: jest.Mock<void, [string]>;
+      has: jest.Mock<boolean, [string]>;
+    };
+
+    // 실제 DebateTimerService(setTimeout 기반)로는 스테일 콜백 발화 시점을 결정적으로 제어할 수
+    // 없으므로, 이 describe에서만 schedule에 넘겨진 콜백을 직접 꺼내 호출할 수 있는 목으로 대체한다.
+    beforeEach(async () => {
+      mockTimerService = {
+        schedule: jest.fn<void, [string, number, () => void]>(),
+        cancel: jest.fn<void, [string]>(),
+        has: jest.fn<boolean, [string]>().mockReturnValue(false),
+      };
+      staleDebateRepository = {
+        findOneBy: jest.fn(),
+        save: jest.fn((entity: Debate) => Promise.resolve(entity)),
+      };
+      staleCommunitiesService = { findOneOrThrow: jest.fn() };
+      stalePublisher = {
+        emitTurnChanged: jest.fn(),
+        emitDebateRequested: jest.fn(),
+        emitDebateRequestAccepted: jest.fn(),
+        emitDebateRequestRejected: jest.fn(),
+      };
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          DebateRoomService,
+          {
+            provide: getRepositoryToken(Debate),
+            useValue: staleDebateRepository,
+          },
+          {
+            provide: getRepositoryToken(DebateMessage),
+            useValue: { create: jest.fn(), save: jest.fn() },
+          },
+          {
+            provide: MemberCommunitiesService,
+            useValue: { findOne: jest.fn() },
+          },
+          { provide: CommunitiesService, useValue: staleCommunitiesService },
+          { provide: DebateTimerService, useValue: mockTimerService },
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string) =>
+                key === 'DEBATE_STARTING_SECONDS' ? 10 : 180,
+              ),
+            },
+          },
+        ],
+      }).compile();
+
+      staleService = module.get<DebateRoomService>(DebateRoomService);
+      staleService.bindPublisher(stalePublisher);
+      staleCommunitiesService.findOneOrThrow.mockResolvedValue({
+        debateRoundCount: 2,
+      });
+    });
+
+    it('이미 지난 슬롯을 향해 뒤늦게 발화한 타이머 콜백은 턴을 전환시키지 않는다', async () => {
+      const debate = buildDebate({
+        currentTurn: DebateTurn.OPENING,
+        currentSpeakerId: HOST,
+      });
+      staleDebateRepository.findOneBy.mockResolvedValue(debate);
+
+      // OPENING(host)→OPENING(opponent) 전환 시 예약된 타이머 콜백을 캡처해둔다(스테일 콜백이 될 것)
+      await staleService.nextTurn(HOST, DEBATE_ID);
+      expect(debate.currentTurn).toBe(DebateTurn.OPENING);
+      expect(debate.currentSpeakerId).toBe(OPPONENT);
+      expect(mockTimerService.schedule).toHaveBeenCalledTimes(1);
+      const staleCallback = mockTimerService.schedule.mock.calls[0][2];
+
+      // 스테일 콜백이 발화하기 전에 수동 next_turn으로 슬롯이 이미 바뀐다
+      await staleService.nextTurn(OPPONENT, DEBATE_ID);
+      expect(debate.currentTurn).toBe(DebateTurn.FREETALKING);
+      expect(debate.currentSpeakerId).toBe(HOST);
+
+      stalePublisher.emitTurnChanged.mockClear();
+      staleDebateRepository.save.mockClear();
+
+      // 캡처해둔 스테일 콜백을 뒤늦게 호출한다: OPENING/OPPONENT 슬롯을 기대하지만 현재는
+      // FREETALKING/HOST이므로 handleTurnTimeout이 조기 반환해야 한다
+      staleCallback();
+      await jest.advanceTimersByTimeAsync(0);
+
+      expect(staleDebateRepository.save).not.toHaveBeenCalled();
+      expect(stalePublisher.emitTurnChanged).not.toHaveBeenCalled();
+      expect(debate.currentTurn).toBe(DebateTurn.FREETALKING);
+      expect(debate.currentSpeakerId).toBe(HOST);
+    });
+  });
 });
