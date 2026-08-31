@@ -53,7 +53,7 @@ describe('DebatesService', () => {
       opponentNickname: '상대',
       currentTurn: DebateTurn.PENDING,
       currentSpeakerId: null,
-      freetalkingRound: 0,
+      freetalkingRounds: 0,
       winnerId: null,
       solution: null,
       status: ResourceStatus.NORMAL,

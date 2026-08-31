@@ -60,7 +60,7 @@ export class Debate extends SoftDeletableEntity {
 
   // 자유발언 단계 진행 왕복 수 (host→opponent 한 번 오가면 1 증가)
   @Column({ type: 'int', default: 0 })
-  freetalkingRound: number;
+  freetalkingRounds: number;
 
   @Column({ type: 'uuid', nullable: true })
   winnerId: string | null;
@@ -92,7 +92,7 @@ export class Debate extends SoftDeletableEntity {
     debate.opponentNickname = params.opponentNickname;
     debate.currentTurn = DebateTurn.PENDING;
     debate.currentSpeakerId = null;
-    debate.freetalkingRound = 0;
+    debate.freetalkingRounds = 0;
     debate.winnerId = null;
     debate.solution = null;
     return debate;
@@ -111,7 +111,7 @@ export class Debate extends SoftDeletableEntity {
       opponentNickname,
       currentTurn: DebateTurn.PENDING,
       currentSpeakerId: null,
-      freetalkingRound: 0,
+      freetalkingRounds: 0,
       winnerId: null,
       solution: null,
       status: ResourceStatus.NORMAL,

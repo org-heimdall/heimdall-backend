@@ -42,7 +42,7 @@ interface DebateRuntimeState {
 interface TurnSlot {
   turn: DebateTurn;
   speakerId: string | null;
-  freetalkingRound: number;
+  freetalkingRounds: number;
 }
 
 // 서비스 내부 반환 타입: roomName은 실제 socket.io room 이름(debateRoomName() 결과).
@@ -158,7 +158,7 @@ export class DebateRoomService {
     const slot: TurnSlot = {
       turn: DebateTurn.STARTING,
       speakerId: null,
-      freetalkingRound: debate.freetalkingRound,
+      freetalkingRounds: debate.freetalkingRounds,
     };
 
     this.timerService.schedule(debate.id, ms, () => {
@@ -257,7 +257,7 @@ export class DebateRoomService {
       if (
         debate.currentTurn !== expected.turn ||
         debate.currentSpeakerId !== expected.speakerId ||
-        debate.freetalkingRound !== expected.freetalkingRound
+        debate.freetalkingRounds !== expected.freetalkingRounds
       ) {
         return;
       }
@@ -292,7 +292,7 @@ export class DebateRoomService {
 
     debate.currentTurn = next.turn;
     debate.currentSpeakerId = next.speakerId;
-    debate.freetalkingRound = next.freetalkingRound;
+    debate.freetalkingRounds = next.freetalkingRounds;
 
     const state = this.getOrCreateState(debate.id);
     state.turnUsedChars = 0;
@@ -308,7 +308,7 @@ export class DebateRoomService {
       const slot: TurnSlot = {
         turn: next.turn,
         speakerId: next.speakerId,
-        freetalkingRound: next.freetalkingRound,
+        freetalkingRounds: next.freetalkingRounds,
       };
       this.timerService.schedule(debate.id, ms, () => {
         void this.handleTurnTimeout(debate.id, slot);
@@ -332,13 +332,13 @@ export class DebateRoomService {
   private computeNextTurn(
     debate: Debate,
     debateRoundCount: number,
-  ): { turn: DebateTurn; speakerId: string | null; freetalkingRound: number } {
+  ): { turn: DebateTurn; speakerId: string | null; freetalkingRounds: number } {
     const {
       currentTurn,
       currentSpeakerId,
       hostId,
       opponentId,
-      freetalkingRound,
+      freetalkingRounds,
     } = debate;
     const isHostSpeaking = currentSpeakerId === hostId;
 
@@ -347,7 +347,7 @@ export class DebateRoomService {
         return {
           turn: DebateTurn.OPENING,
           speakerId: hostId,
-          freetalkingRound: 0,
+          freetalkingRounds: 0,
         };
 
       case DebateTurn.OPENING:
@@ -355,20 +355,20 @@ export class DebateRoomService {
           return {
             turn: DebateTurn.OPENING,
             speakerId: opponentId,
-            freetalkingRound: 0,
+            freetalkingRounds: 0,
           };
         }
         return debateRoundCount > 0
           ? {
               turn: DebateTurn.FREETALKING,
               speakerId: hostId,
-              freetalkingRound: 1,
+              freetalkingRounds: 1,
             }
           : {
               // 실제로는 없는 케이스
               turn: DebateTurn.CLOSING,
               speakerId: hostId,
-              freetalkingRound: 0,
+              freetalkingRounds: 0,
             };
 
       case DebateTurn.FREETALKING:
@@ -376,31 +376,31 @@ export class DebateRoomService {
           return {
             turn: DebateTurn.FREETALKING,
             speakerId: opponentId,
-            freetalkingRound,
+            freetalkingRounds,
           };
         }
-        return freetalkingRound < debateRoundCount
+        return freetalkingRounds < debateRoundCount
           ? {
               turn: DebateTurn.FREETALKING,
               speakerId: hostId,
-              freetalkingRound: freetalkingRound + 1,
+              freetalkingRounds: freetalkingRounds + 1,
             }
-          : { turn: DebateTurn.CLOSING, speakerId: hostId, freetalkingRound };
+          : { turn: DebateTurn.CLOSING, speakerId: hostId, freetalkingRounds };
 
       case DebateTurn.CLOSING:
         return isHostSpeaking
           ? {
               turn: DebateTurn.CLOSING,
               speakerId: opponentId,
-              freetalkingRound,
+              freetalkingRounds,
             }
-          : { turn: DebateTurn.JUDGING, speakerId: null, freetalkingRound };
+          : { turn: DebateTurn.JUDGING, speakerId: null, freetalkingRounds };
 
       case DebateTurn.JUDGING:
       case DebateTurn.FINISHED:
       default:
         // TODO: AI 판정 연동 후 JUDGING → FINISHED 전환 구현
-        return { turn: currentTurn, speakerId: null, freetalkingRound };
+        return { turn: currentTurn, speakerId: null, freetalkingRounds };
     }
   }
 
