@@ -28,9 +28,8 @@ const SPEAKING_TURNS: ReadonlySet<DebateTurn> = new Set([
   DebateTurn.CLOSING,
 ]);
 
-// 서버 프로세스 1대 전제의 인메모리 런타임 상태. 스케일아웃 시 이 Map을 Redis 등 공유 스토어로
-// 옮기고 DebateTimerService도 분산 스케줄러로 교체해야 한다(참여자 join 여부, 턴 발언 카운터는
-// DB 왕복 없이 소켓 이벤트마다 확인해야 하므로 in-memory로 둔다).
+// 서버 1대 전제의 인메모리 런타임 상태. 스케일아웃 시 이 Map을 Redis 등 공유 스토어로,
+// DebateTimerService도 분산 스케줄러로 교체해야 한다.
 interface DebateRuntimeState {
   // memberId → 현재 연결 수. 동일 회원이 여러 탭으로 접속할 수 있어 boolean/Set이 아닌 카운트로
   // 관리한다: 탭 하나가 끊겨도 다른 탭이 남아 있으면 여전히 "입장 중"이어야 한다.
@@ -45,9 +44,8 @@ interface TurnSlot {
   freetalkingRounds: number;
 }
 
-// 서비스 내부 반환 타입: roomName은 실제 socket.io room 이름(debateRoomName() 결과).
-// isDebater는 게이트웨이가 disconnect 시 handleDebaterDisconnect 정리 대상 소켓인지 판단하는 데 쓴다
-// (관전자는 연결 수 추적 대상이 아니므로 false).
+// 서비스 내부 반환 타입: roomName은 socket.io room 이름. isDebater는 게이트웨이가
+// disconnect 시 handleDebaterDisconnect 정리 대상인지 판단하는 데 쓴다.
 export interface JoinResult {
   roomName: string;
   isDebater: boolean;
@@ -131,9 +129,8 @@ export class DebateRoomService {
     return { roomName: debateRoomName(debateId), isDebater: true };
   }
 
-  // 토론자 소켓 하나가 끊겼을 때 연결 수를 감소시킨다(0이 되면 제거). 이미 시작된 STARTING
-  // 카운트다운·턴 타이머는 취소하지 않는다 — 부재 중에도 턴이 흘러가는 것이 정해진 동작이고,
-  // 이 정리는 "양측 입장 전 카운트다운 시작 방지" 판정을 정확하게 만들기 위한 것이다.
+  // 토론자 소켓 하나가 끊겼을 때 연결 수를 감소시킨다(0이면 제거). 이미 시작된 타이머는
+  // 취소하지 않는다 — "양측 입장 전 카운트다운 방지" 판정을 정확히 하기 위한 정리다.
   handleDebaterDisconnect(memberId: string, debateId: string): void {
     const state = this.runtimeStates.get(debateId);
     if (!state) {
@@ -187,9 +184,8 @@ export class DebateRoomService {
       throw new GeneralException(DebateErrorCode.INVALID_PHASE);
     }
 
-    // STARTING은 발언권 없는 자유 인사 시간이라 발언자(currentSpeakerId)/예산 규칙이 아닌
-    // 별도 검증(토론자 여부만)을 탄다. 단, 양측이 모두 입장하기 전(카운트다운 시작 전)에는
-    // 인사 발언도 허용하지 않는다.
+    // STARTING은 발언권 없는 자유 인사 시간이라 별도 검증(토론자 여부만)을 탄다.
+    // 단, 양측이 모두 입장하기 전(카운트다운 시작 전)에는 인사 발언도 허용하지 않는다.
     if (turn === DebateTurn.STARTING) {
       if (!this.bothDebatersJoined(debate)) {
         throw new GeneralException(DebateErrorCode.INVALID_PHASE);
@@ -211,9 +207,8 @@ export class DebateRoomService {
     return this.saveMessage(debate, memberId, msg, turn);
   }
 
-  // STARTING 발언 처리: 발언권 순서가 없으므로 host/opponent 여부만 확인한다(관전자는 NOT_YOUR_TURN).
-  // 턴 누적 1000자 예산은 발언권 있는 턴(SPEAKING_TURNS)의 규칙이라 STARTING에는 적용하지 않는다
-  // (메시지 1건당 1000자 제한은 DTO의 @MaxLength가 이미 보장한다).
+  // STARTING 발언 처리: 발언권 순서 없이 host/opponent 여부만 확인한다(관전자는 거부).
+  // 턴 누적 글자 예산은 발언권 있는 턴의 규칙이라 STARTING에는 적용하지 않는다.
   private async sendStartingGreeting(
     debate: Debate,
     memberId: string,
@@ -325,10 +320,8 @@ export class DebateRoomService {
     this.publisher?.emitTurnChanged(debateRoomName(debate.id), payload);
   }
 
-  // 슬롯 시퀀스: STARTING → OPENING(host)→OPENING(opp)
-  //   → [FREETALKING(host)→FREETALKING(opp)] × community.debateRoundCount
-  //   → CLOSING(host)→CLOSING(opp) → JUDGING(발언자 없음, 타이머 없음).
-  // JUDGING 이후 AI 판정 연동은 후속 작업 TODO.
+  // 슬롯 시퀀스: STARTING → OPENING → FREETALKING(× debateRoundCount) → CLOSING
+  // → JUDGING. JUDGING 이후 AI 판정 연동은 후속 작업 TODO.
   private computeNextTurn(
     debate: Debate,
     debateRoundCount: number,

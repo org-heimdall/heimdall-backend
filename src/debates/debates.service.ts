@@ -39,9 +39,8 @@ export class DebatesService {
     this.publisher = publisher;
   }
 
-  // 토론 요청 생성: 커뮤니티 호스트만 가능하며, 상대 토론자는 해당 커뮤니티 멤버이면서
-  // 기조발언을 작성했어야 한다. 통과 시 PENDING 상태로 저장하고 상대에게 소켓으로 알린다.
-  // 실제 토론 시작은 상대가 accept()로 수락해야 이루어진다.
+  // 토론 요청 생성: 호스트만 가능, 상대는 커뮤니티 멤버 + 기조발언 필요.
+  // PENDING으로 저장 후 상대에게 소켓 알림, 실제 시작은 accept() 수락 시.
   async create(
     dto: CreateDebateDto,
     hostId: string,
@@ -99,11 +98,8 @@ export class DebatesService {
       this.membersService.findOneOrThrow(opponentId),
     ]);
 
-    // 거절(soft delete)된 (community, host)의 PENDING 행이 있으면 조건부 UPDATE로 원자적으로 되살린다.
-    // status != NORMAL 조건이 WHERE에 있어 동시 요청 중 한 쪽만 점유에 성공하고,
-    // 진 쪽은 아래 insert 경로의 부분 유니크 인덱스 위반으로 REQUEST_ALREADY_PENDING 처리된다.
-    // (참고: status 필터 없이 조회하던 기존 방식은 NORMAL PENDING 행까지 덮어쓸 잠재 위험이
-    // 있었는데, Not(NORMAL) 조건이 그 문제도 함께 막는다.)
+    // 거절된 PENDING 행을 조건부 UPDATE로 되살린다. status != NORMAL 조건 덕에 동시
+    // 요청 중 한쪽만 점유하고, 진 쪽은 아래 insert의 유니크 인덱스 위반으로 처리된다.
     const reopened = await this.debateRepository.update(
       {
         communityId,
@@ -124,9 +120,8 @@ export class DebatesService {
       if (revived) {
         return this.emitCreated(revived);
       }
-      // 점유 직후 상대가 거절한 극단 케이스: 아래 신규 요청 insert 경로로 폴스루한다.
-      // 되살린 행은 여전히 current_turn=PENDING이라 insert는 부분 유니크 인덱스 위반으로
-      // 실패하고, 아래 catch에서 REQUEST_ALREADY_PENDING으로 처리된다.
+      // 점유 직후 상대가 거절한 극단 케이스: 아래 insert 경로로 폴스루한다. 되살린 행이
+      // 여전히 PENDING이라 유니크 인덱스 위반 → catch에서 REQUEST_ALREADY_PENDING 처리.
     }
 
     const debate = Debate.open({
@@ -141,9 +136,8 @@ export class DebatesService {
     try {
       saved = await this.debateRepository.save(debate);
     } catch (error) {
-      // 동시 요청 레이스: 활성 검사와 save 사이에 다른 요청이 먼저 PENDING 슬롯을 차지하면
-      // 부분 유니크 인덱스가 막는다. 이미 unique_violation으로 분류가 끝난 기대 가능한
-      // 에러이므로 cause 없이 던진다.
+      // 동시 요청 레이스: 활성 검사와 save 사이 선점은 부분 유니크 인덱스가 막는다.
+      // 이미 분류가 끝난 기대 가능한 에러이므로 cause 없이 던진다.
       const constraint = getUniqueViolationConstraint(error);
       if (constraint === DEBATE_PENDING_REQUEST_UNIQUE) {
         throw new GeneralException(DebateErrorCode.REQUEST_ALREADY_PENDING);
@@ -180,9 +174,8 @@ export class DebatesService {
       throw new GeneralException(DebateErrorCode.REQUEST_NOT_PENDING);
     }
 
-    // 사전 검증과 UPDATE 사이에 다른 요청이 먼저 전이했을 레이스: 조건부 UPDATE로 한 쪽만
-    // 성공시킨다. affected가 0이면 이미 다른 요청(수락/거절)이 먼저 전이시킨 것이므로
-    // 재조회 없이 REQUEST_NOT_PENDING으로 처리한다.
+    // 사전 검증과 UPDATE 사이 레이스 대비: 조건부 UPDATE로 한쪽만 성공시킨다.
+    // affected가 0이면 이미 다른 요청이 전이시킨 것이므로 REQUEST_NOT_PENDING 처리.
     const transition = await this.debateRepository.update(
       {
         id: debateId,

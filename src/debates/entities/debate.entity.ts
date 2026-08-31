@@ -21,11 +21,8 @@ export enum DebateTurn {
   FINISHED = 'FINISHED',
 }
 
-/**
- * (community, host)당 PENDING 요청은 하나만 존재할 수 있는 부분 유니크 인덱스 이름.
- * 자동 생성 이름(IDX_<해시>)은 코드에서 참조할 수 없어 명시적으로 부여한다.
- * 서비스가 unique 위반을 이 이름으로 분류해 동시 요청 레이스를 REQUEST_ALREADY_PENDING으로 처리한다.
- */
+// (community, host)당 PENDING 요청 1개 제약의 부분 유니크 인덱스 이름. 코드에서 참조
+// 가능하도록 명시적으로 부여했고, 서비스가 이 이름으로 unique 위반을 분류한다.
 export const DEBATE_PENDING_REQUEST_UNIQUE = 'UQ_debate_community_host_pending';
 
 @Entity('debate')
