@@ -39,6 +39,7 @@ export class DebatesController {
   @ApiErrorResponses(
     CommunityErrorCode.NOT_FOUND,
     DebateErrorCode.NOT_HOST,
+    DebateErrorCode.SELF_DEBATE_FORBIDDEN,
     DebateErrorCode.OPPONENT_NOT_IN_COMMUNITY,
     DebateErrorCode.OPPONENT_KEYNOTE_REQUIRED,
     DebateErrorCode.REQUEST_ALREADY_PENDING,

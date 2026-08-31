@@ -123,6 +123,20 @@ describe('DebatesService', () => {
       expect(debateRepository.save).not.toHaveBeenCalled();
     });
 
+    it('상대 토론자가 자기 자신이면 SELF_DEBATE_FORBIDDEN 에러를 던진다', async () => {
+      communitiesService.findOneOrThrow.mockResolvedValue({
+        hostId: 'host-uuid',
+      });
+
+      await expect(
+        service.create({ ...dto, opponentId: 'host-uuid' }, 'host-uuid'),
+      ).rejects.toMatchObject({
+        appError: DebateErrorCode.SELF_DEBATE_FORBIDDEN,
+      });
+      expect(memberCommunitiesService.findOne).not.toHaveBeenCalled();
+      expect(debateRepository.save).not.toHaveBeenCalled();
+    });
+
     it('상대가 커뮤니티 멤버가 아니면 OPPONENT_NOT_IN_COMMUNITY 에러를 던진다', async () => {
       communitiesService.findOneOrThrow.mockResolvedValue({
         hostId: 'host-uuid',

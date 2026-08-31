@@ -88,4 +88,10 @@ export const DebateErrorCode = {
     title: 'Request Already Pending',
     detail: '아직 응답을 기다리는 토론 요청이 있습니다.',
   },
+  SELF_DEBATE_FORBIDDEN: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'DEBATE.SELF_DEBATE_FORBIDDEN',
+    title: 'Self Debate Forbidden',
+    detail: '자기 자신에게는 토론을 요청할 수 없습니다.',
+  },
 } as const satisfies Record<string, AppError>;

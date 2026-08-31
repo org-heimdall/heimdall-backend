@@ -51,6 +51,10 @@ export class DebatesService {
     if (community.hostId !== hostId) {
       throw new GeneralException(DebateErrorCode.NOT_HOST);
     }
+    // 자기 자신은 상대 토론자로 지정 불가.
+    if (opponentId === hostId) {
+      throw new GeneralException(DebateErrorCode.SELF_DEBATE_FORBIDDEN);
+    }
 
     const opponentMembership = await this.memberCommunitiesService.findOne(
       opponentId,
