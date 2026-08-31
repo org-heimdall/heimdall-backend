@@ -12,15 +12,18 @@ import {
   DebateEventsPublisher,
   TurnChangedPayload,
 } from './debate-events-publisher.interface';
-import { DebateMessage } from '../entities/debate-message.entity';
+import {
+  DebateMessage,
+  DebateMessageTurn,
+  isDebateMessageTurn,
+} from '../entities/debate-message.entity';
 import { Debate, DebateTurn } from '../entities/debate.entity';
 import { DebateErrorCode } from '../exceptions/debate-error-code';
 
 // 턴당 발언 가능한 누적 글자 수
 const MESSAGE_CHAR_BUDGET = 1000;
-// 발언권(차례)이 있는 단계. STARTING도 타이머·endsAt은 있지만 발언권 없는 자유 발언
-// 시간이라 이 집합에 넣지 않고 sendMessage에서 별도 분기로 처리한다(STARTING 전용 검증 참고).
-// JUDGING/FINISHED는 타이머도 발언권도 없다.
+// 발언 차례(currentSpeakerId)와 턴 타이머가 있는 단계. STARTING도 카운트다운은 있지만 차례 없는
+// 자유 인사 시간이라 제외하고 startStartingCountdown이 별도로 예약한다. JUDGING/FINISHED는 타이머도 발언권도 없다.
 const SPEAKING_TURNS: ReadonlySet<DebateTurn> = new Set([
   DebateTurn.OPENING,
   DebateTurn.FREETALKING,
@@ -33,7 +36,6 @@ const SPEAKING_TURNS: ReadonlySet<DebateTurn> = new Set([
 interface DebateRuntimeState {
   joinedDebaterIds: Set<string>;
   turnUsedChars: number;
-  turnSeq: number;
 }
 
 // 서비스 내부 반환 타입: socketRoom은 실제 socket.io room 이름(debateRoomName() 결과)
@@ -146,16 +148,17 @@ export class DebateRoomService {
     msg: string,
   ): Promise<SendMessageResult> {
     const debate = await this.getDebateOrThrow(debateId);
+    const turn = debate.currentTurn;
+    if (!isDebateMessageTurn(turn)) {
+      throw new GeneralException(DebateErrorCode.INVALID_PHASE);
+    }
 
     // STARTING은 발언권 없는 자유 인사 시간이라 발언자(currentSpeakerId)/예산 규칙이 아닌
     // 별도 검증(토론자 여부만)을 탄다.
-    if (debate.currentTurn === DebateTurn.STARTING) {
+    if (turn === DebateTurn.STARTING) {
       return this.sendStartingGreeting(debate, memberId, msg);
     }
 
-    if (!SPEAKING_TURNS.has(debate.currentTurn)) {
-      throw new GeneralException(DebateErrorCode.INVALID_PHASE);
-    }
     if (debate.currentSpeakerId !== memberId) {
       throw new GeneralException(DebateErrorCode.NOT_YOUR_TURN);
     }
@@ -167,24 +170,12 @@ export class DebateRoomService {
     }
     state.turnUsedChars = usedChars;
 
-    const message = this.debateMessageRepository.create({
-      memberId,
-      debateId,
-      body: msg,
-      debateTurn: state.turnSeq,
-    });
-    const saved = await this.debateMessageRepository.save(message);
-
-    return {
-      debateMessageId: saved.id,
-      senderId: memberId,
-      senderNickname: this.resolveNickname(debate, memberId) ?? '',
-    };
+    return this.saveMessage(debate, memberId, msg, turn);
   }
 
   // STARTING 발언 처리: 발언권 순서가 없으므로 host/opponent 여부만 확인한다(관전자는 NOT_YOUR_TURN).
   // 턴 누적 1000자 예산은 발언권 있는 턴(SPEAKING_TURNS)의 규칙이라 STARTING에는 적용하지 않는다
-  // (메시지 1건당 1000자 제한은 DTO의 @MaxLength가 이미 보장한다). turnSeq는 STARTING 동안 그대로(0)다.
+  // (메시지 1건당 1000자 제한은 DTO의 @MaxLength가 이미 보장한다).
   private async sendStartingGreeting(
     debate: Debate,
     memberId: string,
@@ -194,20 +185,7 @@ export class DebateRoomService {
       throw new GeneralException(DebateErrorCode.NOT_YOUR_TURN);
     }
 
-    const state = this.getOrCreateState(debate.id);
-    const message = this.debateMessageRepository.create({
-      memberId,
-      debateId: debate.id,
-      body: msg,
-      debateTurn: state.turnSeq,
-    });
-    const saved = await this.debateMessageRepository.save(message);
-
-    return {
-      debateMessageId: saved.id,
-      senderId: memberId,
-      senderNickname: this.resolveNickname(debate, memberId) ?? '',
-    };
+    return this.saveMessage(debate, memberId, msg, DebateTurn.STARTING);
   }
 
   // 발언 차례인 사람의 명시적 턴 넘기기. 검증 후 상태머신을 한 칸 진행한다.
@@ -245,9 +223,6 @@ export class DebateRoomService {
 
     const state = this.getOrCreateState(debate.id);
     state.turnUsedChars = 0;
-    if (SPEAKING_TURNS.has(next.turn)) {
-      state.turnSeq += 1;
-    }
 
     await this.debateRepository.save(debate);
 
@@ -350,6 +325,27 @@ export class DebateRoomService {
     }
   }
 
+  // 메시지를 현재 단계와 함께 저장하고 브로드캐스트용 결과를 만든다.
+  private async saveMessage(
+    debate: Debate,
+    memberId: string,
+    body: string,
+    turn: DebateMessageTurn,
+  ): Promise<SendMessageResult> {
+    const message = this.debateMessageRepository.create({
+      memberId,
+      debateId: debate.id,
+      body,
+      debateTurn: turn,
+    });
+    const saved = await this.debateMessageRepository.save(message);
+    return {
+      debateMessageId: saved.id,
+      senderId: memberId,
+      senderNickname: this.resolveNickname(debate, memberId) ?? '',
+    };
+  }
+
   private isDebater(debate: Debate, memberId: string): boolean {
     return debate.hostId === memberId || debate.opponentId === memberId;
   }
@@ -373,7 +369,7 @@ export class DebateRoomService {
   private getOrCreateState(debateId: string): DebateRuntimeState {
     let state = this.runtimeStates.get(debateId);
     if (!state) {
-      state = { joinedDebaterIds: new Set(), turnUsedChars: 0, turnSeq: 0 };
+      state = { joinedDebaterIds: new Set(), turnUsedChars: 0 };
       this.runtimeStates.set(debateId, state);
     }
     return state;

@@ -241,7 +241,7 @@ describe('DebateRoomService', () => {
       expect(result.senderId).toBe(OPPONENT);
       expect(result.senderNickname).toBe('상대');
       expect(debateMessageRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ debateTurn: 0 }),
+        expect.objectContaining({ debateTurn: DebateTurn.STARTING }),
       );
     });
 
@@ -297,6 +297,20 @@ describe('DebateRoomService', () => {
       ).rejects.toMatchObject({
         appError: DebateErrorCode.MESSAGE_BUDGET_EXCEEDED,
       });
+    });
+
+    it('발언 메시지에는 현재 단계(DebateTurn)가 기록된다', async () => {
+      const debate = buildDebate({
+        currentTurn: DebateTurn.OPENING,
+        currentSpeakerId: HOST,
+      });
+      debateRepository.findOneBy.mockResolvedValue(debate);
+
+      await service.sendMessage(HOST, DEBATE_ID, '안녕하세요');
+
+      expect(debateMessageRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ debateTurn: DebateTurn.OPENING }),
+      );
     });
   });
 
