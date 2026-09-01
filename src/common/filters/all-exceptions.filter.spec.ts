@@ -7,7 +7,7 @@ describe('AllExceptionsFilter', () => {
   const filter = new AllExceptionsFilter();
 
   const createHost = (url = '/members') => {
-    const json = jest.fn();
+    const json = jest.fn<void, [Record<string, unknown>]>();
     const type = jest.fn().mockReturnValue({ json });
     const status = jest.fn().mockReturnValue({ type });
     const host = {
@@ -51,7 +51,7 @@ describe('AllExceptionsFilter', () => {
 
     filter.catch(exception, host);
 
-    const body = json.mock.calls[0][0] as Record<string, unknown>;
+    const body = json.mock.calls[0][0];
     expect(body).toHaveProperty('additionalInfo', { field: 'bad' });
     expect(body).not.toHaveProperty('cause');
     expect(JSON.stringify(body)).not.toContain('internal driver detail');

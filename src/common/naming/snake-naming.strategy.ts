@@ -31,6 +31,8 @@ export class SnakeNamingStrategy
     firstTableName: string,
     secondTableName: string,
     firstPropertyName: string,
+    // NamingStrategyInterface가 요구하는 파라미터이지만 조인 테이블명 조합에는 쓰지 않는다.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _secondPropertyName: string,
   ): string {
     return snakeCase(
