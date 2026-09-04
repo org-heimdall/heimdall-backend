@@ -8,6 +8,7 @@ import { CommunitiesModule } from './communities/communities.module';
 import { MemberCommunitiesModule } from './member-communities/member-communities.module';
 import { MembersModule } from './members/members.module';
 import { DebatesModule } from './debates/debates.module';
+import { JudgeModule } from './judge/judge.module';
 import { SeedModule } from './seed/seed.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -39,6 +40,20 @@ import * as Joi from 'joi';
         JWT_REFRESH_EXPIRES_IN: Joi.string().default('14d'),
 
         GOOGLE_CLIENT_ID: Joi.string().required(),
+
+        // 토론 판정용 OpenAI 설정. 키를 무조건 required로 두면 키가 없는 팀원의
+        // 로컬 부팅이 전부 깨지므로 production에서만 필수로 둔다.
+        OPENAI_API_KEY: Joi.string().when('NODE_ENV', {
+          is: 'production',
+          then: Joi.required(),
+          otherwise: Joi.string().allow('').optional(),
+        }),
+        OPENAI_MODEL: Joi.string().default('gpt-5.6-luna'),
+        OPENAI_TIMEOUT_MS: Joi.number().default(60000),
+        OPENAI_MAX_RETRIES: Joi.number().default(2),
+
+        // 비공개 대화 시드 파일 경로(저장소 밖). 없으면 대화 시딩만 건너뛰므로 optional이다.
+        SEED_DEBATE_DATA_PATH: Joi.string().optional(),
       }),
     }),
     TypeOrmModule.forRootAsync({
@@ -60,6 +75,7 @@ import * as Joi from 'joi';
     MemberCommunitiesModule,
     MembersModule,
     DebatesModule,
+    JudgeModule,
     SeedModule,
   ],
   controllers: [AppController],

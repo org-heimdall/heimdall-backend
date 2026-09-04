@@ -55,5 +55,9 @@ pids
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
+# 비공개 시드 데이터
+/seed-data/
+*.seed.json
+
 # Claude Code
 CLAUDE.md

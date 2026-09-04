@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { AppError } from '../common/exceptions/app-error.interface';
 import { AuthSessionService } from '../auth/auth-session.service';
@@ -41,6 +41,8 @@ const DUMMY_PASSWORD_HASH =
 
 @Injectable()
 export class MembersService {
+  private readonly logger = new Logger(MembersService.name);
+
   constructor(
     @InjectRepository(Member)
     private readonly memberRepository: Repository<Member>,
@@ -209,6 +211,36 @@ export class MembersService {
       }
       throw error;
     }
+  }
+
+  /**
+   * 위반 판정에 따른 신뢰도 차감.
+   * 호출자(판정)가 같은 트랜잭션으로 묶을 수 있도록 manager를 선택적으로 받는다.
+   * 탈퇴 회원은 조용히 건너뛴다 — 백그라운드 판정 중이라 여기서 던지면 판정 전체가 실패한다.
+   */
+  async deductSocialCredit(
+    memberId: string,
+    amount: number,
+    manager?: EntityManager,
+  ): Promise<void> {
+    if (amount <= 0) {
+      return;
+    }
+
+    const repository = manager?.getRepository(Member) ?? this.memberRepository;
+    const member = await repository.findOneBy({
+      id: memberId,
+      status: ResourceStatus.NORMAL,
+    });
+    if (!member) {
+      this.logger.warn(
+        `신뢰도 차감 대상 회원을 찾을 수 없음: memberId=${memberId}`,
+      );
+      return;
+    }
+
+    member.deductSocialCredit(amount);
+    await repository.save(member);
   }
 
   // id로 회원을 조회하고, 없으면 GeneralException(NOT_FOUND)을 던진다.

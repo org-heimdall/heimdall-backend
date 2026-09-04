@@ -4,7 +4,11 @@ import { In, QueryFailedError } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
-import { MEMBER_EMAIL_UNIQUE, Member } from './entities/member.entity';
+import {
+  INITIAL_SOCIAL_CREDIT,
+  MEMBER_EMAIL_UNIQUE,
+  Member,
+} from './entities/member.entity';
 import { MemberOAuthAccount } from './entities/member-oauth-account.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
 import { OAuthProviderType } from './members.enums';
@@ -551,6 +555,67 @@ describe('MembersService', () => {
         id: In(['id-1', 'id-2']),
         status: ResourceStatus.NORMAL,
       });
+    });
+  });
+
+  describe('deductSocialCredit', () => {
+    const buildMemberWithCredit = async (
+      socialCredit: number,
+    ): Promise<Member> => Object.assign(await buildMember(), { socialCredit });
+
+    it('차감량만큼 신뢰도를 줄여 저장한다', async () => {
+      const member = await buildMemberWithCredit(100);
+      repository.findOneBy.mockResolvedValue(member);
+
+      await service.deductSocialCredit('member-uuid', 8);
+
+      expect(member.socialCredit).toBe(92);
+      expect(repository.save).toHaveBeenCalledWith(member);
+    });
+
+    it('차감량이 0이면 조회조차 하지 않는다', async () => {
+      await service.deductSocialCredit('member-uuid', 0);
+
+      expect(repository.findOneBy).not.toHaveBeenCalled();
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    it('탈퇴한 회원은 조용히 건너뛴다', async () => {
+      // soft-delete된 회원은 status=NORMAL 필터에 걸려 조회되지 않는다.
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.deductSocialCredit('member-uuid', 8),
+      ).resolves.toBeUndefined();
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    it('트랜잭션 manager를 받으면 그 manager의 레포지토리로 저장한다', async () => {
+      const member = await buildMemberWithCredit(100);
+      const txRepository = {
+        findOneBy: jest.fn().mockResolvedValue(member),
+        save: jest.fn().mockResolvedValue(member),
+      };
+      const manager = { getRepository: jest.fn(() => txRepository) };
+
+      await service.deductSocialCredit('member-uuid', 3, manager as never);
+
+      expect(manager.getRepository).toHaveBeenCalledWith(Member);
+      expect(txRepository.save).toHaveBeenCalledWith(member);
+      // 판정 저장과 같은 트랜잭션에서 커밋되어야 하므로 기본 레포지토리를 쓰면 안 된다.
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('register', () => {
+    it('가입한 회원의 신뢰도는 만점에서 시작한다', () => {
+      const member = Member.register({
+        email: signUpDto.email,
+        password: 'hash',
+        nickname: signUpDto.nickname,
+      });
+
+      expect(member.socialCredit).toBe(INITIAL_SOCIAL_CREDIT);
     });
   });
 });

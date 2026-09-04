@@ -6,6 +6,7 @@ import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity
  * 서비스가 unique 위반을 제약 이름으로 분류하므로 엔티티와 분류기의 단일 출처가 된다.
  */
 export const MEMBER_EMAIL_UNIQUE = 'UQ_member_email';
+export const INITIAL_SOCIAL_CREDIT = 100;
 
 @Entity('member')
 @Unique(MEMBER_EMAIL_UNIQUE, ['email'])
@@ -32,13 +33,12 @@ export class Member extends SoftDeletableEntity {
   @Column({ type: 'varchar', nullable: true })
   profileImageUrl: string | null;
 
-  @Column({ type: 'double precision', default: 0 })
+  @Column({ type: 'double precision', default: INITIAL_SOCIAL_CREDIT })
   socialCredit: number;
 
   @Column({ type: 'double precision', default: 0 })
   rating: number;
 
-  // 가입 시 초기 상태 불변식(평판/신뢰도 0, 선택 필드는 null 정규화)을 강제하는 팩토리
   static register(params: {
     email: string;
     password: string | null;
@@ -54,7 +54,7 @@ export class Member extends SoftDeletableEntity {
     member.gender = params.gender ?? null;
     member.age = params.age ?? null;
     member.profileImageUrl = params.profileImageUrl ?? null;
-    member.socialCredit = 0;
+    member.socialCredit = INITIAL_SOCIAL_CREDIT;
     member.rating = 0;
     return member;
   }
@@ -76,6 +76,14 @@ export class Member extends SoftDeletableEntity {
   // 비밀번호 로그인을 쓸 수 있는 계정인지(소셜 전용 계정은 false)
   hasPassword(): boolean {
     return this.password !== null;
+  }
+
+  // 위반 판정에 따른 신뢰도 차감. 추이 관찰을 위해 하한선 없이 음수까지 허용(임시).
+  deductSocialCredit(amount: number): void {
+    if (amount <= 0) {
+      return;
+    }
+    this.socialCredit -= amount;
   }
 
   // 전달된 필드만 갱신한다(undefined는 미변경). 부분 수정 규칙을 엔티티가 소유
