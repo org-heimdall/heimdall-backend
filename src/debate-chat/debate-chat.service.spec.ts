@@ -1,57 +1,38 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { GeneralException } from '../common/exceptions/general.exception';
-import { Community } from '../communities/entities/community.entity';
 import { DebatesService } from '../debates/debates.service';
-import { Debate, DebateTurn } from '../debates/entities/debate.entity';
-import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
-import {
-  DEBATE_CHAT_STATE_STORE,
-  InMemoryDebateChatStateStore,
-} from './debate-chat-state.store';
-import { DebateChatConfig } from './debate-chat.config';
+import { DebateChatState, DebateTurnSchedule } from './debate-chat-state';
+import { DEBATE_CHAT_STATE_STORE } from './debate-chat-state.store';
 import { DebateChatPublisher } from './debate-chat.publisher';
-import { DebateChatService } from './debate-chat.service';
 import {
-  DebateChatStatus,
+  DebateChatService,
+  EXPIRE_RETRY_DELAY_MS,
+} from './debate-chat.service';
+import {
   DebateEndReason,
   DebatePhase,
   DebateSide,
+  DebateStatus,
 } from './debate-chat.types';
 import { DEBATE_PROCESSING_PIPELINE } from './debate-processing-pipeline';
+import { DebateTurnTimeoutScheduler } from './debate-turn-timeout.scheduler';
 import { DebateChatErrorCode } from './exceptions/debate-chat-error-code';
 
 describe('DebateChatService', () => {
   let service: DebateChatService;
-  let debatesService: { findOneOrThrow: jest.Mock };
   let publisher: { turnFinalized: jest.Mock; debateEnded: jest.Mock };
   let pipeline: { start: jest.Mock };
+  let timeouts: { arm: jest.Mock; register: jest.Mock };
+  let debatesService: { findInProgressIds: jest.Mock };
+  let state: DebateChatState;
+  let clock: Date;
+  let store: { withState: jest.Mock };
 
   const DEBATE_ID = 'debate-uuid';
   const COMMUNITY_ID = 'community-uuid';
   const HOST_ID = 'host-uuid';
   const OPPONENT_ID = 'opponent-uuid';
-
-  const buildDebate = (overrides: Partial<Debate> = {}): Debate =>
-    Object.assign(new Debate(), {
-      id: DEBATE_ID,
-      communityId: COMMUNITY_ID,
-      hostId: HOST_ID,
-      hostNickname: '메시',
-      opponentId: OPPONENT_ID,
-      opponentNickname: '호날두',
-      currentTurn: DebateTurn.HOST,
-      winnerId: null,
-      solution: null,
-      status: ResourceStatus.NORMAL,
-      community: Object.assign(new Community(), {
-        id: COMMUNITY_ID,
-        // N=0 → OPENING(A,B) → CLOSING(A,B) 4턴
-        debateRoundCount: 0,
-        status: ResourceStatus.NORMAL,
-      }),
-      ...overrides,
-    });
+  const NOW = new Date('2026-09-06T00:00:00.000Z');
 
   const opening = (side: DebateSide) => ({
     speakerId: side === DebateSide.SIDE_A ? HOST_ID : OPPONENT_ID,
@@ -92,33 +73,51 @@ describe('DebateChatService', () => {
   ];
 
   beforeEach(async () => {
-    debatesService = {
-      findOneOrThrow: jest.fn().mockResolvedValue(buildDebate()),
+    clock = NOW;
+    // 저장·락은 저장소 스펙이 검증한다. 여기서는 같은 상태 객체를 계속 넘겨주는 저장소를 쓴다.
+    state = DebateChatState.rehydrate({
+      debateId: DEBATE_ID,
+      communityId: COMMUNITY_ID,
+      speakers: {
+        [DebateSide.SIDE_A]: HOST_ID,
+        [DebateSide.SIDE_B]: OPPONENT_ID,
+      },
+      // N=0 → OPENING(A,B) → CLOSING(A,B) 4턴
+      schedule: new DebateTurnSchedule(0),
+      limits: {
+        maxContentLength: 10,
+        maxTotalCharacters: 30,
+        maxDurationSeconds: 180,
+      },
+      debateStatus: DebateStatus.IN_PROGRESS,
+      startedAt: NOW,
+      endedAt: null,
+      turns: [],
+      drafts: [],
+      now: () => clock,
+    });
+    store = {
+      withState: jest
+        .fn()
+        .mockImplementation(
+          (_debateId: string, work: (s: DebateChatState) => unknown) =>
+            Promise.resolve(work(state)),
+        ),
     };
+
     publisher = { turnFinalized: jest.fn(), debateEnded: jest.fn() };
     pipeline = { start: jest.fn().mockResolvedValue(undefined) };
+    timeouts = { arm: jest.fn(), register: jest.fn() };
+    debatesService = { findInProgressIds: jest.fn().mockResolvedValue([]) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DebateChatService,
-        { provide: DebatesService, useValue: debatesService },
+        { provide: DEBATE_CHAT_STATE_STORE, useValue: store },
         { provide: DebateChatPublisher, useValue: publisher },
         { provide: DEBATE_PROCESSING_PIPELINE, useValue: pipeline },
-        // 저장소는 직렬화 계약을 그대로 쓰기 위해 실제 인메모리 구현체를 쓴다.
-        {
-          provide: DEBATE_CHAT_STATE_STORE,
-          useClass: InMemoryDebateChatStateStore,
-        },
-        {
-          provide: DebateChatConfig,
-          useValue: {
-            limits: {
-              maxContentLength: 10,
-              maxTotalCharacters: 30,
-              maxDurationSeconds: 180,
-            },
-          },
-        },
+        { provide: DebateTurnTimeoutScheduler, useValue: timeouts },
+        { provide: DebatesService, useValue: debatesService },
       ],
     }).compile();
 
@@ -126,10 +125,9 @@ describe('DebateChatService', () => {
   });
 
   describe('restore', () => {
-    it('첫 접근 시 토론을 읽어 초기 snapshot(OPENING/1/SIDE_A)을 만든다', async () => {
+    it('현재 상태 전체를 돌려주고 현재 차례의 만료 시각으로 타이머를 건다', async () => {
       const snapshot = await service.restore(DEBATE_ID);
 
-      expect(debatesService.findOneOrThrow).toHaveBeenCalledWith(DEBATE_ID);
       expect(snapshot).toMatchObject({
         debateId: DEBATE_ID,
         currentTurn: {
@@ -142,34 +140,16 @@ describe('DebateChatService', () => {
         turns: [],
         draftMessages: [],
       });
+      expect(timeouts.arm).toHaveBeenCalledWith(
+        DEBATE_ID,
+        new Date(NOW.getTime() + 180_000),
+      );
     });
 
-    it('두 번째 접근은 토론을 다시 읽지 않고 같은 상태를 돌려준다', async () => {
+    it('저장된 draft가 있으면 함께 복원해 돌려준다', async () => {
       await send(DebateSide.SIDE_A, 'a');
-      const snapshot = await service.restore(DEBATE_ID);
 
-      expect(debatesService.findOneOrThrow).toHaveBeenCalledTimes(1);
-      expect(snapshot.draftMessages).toHaveLength(1);
-    });
-
-    it('존재하지 않거나 삭제된 토론이면 NOT_FOUND를 그대로 전파한다', async () => {
-      debatesService.findOneOrThrow.mockRejectedValue(
-        new GeneralException(DebateErrorCode.NOT_FOUND),
-      );
-      await expectCode(
-        service.restore(DEBATE_ID),
-        DebateErrorCode.NOT_FOUND.code,
-      );
-    });
-
-    it('상대 발언자가 없는 토론은 OPPONENT_MISSING', async () => {
-      debatesService.findOneOrThrow.mockResolvedValue(
-        buildDebate({ opponentId: null, opponentNickname: null }),
-      );
-      await expectCode(
-        service.restore(DEBATE_ID),
-        DebateChatErrorCode.OPPONENT_MISSING.code,
-      );
+      expect((await service.restore(DEBATE_ID)).draftMessages).toHaveLength(1);
     });
   });
 
@@ -247,6 +227,16 @@ describe('DebateChatService', () => {
       expect(pipeline.start).not.toHaveBeenCalled();
     });
 
+    it('확정 뒤에는 다음 차례의 만료 시각으로 타이머를 옮긴다', async () => {
+      await send(DebateSide.SIDE_A, 'x');
+      const turn = await finalize(DebateSide.SIDE_A);
+
+      expect(timeouts.arm).toHaveBeenLastCalledWith(
+        DEBATE_ID,
+        new Date(new Date(turn.createdAt).getTime() + 180_000),
+      );
+    });
+
     it('draft 없이 finalize하면 TURN_EMPTY', async () => {
       await expectCode(
         finalize(DebateSide.SIDE_A),
@@ -254,7 +244,7 @@ describe('DebateChatService', () => {
       );
     });
 
-    it('마지막 차례를 확정하면 ended를 발행하고 파이프라인을 정확히 한 번 시작한다', async () => {
+    it('마지막 차례를 확정하면 ended를 발행하고 파이프라인을 정확히 한 번 시작하며 타이머를 해제한다', async () => {
       for (const [side, phase] of ALL_TURNS) {
         await send(side, 'x', undefined, phase);
         await finalize(side, phase);
@@ -265,11 +255,12 @@ describe('DebateChatService', () => {
       expect(publisher.debateEnded).toHaveBeenCalledWith({
         communityId: COMMUNITY_ID,
         debateId: DEBATE_ID,
-        status: DebateChatStatus.DEBATE_FINALIZED,
+        status: DebateStatus.DEBATE_FINALIZED,
         reason: DebateEndReason.ALL_TURNS_FINALIZED,
       });
       expect(pipeline.start).toHaveBeenCalledTimes(1);
       expect(pipeline.start).toHaveBeenCalledWith(DEBATE_ID);
+      expect(timeouts.arm).toHaveBeenLastCalledWith(DEBATE_ID, null);
 
       // 종료 뒤의 명령은 거부된다.
       await expectCode(
@@ -287,16 +278,91 @@ describe('DebateChatService', () => {
       }
       expect(last).toMatchObject({ sequence: 4 });
     });
+  });
 
-    it('동시에 들어온 두 명령은 직렬화되어 하나만 통과한다(같은 차례 두 번 finalize)', async () => {
-      await send(DebateSide.SIDE_A, 'x');
-      const results = await Promise.allSettled([
-        finalize(DebateSide.SIDE_A),
-        finalize(DebateSide.SIDE_A),
-      ]);
+  describe('expireTurn', () => {
+    it('제한 시간이 지나지 않았으면 타이머만 다시 걸고 아무것도 알리지 않는다', async () => {
+      await service.expireTurn(DEBATE_ID);
 
-      expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
-      expect(publisher.turnFinalized).toHaveBeenCalledTimes(1);
+      expect(publisher.turnFinalized).not.toHaveBeenCalled();
+      expect(timeouts.arm).toHaveBeenCalledWith(
+        DEBATE_ID,
+        new Date(NOW.getTime() + 180_000),
+      );
+    });
+
+    it('제한 시간이 지나면 쓴 draft를 확정해 상대에게 넘기고 방에 finalized를 알린다', async () => {
+      await send(DebateSide.SIDE_A, '쓰다 만');
+      clock = new Date(NOW.getTime() + 180_000);
+
+      await service.expireTurn(DEBATE_ID);
+
+      expect(publisher.turnFinalized).toHaveBeenCalledWith(
+        DEBATE_ID,
+        expect.objectContaining({ sequence: 1, content: '쓰다 만' }),
+      );
+      // 토론은 끝나지 않았고, 다음 차례(SIDE_B)의 만료 시각으로 타이머가 옮겨간다.
+      expect(publisher.debateEnded).not.toHaveBeenCalled();
+      expect(pipeline.start).not.toHaveBeenCalled();
+      expect(timeouts.arm).toHaveBeenLastCalledWith(
+        DEBATE_ID,
+        new Date(clock.getTime() + 180_000),
+      );
+      await expect(send(DebateSide.SIDE_B, '내 차례')).resolves.toMatchObject({
+        status: 'APPENDED',
+      });
+    });
+
+    it('마지막 차례가 시간 초과되면 정상 종료로 ended를 알리고 파이프라인을 시작한다', async () => {
+      for (const [side, phase] of ALL_TURNS.slice(0, 3)) {
+        await send(side, 'x', undefined, phase);
+        await finalize(side, phase);
+      }
+      clock = new Date(clock.getTime() + 180_000);
+
+      await service.expireTurn(DEBATE_ID);
+
+      expect(publisher.debateEnded).toHaveBeenCalledWith({
+        communityId: COMMUNITY_ID,
+        debateId: DEBATE_ID,
+        status: DebateStatus.DEBATE_FINALIZED,
+        reason: DebateEndReason.ALL_TURNS_FINALIZED,
+      });
+      expect(pipeline.start).toHaveBeenCalledTimes(1);
+      expect(timeouts.arm).toHaveBeenLastCalledWith(DEBATE_ID, null);
+    });
+
+    it('다른 명령을 처리 중이라 락을 잡지 못하면 잠시 뒤 다시 시도한다', async () => {
+      store.withState.mockRejectedValueOnce(
+        new GeneralException(DebateChatErrorCode.FINALIZE_IN_PROGRESS),
+      );
+
+      await service.expireTurn(DEBATE_ID);
+
+      expect(publisher.turnFinalized).not.toHaveBeenCalled();
+      const [, deadline] = timeouts.arm.mock.calls.at(-1) as [string, Date];
+      expect(deadline.getTime()).toBeLessThanOrEqual(
+        Date.now() + EXPIRE_RETRY_DELAY_MS,
+      );
+    });
+  });
+
+  describe('부팅 복구', () => {
+    it('진행 중이던 토론마다 만료 판정을 한 번씩 돌려 타이머를 다시 건다', async () => {
+      debatesService.findInProgressIds.mockResolvedValue([DEBATE_ID]);
+
+      await service.onApplicationBootstrap();
+
+      expect(timeouts.arm).toHaveBeenCalledWith(
+        DEBATE_ID,
+        new Date(NOW.getTime() + 180_000),
+      );
+    });
+
+    it('진행 중 토론을 읽지 못해도 부팅을 막지 않는다', async () => {
+      debatesService.findInProgressIds.mockRejectedValue(new Error('db down'));
+
+      await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
     });
   });
 });

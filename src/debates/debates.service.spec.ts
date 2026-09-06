@@ -4,12 +4,13 @@ import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { Community } from '../communities/entities/community.entity';
 import { DebatesService } from './debates.service';
+import { DebateStatus } from './entities/debate-status.enum';
 import { Debate, DebateTurn } from './entities/debate.entity';
 import { DebateErrorCode } from './exceptions/debate-error-code';
 
 describe('DebatesService', () => {
   let service: DebatesService;
-  let debateRepository: { findOne: jest.Mock };
+  let debateRepository: { findOne: jest.Mock; find: jest.Mock };
 
   const DEBATE_ID = 'debate-uuid';
 
@@ -34,7 +35,7 @@ describe('DebatesService', () => {
     });
 
   beforeEach(async () => {
-    debateRepository = { findOne: jest.fn() };
+    debateRepository = { findOne: jest.fn(), find: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -83,6 +84,27 @@ describe('DebatesService', () => {
       ];
       expect(where.status).toBe(ResourceStatus.NORMAL);
       expect(where.community.status).toBe(ResourceStatus.NORMAL);
+    });
+  });
+
+  describe('findInProgressIds', () => {
+    it('진행 중이고 삭제되지 않은 토론의 id만 돌려준다', async () => {
+      debateRepository.find.mockResolvedValue([
+        buildDebate({ id: 'debate-1' }),
+        buildDebate({ id: 'debate-2' }),
+      ]);
+
+      await expect(service.findInProgressIds()).resolves.toEqual([
+        'debate-1',
+        'debate-2',
+      ]);
+      expect(debateRepository.find).toHaveBeenCalledWith({
+        select: { id: true },
+        where: {
+          status: ResourceStatus.NORMAL,
+          debateStatus: DebateStatus.IN_PROGRESS,
+        },
+      });
     });
   });
 });

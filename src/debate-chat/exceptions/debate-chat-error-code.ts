@@ -46,6 +46,12 @@ export const DebateChatErrorCode = {
     title: 'Turn Character Limit Exceeded',
     detail: '이번 차례에 쓸 수 있는 글자 수를 모두 사용했습니다.',
   },
+  FINALIZE_IN_PROGRESS: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'DEBATE_CHAT.FINALIZE_IN_PROGRESS',
+    title: 'Finalize In Progress',
+    detail: '다른 요청을 처리 중입니다. 잠시 후 다시 시도해 주세요.',
+  },
   TURN_EMPTY: {
     httpStatus: HttpStatus.CONFLICT,
     code: 'DEBATE_CHAT.TURN_EMPTY',

@@ -52,11 +52,11 @@ export class DebateChatPublisher {
     return this.rooms.get(debateId)?.size ?? 0;
   }
 
-  // 같은 debate room, 송신자(소켓) 제외.
+  // 같은 debate room, 송신자(소켓) 제외. HTTP로 들어온 발언은 제외할 소켓이 없어 sender를 생략한다.
   messageCreated(
     debateId: string,
     message: DraftMessage,
-    sender: WebSocket,
+    sender?: WebSocket,
   ): void {
     this.broadcast(
       debateId,

@@ -14,7 +14,7 @@
 | `DELETED` | 사용자 삭제 |
 | `ADMIN_DELETED` | 관리자 삭제 |
 
-상속 엔티티: `Member`, `Community`, `CommunityMessage`, `Debate`, `DebateSpeech`
+상속 엔티티: `Member`, `Community`, `CommunityMessage`, `Debate`, `DebateMessage`
 
 `status`는 DB default와 별개로 필드 초기값도 `NORMAL`로 둡니다. DB default는 INSERT 시점에만 적용되므로, 아직 저장되지 않은 in-memory 객체가 `isDeleted()`에서 삭제로 판정되는 것을 막기 위함입니다.
 

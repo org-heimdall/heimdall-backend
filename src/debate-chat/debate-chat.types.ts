@@ -11,12 +11,14 @@ export enum DebateSide {
   SIDE_B = 'SIDE_B',
 }
 
-// 계약 DebateStatus 중 채팅이 전이시키는 구간. JUDGING 이후는 처리 파이프라인(Phase 3) 담당.
-export enum DebateChatStatus {
-  IN_PROGRESS = 'IN_PROGRESS',
-  DEBATE_FINALIZED = 'DEBATE_FINALIZED',
-}
+// 토론 진행 단계는 debate 행의 컬럼이므로 소유 도메인(debates)에 두고 여기서는 그대로 쓴다.
+// 채팅이 전이시키는 구간은 READY → IN_PROGRESS → DEBATE_FINALIZED(전원 발언) 또는 FAILED(시간 초과)이며,
+// JUDGING 이후는 처리 파이프라인(Phase 3) 담당이다.
+import { DebateStatus } from '../debates/entities/debate-status.enum';
 
+export { DebateStatus };
+
+// 토론이 끝난 이유. 시간 초과는 토론이 아니라 차례만 넘기므로(P2-4) 여기에 들어가지 않는다.
 export enum DebateEndReason {
   ALL_TURNS_FINALIZED = 'ALL_TURNS_FINALIZED',
 }
@@ -124,7 +126,7 @@ export interface ProcessingStagePayload {
 export interface DebateEndedPayload {
   communityId: string;
   debateId: string;
-  status: DebateChatStatus;
+  status: DebateStatus;
   reason: DebateEndReason;
 }
 

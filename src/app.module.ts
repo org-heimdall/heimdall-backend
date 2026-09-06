@@ -42,6 +42,11 @@ import * as Joi from 'joi';
 
         GOOGLE_CLIENT_ID: Joi.string().required(),
 
+        // 토론 채팅 draft·중복 방지·락 저장소. 배포는 compose 서비스명(redis).
+        REDIS_HOST: Joi.string().default('localhost'),
+        REDIS_PORT: Joi.number().integer().min(1).default(6379),
+        REDIS_PASSWORD: Joi.string().allow('').optional(),
+
         // 토론 판정용 OpenAI 설정. 키를 무조건 required로 두면 키가 없는 팀원의
         // 로컬 부팅이 전부 깨지므로 production에서만 필수로 둔다.
         OPENAI_API_KEY: Joi.string().when('NODE_ENV', {
@@ -58,7 +63,7 @@ import * as Joi from 'joi';
 
         // 토론 채팅 WebSocket. 계약상 HTTP와 별도 포트를 쓴다.
         DEBATE_CHAT_WS_PORT: Joi.number().integer().min(1).default(8080),
-        // 턴 제한값. Phase 1은 클라이언트에 안내값으로 내려주고 글자 수만 서버가 강제한다.
+        // 턴 제한값. 글자 수와 시간 초과(Phase 2)를 서버가 강제한다.
         DEBATE_TURN_MAX_CONTENT_LENGTH: Joi.number()
           .integer()
           .min(1)

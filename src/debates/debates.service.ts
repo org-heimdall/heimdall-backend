@@ -5,6 +5,7 @@ import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CreateDebateDto } from './dto/create-debate.dto';
 import { UpdateDebateDto } from './dto/update-debate.dto';
+import { DebateStatus } from './entities/debate-status.enum';
 import { Debate } from './entities/debate.entity';
 import { DebateErrorCode } from './exceptions/debate-error-code';
 
@@ -31,6 +32,18 @@ export class DebatesService {
       throw new GeneralException(DebateErrorCode.NOT_FOUND);
     }
     return debate;
+  }
+
+  // 서버 재시작 후 턴 타임아웃 타이머를 다시 걸기 위해 진행 중인 토론의 id만 읽는다.
+  async findInProgressIds(): Promise<string[]> {
+    const debates = await this.debateRepository.find({
+      select: { id: true },
+      where: {
+        status: ResourceStatus.NORMAL,
+        debateStatus: DebateStatus.IN_PROGRESS,
+      },
+    });
+    return debates.map((debate) => debate.id);
   }
 
   create(createDebateDto: CreateDebateDto) {
