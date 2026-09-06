@@ -10,6 +10,7 @@ import { MembersModule } from './members/members.module';
 import { DebatesModule } from './debates/debates.module';
 import { JudgeModule } from './judge/judge.module';
 import { SeedModule } from './seed/seed.module';
+import { DebateChatModule } from './debate-chat/debate-chat.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SnakeNamingStrategy } from './common/naming/snake-naming.strategy';
@@ -54,6 +55,22 @@ import * as Joi from 'joi';
 
         // 비공개 대화 시드 파일 경로(저장소 밖). 없으면 대화 시딩만 건너뛰므로 optional이다.
         SEED_DEBATE_DATA_PATH: Joi.string().optional(),
+
+        // 토론 채팅 WebSocket. 계약상 HTTP와 별도 포트를 쓴다.
+        DEBATE_CHAT_WS_PORT: Joi.number().integer().min(1).default(8080),
+        // 턴 제한값. Phase 1은 클라이언트에 안내값으로 내려주고 글자 수만 서버가 강제한다.
+        DEBATE_TURN_MAX_CONTENT_LENGTH: Joi.number()
+          .integer()
+          .min(1)
+          .default(500),
+        DEBATE_TURN_MAX_TOTAL_CHARACTERS: Joi.number()
+          .integer()
+          .min(1)
+          .default(1500),
+        DEBATE_TURN_MAX_DURATION_SECONDS: Joi.number()
+          .integer()
+          .min(1)
+          .default(180),
       }),
     }),
     TypeOrmModule.forRootAsync({
@@ -77,6 +94,7 @@ import * as Joi from 'joi';
     DebatesModule,
     JudgeModule,
     SeedModule,
+    DebateChatModule,
   ],
   controllers: [AppController],
   providers: [

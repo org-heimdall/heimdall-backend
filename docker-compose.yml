@@ -29,6 +29,8 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+      # 토론 채팅 WebSocket(DEBATE_CHAT_WS_PORT). HTTP와 별도 포트를 쓴다.
+      - "8080:8080"
     deploy:
       resources:
         limits:
