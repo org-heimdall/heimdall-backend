@@ -97,7 +97,7 @@ export class DebateChatController {
       request.clientMessageId,
     );
 
-    if (result.status === 'STORED') {
+    if (result.status === 'APPENDED') {
       this.publisher.messageCreated(debateId, result.message);
     }
     return result;

@@ -97,8 +97,8 @@ export class DebateChatSnapshotDto implements ConnectionRestoredPayload {
 
 export class DebateTurnMessageAppendResultDto implements DraftAppendResult {
   @ApiProperty({
-    enum: ['STORED', 'DUPLICATE'],
-    example: 'STORED',
+    enum: ['APPENDED', 'DUPLICATE'],
+    example: 'APPENDED',
     description: '같은 clientMessageId를 다시 보내면 저장 없이 DUPLICATE.',
   })
   status: DraftAppendStatus;

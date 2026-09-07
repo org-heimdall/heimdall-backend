@@ -175,7 +175,7 @@ describe('DebateChatState', () => {
   });
 
   describe('appendDraft', () => {
-    it('현재 발언자의 draft를 저장하고 STORED로 응답한다', () => {
+    it('현재 발언자의 draft를 저장하고 APPENDED로 응답한다', () => {
       const result = state.appendDraft(
         SIDE_A_ID,
         { ...opening(DebateSide.SIDE_A), content: '첫 발언' },
@@ -183,7 +183,7 @@ describe('DebateChatState', () => {
       );
 
       expect(result).toEqual({
-        status: 'STORED',
+        status: 'APPENDED',
         message: {
           id: 'id-1',
           debateId: DEBATE_ID,

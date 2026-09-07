@@ -154,11 +154,11 @@ describe('DebateChatService', () => {
   });
 
   describe('appendDraft', () => {
-    it('현재 발언자의 draft를 STORED로 저장한다(host = SIDE_A)', async () => {
+    it('현재 발언자의 draft를 APPENDED로 저장한다(host = SIDE_A)', async () => {
       const result = await send(DebateSide.SIDE_A, '첫 발언', 'c-1');
 
       expect(result).toMatchObject({
-        status: 'STORED',
+        status: 'APPENDED',
         message: {
           debateId: DEBATE_ID,
           clientMessageId: 'c-1',
@@ -309,7 +309,7 @@ describe('DebateChatService', () => {
         new Date(clock.getTime() + 180_000),
       );
       await expect(send(DebateSide.SIDE_B, '내 차례')).resolves.toMatchObject({
-        status: 'STORED',
+        status: 'APPENDED',
       });
     });
 
