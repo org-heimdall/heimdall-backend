@@ -141,7 +141,7 @@ export class DebateChatGateway
     await this.service.finalizeTurn(debateId, memberId, command.payload);
   }
 
-  // APPENDED면 송신자를 제외한 방에 created를 보내고, 반환값(ack)은 Nest가 요청 소켓에만 보낸다.
+  // STORED면 송신자를 제외한 방에 created를 보내고, 반환값(ack)은 Nest가 요청 소켓에만 보낸다.
   private async appendDraft(
     client: DebateChatSocket,
     command: DebateTurnMessageSendCommandDto,
@@ -154,7 +154,7 @@ export class DebateChatGateway
       command.clientMessageId,
     );
 
-    if (result.status === 'APPENDED') {
+    if (result.status === 'STORED') {
       this.publisher.messageCreated(debateId, result.message, client);
     }
     return {

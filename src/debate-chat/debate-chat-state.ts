@@ -301,7 +301,7 @@ export class DebateChatState {
       turnIndex: this.turns.length,
       message,
     });
-    return { status: 'APPENDED', message };
+    return { status: 'STORED', message };
   }
 
   // 현재 차례의 draft를 하나의 턴으로 확정하고 다음 차례로 넘긴다(D7: 개행으로 병합, 빈 턴 거부).

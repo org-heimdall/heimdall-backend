@@ -84,7 +84,7 @@ export class DebateChatService implements OnApplicationBootstrap {
     return payload;
   }
 
-  // draft 추가. APPENDED/DUPLICATE 판정과 저장된 메시지를 돌려준다(차례는 바뀌지 않는다).
+  // draft 추가. STORED/DUPLICATE 판정과 저장된 메시지를 돌려준다(차례는 바뀌지 않는다).
   async appendDraft(
     debateId: string,
     memberId: string,

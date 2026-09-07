@@ -94,7 +94,7 @@ export interface ConnectionRestoredPayload extends DebateChatSnapshot {
   debateId: string;
 }
 
-export type DraftAppendStatus = 'APPENDED' | 'DUPLICATE';
+export type DraftAppendStatus = 'STORED' | 'DUPLICATE';
 
 export interface TurnMessageAckPayload {
   debateId: string;
