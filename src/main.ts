@@ -1,11 +1,18 @@
+// 게이트웨이 포트(@WebSocketGateway)는 import 시점에 평가되므로 ConfigModule보다 먼저 .env를 읽는다.
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { validationExceptionFactory } from './common/exceptions/validation-exception.factory';
+import { CommandEnvelopeWsAdapter } from './common/ws/command-envelope-ws.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // 종료 시그널에서 WebSocket 서버까지 정리되도록 한다.
+  app.enableShutdownHooks();
+  // 계약의 명령 봉투 { id, type, payload }를 게이트웨이 핸들러에 연결한다.
+  app.useWebSocketAdapter(new CommandEnvelopeWsAdapter(app));
 
   app.useGlobalPipes(
     new ValidationPipe({

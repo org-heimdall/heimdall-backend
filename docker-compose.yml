@@ -20,6 +20,24 @@ services:
         limits:
           memory: 256M
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
   backend:
     build: .
     restart: unless-stopped
@@ -27,8 +45,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "3000:3000"
+      # 토론 채팅 WebSocket(DEBATE_CHAT_WS_PORT). HTTP와 별도 포트를 쓴다.
+      - "8080:8080"
     deploy:
       resources:
         limits:
@@ -36,3 +58,4 @@ services:
 
 volumes:
   postgres-data: # 컨테이너 재시작 시 데이터 안 날아가게 함
+  redis-data: # draft·중복 방지 키. 재시작 중 진행 중인 턴이 사라지지 않게 AOF로 남긴다

@@ -9,6 +9,7 @@ import {
   CommunityState,
 } from '../communities/entities/community.entity';
 import { MemberCommunity } from '../member-communities/entities/member-community.entity';
+import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate, DebateTurn } from '../debates/entities/debate.entity';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
@@ -312,7 +313,10 @@ export class SeedService implements OnApplicationBootstrap {
       );
 
       // 판정 전 상태로 넣는다(winnerId·solution은 debate-judge가 채운다).
+      // 시드 대화는 이미 끝난 토론이므로 DEBATE_FINALIZED로 넣는다. 그래야 채팅이 시드 토론을
+      // 이어서 진행하지 않고 NOT_IN_PROGRESS로 거절한다.
       // currentTurn은 종료된 대화에선 의미가 없어 기본값 HOST로 둔다.
+      const seededAt = new Date();
       const debate = await debateRepository.save(
         debateRepository.create({
           communityId: community.id,
@@ -321,15 +325,13 @@ export class SeedService implements OnApplicationBootstrap {
           opponentId: opponent.id,
           opponentNickname: opponent.nickname,
           currentTurn: DebateTurn.HOST,
+          debateStatus: DebateStatus.DEBATE_FINALIZED,
+          startedAt: seededAt,
+          endedAt: seededAt,
         }),
       );
 
-      const rows = seed.messages.map((message) => ({
-        memberId: this.requireSeedMember(memberByEmail, message.email).id,
-        debateId: debate.id,
-        body: message.body,
-        debate_turn: message.turn,
-      }));
+      const rows = this.toConfirmedTurns(seed, debate.id, memberByEmail);
 
       // 건수가 많아 save 루프 대신 벌크 insert로 넣는다(엔티티 인스턴스 생성 비용도 없다).
       for (let i = 0; i < rows.length; i += DEBATE_MESSAGE_INSERT_CHUNK) {
@@ -338,9 +340,43 @@ export class SeedService implements OnApplicationBootstrap {
         );
       }
       this.logger.log(
-        `대화 시드 주입 완료 (${seed.communityTopic}, ${rows.length}건)`,
+        `대화 시드 주입 완료 (${seed.communityTopic}, 메시지 ${seed.messages.length}건 → 확정 턴 ${rows.length}건)`,
       );
     }
+  }
+
+  /**
+   * 시드 메시지를 확정 턴 행으로 바꾼다. 시드의 turn은 라운드 번호라 한 라운드에서 같은 발화자가
+   * 여러 건을 보내므로, (라운드, 발화자)를 확정 턴 하나로 묶어 개행으로 이어 붙인다
+   * (채팅의 finalize가 draft를 합치는 방식과 같다). 묶음 순서는 대화에 처음 등장한 순서이며,
+   * 그 순서가 곧 sequence다 — debate_message는 확정 턴만 담고 순서는 sequence로만 나타낸다.
+   */
+  private toConfirmedTurns(
+    seed: DebateSeed,
+    debateId: string,
+    memberByEmail: Map<string, Member>,
+  ): Pick<DebateMessage, 'memberId' | 'debateId' | 'body' | 'sequence'>[] {
+    const turns = new Map<string, { memberId: string; bodies: string[] }>();
+
+    for (const message of seed.messages) {
+      const key = `${message.turn}|${message.email}`;
+      const turn = turns.get(key);
+      if (turn) {
+        turn.bodies.push(message.body);
+        continue;
+      }
+      turns.set(key, {
+        memberId: this.requireSeedMember(memberByEmail, message.email).id,
+        bodies: [message.body],
+      });
+    }
+
+    return [...turns.values()].map((turn, index) => ({
+      memberId: turn.memberId,
+      debateId,
+      body: turn.bodies.join('\n'),
+      sequence: index + 1,
+    }));
   }
 
   // 시드 파일이 참조한 이메일이 시드 계정에 없으면 FK 위반 대신 원인이 드러나는 에러로 끊는다.

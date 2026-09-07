@@ -6,6 +6,7 @@ import { DebateSeed, DebateSeedSource } from './debate-seed.source';
 import { Member } from '../members/entities/member.entity';
 import { Theme } from '../communities/entities/theme.entity';
 import { Community } from '../communities/entities/community.entity';
+import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate } from '../debates/entities/debate.entity';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
@@ -32,7 +33,10 @@ describe('SeedService', () => {
     opponentEmail: 'user2@example.com',
     messages: [
       { email: 'user1@example.com', turn: 1, body: '찬성합니다' },
-      { email: 'user2@example.com', turn: 2, body: '반대합니다' },
+      { email: 'user2@example.com', turn: 1, body: '반대합니다' },
+      // 같은 라운드에서 같은 발화자가 이어 쓴 메시지. 앞의 확정 턴에 합쳐진다.
+      { email: 'user1@example.com', turn: 1, body: '근거를 덧붙입니다' },
+      { email: 'user2@example.com', turn: 2, body: '재반박합니다' },
     ],
     ...overrides,
   });
@@ -131,20 +135,41 @@ describe('SeedService', () => {
         opponentId: 'user2@example.com-id',
       }),
     );
+    // (라운드, 발화자)를 확정 턴 하나로 묶어 개행으로 합치고 sequence를 1부터 매긴다.
     expect(messageRepository.insert).toHaveBeenCalledWith([
       {
         memberId: 'user1@example.com-id',
         debateId: DEBATE_ID,
-        body: '찬성합니다',
-        debate_turn: 1,
+        body: '찬성합니다\n근거를 덧붙입니다',
+        sequence: 1,
       },
       {
         memberId: 'user2@example.com-id',
         debateId: DEBATE_ID,
         body: '반대합니다',
-        debate_turn: 2,
+        sequence: 2,
+      },
+      {
+        memberId: 'user2@example.com-id',
+        debateId: DEBATE_ID,
+        body: '재반박합니다',
+        sequence: 3,
       },
     ]);
+  });
+
+  it('시드 토론은 이미 끝난 토론(DEBATE_FINALIZED)으로 넣어 채팅이 이어지지 않게 한다', async () => {
+    debateSeedSource.load.mockResolvedValue([buildSeed()]);
+
+    await service.seed();
+
+    expect(debateRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        debateStatus: DebateStatus.DEBATE_FINALIZED,
+        startedAt: expect.any(Date) as unknown,
+        endedAt: expect.any(Date) as unknown,
+      }),
+    );
   });
 
   it('커뮤니티는 soft-delete되지 않은 행만 찾는다', async () => {
