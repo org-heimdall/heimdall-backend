@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { DebatesService } from '../debates/debates.service';
+import { DebateDto } from '../debates/dto/debate.dto';
+import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
 import { DraftAppendResult, TurnFinalizeResult } from './debate-chat-state';
 import { DEBATE_CHAT_STATE_STORE } from './debate-chat-state.store';
 import type { DebateChatStateStore } from './debate-chat-state.store';
@@ -82,6 +84,47 @@ export class DebateChatService implements OnApplicationBootstrap {
 
     this.timeouts.arm(debateId, deadline);
     return payload;
+  }
+
+  /**
+   * 토론을 시작한다(계약 POST /debates/:id/start). 실제 전이는 저장소가 상태를 열 때 하는
+   * state.start()와 같은 것이라, 첫 접속으로 이미 시작된 토론에 다시 불러도 결과가 같다(R-2).
+   * 발언자만 부를 수 있고, 이미 끝난 토론은 거절한다.
+   */
+  async start(debateId: string, memberId: string): Promise<DebateDto> {
+    const deadline = await this.store.withState(debateId, (state) => {
+      state.requireSpeakerSide(memberId);
+      // withState가 상태를 열면서 READY → IN_PROGRESS 전이를 이미 끝냈다.
+      if (state.currentStatus !== DebateStatus.IN_PROGRESS) {
+        throw new GeneralException(DebateErrorCode.ALREADY_ENDED);
+      }
+      return state.currentTurnDeadline();
+    });
+
+    this.timeouts.arm(debateId, deadline);
+    return this.debatesService.findOneDto(debateId);
+  }
+
+  /**
+   * 발언자가 기권한다(계약 POST /debates/:id/forfeit, R-3). 토론은 판정 없이 FAILED로 끝나고
+   * 승자는 상대다. 턴 타이머를 풀고 방에 debate.ended를 알리며, 판정 파이프라인은 띄우지 않는다.
+   */
+  async forfeit(debateId: string, memberId: string): Promise<void> {
+    const { communityId, status } = await this.store.withState(
+      debateId,
+      (state) => {
+        state.forfeit(memberId);
+        return { communityId: state.communityId, status: state.currentStatus };
+      },
+    );
+
+    this.timeouts.clear(debateId);
+    this.publisher.debateEnded({
+      communityId,
+      debateId,
+      status,
+      reason: DebateEndReason.FORFEIT,
+    });
   }
 
   // draft 추가. APPENDED/DUPLICATE 판정과 저장된 메시지를 돌려준다(차례는 바뀌지 않는다).

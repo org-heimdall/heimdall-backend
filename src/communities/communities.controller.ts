@@ -113,6 +113,45 @@ export class CommunitiesController {
   }
 
   @ApiOperation({
+    summary: '커뮤니티 참여 (본인)',
+    description:
+      '이미 참여 중이면 아무 일도 일어나지 않는다(다시 호출해도 204). 참여자 수는 실제로 참여했을 때만 늘어난다.',
+  })
+  @ApiParam({ name: 'communityId', format: 'uuid' })
+  @ApiNoContentResponse({ description: '참여 성공' })
+  @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
+  @ApiAuthRequired()
+  @Post(':communityId/members/me')
+  @HttpCode(204)
+  async joinMe(
+    @Param('communityId', ParseUUIDPipe) communityId: string,
+    @CurrentMember() memberId: string,
+  ): Promise<void> {
+    return this.communitiesService.joinMe(communityId, memberId);
+  }
+
+  @ApiOperation({
+    summary: '커뮤니티 나가기 (본인)',
+    description:
+      '참여 중이 아니면 아무 일도 일어나지 않는다(204). 작성한 기조 발언도 함께 사라진다. 방장은 나갈 수 없다.',
+  })
+  @ApiParam({ name: 'communityId', format: 'uuid' })
+  @ApiNoContentResponse({ description: '나가기 성공' })
+  @ApiErrorResponses(
+    CommunityErrorCode.NOT_FOUND,
+    CommunityErrorCode.HOST_CANNOT_LEAVE,
+  )
+  @ApiAuthRequired()
+  @Delete(':communityId/members/me')
+  @HttpCode(204)
+  async leaveMe(
+    @Param('communityId', ParseUUIDPipe) communityId: string,
+    @CurrentMember() memberId: string,
+  ): Promise<void> {
+    return this.communitiesService.leaveMe(communityId, memberId);
+  }
+
+  @ApiOperation({
     summary: '커뮤니티 참여자 목록 조회',
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })

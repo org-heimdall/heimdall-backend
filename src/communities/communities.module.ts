@@ -16,5 +16,7 @@ import { MemberCommunitiesModule } from '../member-communities/member-communitie
   ],
   controllers: [CommunitiesController],
   providers: [CommunitiesService],
+  // 토론 생성이 커뮤니티 존재·설정을 이 서비스로만 읽는다(엔티티 직접 참조 대신).
+  exports: [CommunitiesService],
 })
 export class CommunitiesModule {}

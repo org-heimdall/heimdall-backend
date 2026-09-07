@@ -16,6 +16,24 @@ export const DebateErrorCode = {
     title: 'Already Joined',
     detail: '이미 참여한 토론방입니다.',
   },
+  ALREADY_ENDED: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'DEBATE.ALREADY_ENDED',
+    title: 'Debate Already Ended',
+    detail: '이미 종료된 토론입니다.',
+  },
+  CREATE_FORBIDDEN: {
+    httpStatus: HttpStatus.FORBIDDEN,
+    code: 'DEBATE.CREATE_FORBIDDEN',
+    title: 'Create Forbidden',
+    detail: '커뮤니티 참여자만 토론을 만들 수 있습니다.',
+  },
+  SPEAKER_NOT_IN_COMMUNITY: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'DEBATE.SPEAKER_NOT_IN_COMMUNITY',
+    title: 'Speaker Not In Community',
+    detail: '발언자는 해당 커뮤니티의 참여자여야 합니다.',
+  },
   NOT_YOUR_TURN: {
     httpStatus: HttpStatus.CONFLICT,
     code: 'DEBATE.NOT_YOUR_TURN',

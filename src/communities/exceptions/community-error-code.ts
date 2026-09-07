@@ -16,6 +16,12 @@ export const CommunityErrorCode = {
     title: 'Delete Forbidden',
     detail: '커뮤니티 삭제 권한이 없습니다.',
   },
+  HOST_CANNOT_LEAVE: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'COMMUNITY.HOST_CANNOT_LEAVE',
+    title: 'Host Cannot Leave',
+    detail: '방장은 커뮤니티를 나갈 수 없습니다. 커뮤니티를 삭제해 주세요.',
+  },
   PARTICIPANT_NOT_FOUND: {
     httpStatus: HttpStatus.NOT_FOUND,
     code: 'COMMUNITY.PARTICIPANT_NOT_FOUND',

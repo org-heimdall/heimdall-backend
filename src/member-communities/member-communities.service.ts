@@ -59,6 +59,35 @@ export class MemberCommunitiesService {
     return this.repo().create({ memberId, communityId, opinion, reasons });
   }
 
+  /**
+   * 참여 행을 아직 없을 때만 넣고, 실제로 넣었는지 돌려준다(멱등 참여).
+   * 동시 요청은 (memberId, communityId) 유니크 제약이 걸러내므로 뒤 요청은 false가 된다 —
+   * 조회 후 삽입으로는 두 요청이 모두 "없음"을 보는 창을 막을 수 없다.
+   */
+  async insertIfAbsent(
+    memberId: string,
+    communityId: string,
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    const result = await this.repo(manager)
+      .createQueryBuilder()
+      .insert()
+      .values({ memberId, communityId })
+      .orIgnore()
+      .execute();
+    return (result.raw as unknown[]).length > 0;
+  }
+
+  // 참여 행 1건 삭제(커뮤니티 나가기). 실제로 지웠는지 돌려준다. 기조 발언도 이 행에 있어 함께 사라진다.
+  async deleteOne(
+    memberId: string,
+    communityId: string,
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    const result = await this.repo(manager).delete({ memberId, communityId });
+    return (result.affected ?? 0) > 0;
+  }
+
   // 커뮤니티에 속한 모든 참여 행 삭제(커뮤니티 삭제 시). 삭제 트랜잭션에서 manager로 참여한다.
   async deleteByCommunity(
     communityId: string,

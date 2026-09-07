@@ -1,15 +1,16 @@
 // 계약(frontend-api-contract.md) 열거형·이벤트·payload와 1:1. 값을 바꾸면 프론트 mapper가 깨진다.
 
-export enum DebatePhase {
-  OPENING = 'OPENING',
-  REBUTTAL_QUESTION = 'REBUTTAL_QUESTION',
-  CLOSING = 'CLOSING',
-}
+// 턴 모양(phase/side/turn)은 debate_message를 소유한 debates 도메인에 있고, 채팅은 그대로 쓴다.
+// REST(Debate DTO)와 채팅이 같은 정의를 쓰게 하는 것이 목적이다.
+import {
+  DebateChatTurn,
+  DebatePhase,
+  DebateSide,
+  DraftMessage,
+} from '../debates/debate-turn';
 
-export enum DebateSide {
-  SIDE_A = 'SIDE_A',
-  SIDE_B = 'SIDE_B',
-}
+export { DebatePhase, DebateSide };
+export type { DebateChatTurn, DraftMessage };
 
 // 토론 진행 단계는 debate 행의 컬럼이므로 소유 도메인(debates)에 두고 여기서는 그대로 쓴다.
 // 채팅이 전이시키는 구간은 READY → IN_PROGRESS → DEBATE_FINALIZED(전원 발언) 또는 FAILED(시간 초과)이며,
@@ -21,6 +22,8 @@ export { DebateStatus };
 // 토론이 끝난 이유. 시간 초과는 토론이 아니라 차례만 넘기므로(P2-4) 여기에 들어가지 않는다.
 export enum DebateEndReason {
   ALL_TURNS_FINALIZED = 'ALL_TURNS_FINALIZED',
+  // 발언자가 POST /debates/:id/forfeit으로 기권했다(R-3). 상태는 FAILED, 승자는 상대다.
+  FORFEIT = 'FORFEIT',
 }
 
 export enum DebateProcessingStage {
@@ -66,22 +69,6 @@ export interface CurrentTurn {
   startedAt: string;
   maxDurationSeconds: number;
   maxTotalCharacters: number;
-}
-
-export interface DraftMessage {
-  id: string;
-  debateId: string;
-  clientMessageId?: string;
-  speakerId: string;
-  speakerSide: DebateSide;
-  phase: DebatePhase;
-  round: number;
-  content: string;
-  createdAt: string;
-}
-
-export interface DebateChatTurn extends DraftMessage {
-  sequence: number;
 }
 
 export interface DebateChatSnapshot {

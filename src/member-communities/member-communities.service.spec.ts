@@ -5,7 +5,14 @@ import { MemberCommunity } from './entities/member-community.entity';
 
 describe('MemberCommunitiesService', () => {
   let service: MemberCommunitiesService;
+  let insertQueryBuilder: {
+    insert: jest.Mock;
+    values: jest.Mock;
+    orIgnore: jest.Mock;
+    execute: jest.Mock;
+  };
   let repository: {
+    createQueryBuilder: jest.Mock;
     create: jest.Mock;
     save: jest.Mock;
     upsert: jest.Mock;
@@ -28,7 +35,14 @@ describe('MemberCommunitiesService', () => {
     });
 
   beforeEach(async () => {
+    insertQueryBuilder = {
+      insert: jest.fn(() => insertQueryBuilder),
+      values: jest.fn(() => insertQueryBuilder),
+      orIgnore: jest.fn(() => insertQueryBuilder),
+      execute: jest.fn().mockResolvedValue({ raw: [{ id: 'mc-uuid' }] }),
+    };
     repository = {
+      createQueryBuilder: jest.fn(() => insertQueryBuilder),
       create: jest.fn((entity: Partial<MemberCommunity>) => entity),
       save: jest.fn((entity: MemberCommunity) => Promise.resolve(entity)),
       upsert: jest.fn().mockResolvedValue({ identifiers: [] }),
@@ -120,6 +134,50 @@ describe('MemberCommunitiesService', () => {
       });
       // 트랜잭션 레포지토리를 썼으므로 기본 레포지토리는 건드리지 않는다
       expect(repository.delete).not.toHaveBeenCalled();
+    });
+  });
+  describe('insertIfAbsent', () => {
+    it('참여 행을 넣었으면 true를 돌려준다', async () => {
+      await expect(
+        service.insertIfAbsent('member-uuid', 'community-uuid'),
+      ).resolves.toBe(true);
+
+      expect(insertQueryBuilder.values).toHaveBeenCalledWith({
+        memberId: 'member-uuid',
+        communityId: 'community-uuid',
+      });
+      // 유니크 충돌은 예외가 아니라 "아무것도 넣지 않음"으로 처리한다.
+      expect(insertQueryBuilder.orIgnore).toHaveBeenCalled();
+    });
+
+    it('이미 있어 아무것도 넣지 않았으면 false를 돌려준다', async () => {
+      insertQueryBuilder.execute.mockResolvedValue({ raw: [] });
+
+      await expect(
+        service.insertIfAbsent('member-uuid', 'community-uuid'),
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe('deleteOne', () => {
+    it('지운 행이 있으면 true를 돌려준다', async () => {
+      repository.delete.mockResolvedValue({ affected: 1 });
+
+      await expect(
+        service.deleteOne('member-uuid', 'community-uuid'),
+      ).resolves.toBe(true);
+      expect(repository.delete).toHaveBeenCalledWith({
+        memberId: 'member-uuid',
+        communityId: 'community-uuid',
+      });
+    });
+
+    it('참여 중이 아니어서 지운 행이 없으면 false를 돌려준다', async () => {
+      repository.delete.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        service.deleteOne('member-uuid', 'community-uuid'),
+      ).resolves.toBe(false);
     });
   });
 });

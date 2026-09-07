@@ -11,6 +11,7 @@ import {
 } from './debate-chat-state.store';
 import { DebateChatConfig } from './debate-chat.config';
 import { DebateChatController } from './debate-chat.controller';
+import { DebateLifecycleController } from './debate-lifecycle.controller';
 import { DebateChatGateway } from './debate-chat.gateway';
 import { DebateChatPublisher } from './debate-chat.publisher';
 import { DebateChatService } from './debate-chat.service';
@@ -28,7 +29,7 @@ import {
     // 확정 턴 저장과 토론 상태 갱신은 저장소가 직접 한다(judge 모듈과 같은 방식).
     TypeOrmModule.forFeature([Debate, DebateMessage]),
   ],
-  controllers: [DebateChatController],
+  controllers: [DebateChatController, DebateLifecycleController],
   providers: [
     DebateChatConfig,
     DebateChatPublisher,

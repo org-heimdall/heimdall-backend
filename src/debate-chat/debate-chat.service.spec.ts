@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { DebatesService } from '../debates/debates.service';
+import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
 import { DebateChatState, DebateTurnSchedule } from './debate-chat-state';
 import { DEBATE_CHAT_STATE_STORE } from './debate-chat-state.store';
 import { DebateChatPublisher } from './debate-chat.publisher';
@@ -22,8 +23,8 @@ describe('DebateChatService', () => {
   let service: DebateChatService;
   let publisher: { turnFinalized: jest.Mock; debateEnded: jest.Mock };
   let pipeline: { start: jest.Mock };
-  let timeouts: { arm: jest.Mock; register: jest.Mock };
-  let debatesService: { findInProgressIds: jest.Mock };
+  let timeouts: { arm: jest.Mock; clear: jest.Mock; register: jest.Mock };
+  let debatesService: { findInProgressIds: jest.Mock; findOneDto: jest.Mock };
   let state: DebateChatState;
   let clock: Date;
   let store: { withState: jest.Mock };
@@ -92,23 +93,31 @@ describe('DebateChatService', () => {
       debateStatus: DebateStatus.IN_PROGRESS,
       startedAt: NOW,
       endedAt: null,
+      expiresAt: null,
+      winnerId: null,
       turns: [],
       drafts: [],
       now: () => clock,
     });
     store = {
+      // 실제 저장소는 상태를 열면서 먼저 토론을 시작시킨다(P2-3). 그 계약을 그대로 흉내 낸다.
       withState: jest
         .fn()
         .mockImplementation(
-          (_debateId: string, work: (s: DebateChatState) => unknown) =>
-            Promise.resolve(work(state)),
+          (_debateId: string, work: (s: DebateChatState) => unknown) => {
+            state.start();
+            return Promise.resolve(work(state));
+          },
         ),
     };
 
     publisher = { turnFinalized: jest.fn(), debateEnded: jest.fn() };
     pipeline = { start: jest.fn().mockResolvedValue(undefined) };
-    timeouts = { arm: jest.fn(), register: jest.fn() };
-    debatesService = { findInProgressIds: jest.fn().mockResolvedValue([]) };
+    timeouts = { arm: jest.fn(), clear: jest.fn(), register: jest.fn() };
+    debatesService = {
+      findInProgressIds: jest.fn().mockResolvedValue([]),
+      findOneDto: jest.fn().mockResolvedValue({ id: DEBATE_ID }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -363,6 +372,122 @@ describe('DebateChatService', () => {
       debatesService.findInProgressIds.mockRejectedValue(new Error('db down'));
 
       await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
+    });
+  });
+  describe('start', () => {
+    // 상태 전이는 저장소가 상태를 열 때 하는 state.start()와 같은 것이라, 여기서는
+    // 권한·상태 검사와 타이머·응답만 확인한다.
+    const buildReady = () =>
+      DebateChatState.rehydrate({
+        debateId: DEBATE_ID,
+        communityId: COMMUNITY_ID,
+        speakers: {
+          [DebateSide.SIDE_A]: HOST_ID,
+          [DebateSide.SIDE_B]: OPPONENT_ID,
+        },
+        schedule: new DebateTurnSchedule(0),
+        limits: {
+          maxContentLength: 10,
+          maxTotalCharacters: 30,
+          maxDurationSeconds: 180,
+        },
+        debateStatus: DebateStatus.READY,
+        startedAt: null,
+        endedAt: null,
+        expiresAt: null,
+        winnerId: null,
+        turns: [],
+        drafts: [],
+        now: () => clock,
+      });
+
+    it('아직 시작 전인 토론을 진행 중으로 바꾸고 첫 차례의 타이머를 건다', async () => {
+      state = buildReady();
+
+      await expect(service.start(DEBATE_ID, HOST_ID)).resolves.toEqual({
+        id: DEBATE_ID,
+      });
+
+      expect(state.currentStatus).toBe(DebateStatus.IN_PROGRESS);
+      expect(timeouts.arm).toHaveBeenCalledWith(
+        DEBATE_ID,
+        new Date(NOW.getTime() + 180_000),
+      );
+    });
+
+    it('이미 진행 중인 토론에 다시 불러도 그대로 성공한다(멱등)', async () => {
+      await expect(service.start(DEBATE_ID, HOST_ID)).resolves.toEqual({
+        id: DEBATE_ID,
+      });
+      expect(state.currentStatus).toBe(DebateStatus.IN_PROGRESS);
+    });
+
+    it('관전자는 시작할 수 없다', async () => {
+      await expectCode(
+        service.start(DEBATE_ID, 'watcher-uuid'),
+        DebateChatErrorCode.NOT_PARTICIPANT.code,
+      );
+    });
+
+    it('이미 끝난 토론은 다시 시작할 수 없다', async () => {
+      state = buildReady();
+      state.start();
+      // 모든 차례가 확정돼 끝난 토론.
+      for (const [side, phase] of ALL_TURNS) {
+        state.appendDraft(opening(side).speakerId, {
+          ...opening(side),
+          phase,
+          content: '가',
+        });
+        state.finalizeTurn(opening(side).speakerId, {
+          ...opening(side),
+          phase,
+        });
+      }
+      state.drainChanges();
+
+      await expectCode(
+        service.start(DEBATE_ID, HOST_ID),
+        DebateErrorCode.ALREADY_ENDED.code,
+      );
+    });
+  });
+
+  describe('forfeit', () => {
+    it('발언자가 기권하면 FAILED로 끝내고 타이머를 풀며 방에 알린다(R-3)', async () => {
+      await service.forfeit(DEBATE_ID, HOST_ID);
+
+      expect(state.currentStatus).toBe(DebateStatus.FAILED);
+      expect(timeouts.clear).toHaveBeenCalledWith(DEBATE_ID);
+      expect(publisher.debateEnded).toHaveBeenCalledWith({
+        communityId: COMMUNITY_ID,
+        debateId: DEBATE_ID,
+        status: DebateStatus.FAILED,
+        reason: DebateEndReason.FORFEIT,
+      });
+      // 판정 파이프라인은 띄우지 않는다.
+      expect(pipeline.start).not.toHaveBeenCalled();
+    });
+
+    it('기권 뒤 발언·확정 명령은 진행 중이 아니라는 이유로 거절된다', async () => {
+      await service.forfeit(DEBATE_ID, OPPONENT_ID);
+
+      await expectCode(
+        send(DebateSide.SIDE_A, '가'),
+        DebateChatErrorCode.NOT_IN_PROGRESS.code,
+      );
+      await expectCode(
+        service.finalizeTurn(DEBATE_ID, HOST_ID, opening(DebateSide.SIDE_A)),
+        DebateChatErrorCode.NOT_IN_PROGRESS.code,
+      );
+    });
+
+    it('관전자는 기권할 수 없다', async () => {
+      await expectCode(
+        service.forfeit(DEBATE_ID, 'watcher-uuid'),
+        DebateChatErrorCode.NOT_PARTICIPANT.code,
+      );
+      expect(publisher.debateEnded).not.toHaveBeenCalled();
     });
   });
 });
