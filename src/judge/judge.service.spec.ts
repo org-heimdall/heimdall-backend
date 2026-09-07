@@ -81,8 +81,7 @@ describe('JudgeService', () => {
       memberId: HOST_ID,
       debateId: DEBATE_ID,
       body: '규제가 필요하다.',
-      debate_turn: 1,
-      remaining_length: null,
+      sequence: 1,
       remaining_images_count: null,
       imageUrl: null,
       status: ResourceStatus.NORMAL,
@@ -512,18 +511,18 @@ describe('JudgeService', () => {
       expect(membersService.deductSocialCredit).not.toHaveBeenCalled();
     });
 
-    it('삭제되지 않은 메시지만 debate_turn 오름차순으로 읽어 발화자를 표시한다', async () => {
+    it('삭제되지 않은 확정 턴만 sequence 오름차순으로 읽어 발화자를 표시한다', async () => {
       debateRepository.findOne.mockResolvedValue(buildDebate());
       debateMessageRepository.find.mockResolvedValue([
-        buildMessage({ memberId: HOST_ID, debate_turn: 1, body: '찬성한다' }),
+        buildMessage({ memberId: HOST_ID, sequence: 1, body: '찬성한다' }),
         buildMessage({
           memberId: OPPONENT_ID,
-          debate_turn: 2,
+          sequence: 2,
           body: '반대한다',
           imageUrl: 'https://cdn.example.com/a.png',
         }),
         // 참가자가 아닌 회원의 발화(데이터 이상)는 판정 입력에서 제외한다.
-        buildMessage({ memberId: 'spectator-uuid', debate_turn: 3 }),
+        buildMessage({ memberId: 'spectator-uuid', sequence: 3 }),
       ]);
       judge.judge.mockResolvedValue(buildResult());
 
@@ -531,7 +530,7 @@ describe('JudgeService', () => {
 
       expect(debateMessageRepository.find).toHaveBeenCalledWith({
         where: { debateId: DEBATE_ID, status: ResourceStatus.NORMAL },
-        order: { debate_turn: 'ASC' },
+        order: { sequence: 'ASC' },
       });
       expect(judge.judge).toHaveBeenCalledWith({
         topic: 'AI 규제, 필요한가?',

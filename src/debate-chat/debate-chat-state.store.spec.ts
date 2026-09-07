@@ -66,7 +66,6 @@ describe('RedisDebateChatStateStore', () => {
       memberId,
       debateId: DEBATE_ID,
       body,
-      debate_turn: null,
       sequence,
       createdAt: NOW,
       status: ResourceStatus.NORMAL,

@@ -191,13 +191,13 @@ export class JudgeService {
     };
   }
 
-  // DB로부터 debate_turn 오름차순으로 메시지를 조회하여 발화자를 host/opponent로 표시한다.
+  // DB로부터 sequence(확정 순서) 오름차순으로 확정 턴을 조회하여 발화자를 host/opponent로 표시한다.
   private async loadTranscript(
     debate: Debate,
   ): Promise<DebateTranscriptTurn[]> {
     const messages = await this.debateMessageRepository.find({
       where: { debateId: debate.id, status: ResourceStatus.NORMAL },
-      order: { debate_turn: 'ASC' },
+      order: { sequence: 'ASC' },
     });
 
     return messages
@@ -213,7 +213,7 @@ export class JudgeService {
 
         return {
           speaker,
-          turn: message.debate_turn,
+          turn: message.sequence,
           body: message.body,
           imageUrl: message.imageUrl,
         };
