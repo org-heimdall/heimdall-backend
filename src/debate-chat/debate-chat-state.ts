@@ -1,116 +1,47 @@
 import { randomUUID } from 'node:crypto';
 import { GeneralException } from '../common/exceptions/general.exception';
+import {
+  DebateChatTurn,
+  DebateSide,
+  DebatePhase,
+  DebateSpeakers,
+  DebateTurnSchedule,
+  TurnSlot,
+  CurrentTurnPosition,
+  deriveCurrentTurn,
+  oppositeSide,
+  resolveSide,
+  resolveSpeakers,
+} from '../debates/debate-turn';
 import { Debate } from '../debates/entities/debate.entity';
 import {
   CurrentTurn,
   DebateChatSnapshot,
-  DebateChatTurn,
   DebateEndReason,
-  DebatePhase,
-  DebateSide,
   DebateStatus,
   DraftAppendStatus,
   DraftMessage,
 } from './debate-chat.types';
 import { DebateChatErrorCode } from './exceptions/debate-chat-error-code';
 
-export interface TurnSlot {
-  phase: DebatePhase;
-  round: number;
-  side: DebateSide;
-}
+// 턴 순서·편 매핑은 debates 도메인이 소유한다(REST와 같은 규칙을 쓰기 위해). 기존 import 경로를
+// 유지하려는 곳이 있어 여기서 그대로 다시 내보낸다.
+export { DebateTurnSchedule };
+export type { DebateSpeakers, TurnSlot };
 
-/**
- * 토론 1건의 발언 순서. OPENING(1라운드) → REBUTTAL_QUESTION(N라운드) → CLOSING(1라운드),
- * 모든 라운드는 SIDE_A → SIDE_B(D6). 순서 규칙이 바뀌면 build()만 고치면 된다.
- */
-export class DebateTurnSchedule {
-  private readonly slots: readonly TurnSlot[];
-
-  constructor(rebuttalQuestionRounds: number) {
-    if (
-      !Number.isInteger(rebuttalQuestionRounds) ||
-      rebuttalQuestionRounds < 0
-    ) {
-      throw new Error(
-        `반론·질의 라운드 수가 올바르지 않습니다: ${rebuttalQuestionRounds}`,
-      );
-    }
-    this.slots = DebateTurnSchedule.build(rebuttalQuestionRounds);
+// 편이 반드시 정해져 있어야 하는 채팅 전용 매핑. 상대가 없는 토론은 채팅을 열 수 없다.
+export function toSpeakers(debate: Debate): DebateSpeakers {
+  const speakers = resolveSpeakers(debate);
+  if (speakers === null) {
+    throw new GeneralException(DebateChatErrorCode.OPPONENT_MISSING);
   }
-
-  first(): TurnSlot {
-    return this.slots[0];
-  }
-
-  // 확정 턴 수 index에 해당하는 차례. 전부 확정됐으면 null(현재 차례를 저장하지 않고 파생하는 근거).
-  at(index: number): TurnSlot | null {
-    return index >= 0 && index < this.slots.length ? this.slots[index] : null;
-  }
-
-  // 현재 차례의 다음 차례. 마지막이면 null.
-  next(current: TurnSlot): TurnSlot | null {
-    const index = this.indexOf(current);
-    return index + 1 < this.slots.length ? this.slots[index + 1] : null;
-  }
-
-  isLast(current: TurnSlot): boolean {
-    return this.indexOf(current) === this.slots.length - 1;
-  }
-
-  toArray(): TurnSlot[] {
-    return [...this.slots];
-  }
-
-  // 스케줄에 없는 차례를 넘기는 것은 호출자 버그이므로 비즈니스 예외가 아닌 Error로 드러낸다.
-  private indexOf(slot: TurnSlot): number {
-    const index = this.slots.findIndex(
-      (candidate) =>
-        candidate.phase === slot.phase &&
-        candidate.round === slot.round &&
-        candidate.side === slot.side,
-    );
-    if (index < 0) {
-      throw new Error(
-        `스케줄에 없는 차례입니다: ${slot.phase}/${slot.round}/${slot.side}`,
-      );
-    }
-    return index;
-  }
-
-  private static build(rebuttalQuestionRounds: number): TurnSlot[] {
-    const slots: TurnSlot[] = [];
-    const pushRound = (phase: DebatePhase, round: number) => {
-      slots.push({ phase, round, side: DebateSide.SIDE_A });
-      slots.push({ phase, round, side: DebateSide.SIDE_B });
-    };
-
-    pushRound(DebatePhase.OPENING, 1);
-    for (let round = 1; round <= rebuttalQuestionRounds; round++) {
-      pushRound(DebatePhase.REBUTTAL_QUESTION, round);
-    }
-    pushRound(DebatePhase.CLOSING, 1);
-    return slots;
-  }
+  return speakers;
 }
 
 export interface DebateTurnLimits {
   maxContentLength: number;
   maxTotalCharacters: number;
   maxDurationSeconds: number;
-}
-
-export type DebateSpeakers = Record<DebateSide, string>;
-
-// 기존 엔티티(host/opponent) → 계약(SIDE_A/SIDE_B) 매핑의 단일 출처(D3: 엔티티는 바꾸지 않는다).
-export function toSpeakers(debate: Debate): DebateSpeakers {
-  if (debate.opponentId === null) {
-    throw new GeneralException(DebateChatErrorCode.OPPONENT_MISSING);
-  }
-  return {
-    [DebateSide.SIDE_A]: debate.hostId,
-    [DebateSide.SIDE_B]: debate.opponentId,
-  };
 }
 
 // 명령이 가리키는 차례(발언자 + phase/round). send/finalize 공통.
@@ -132,11 +63,14 @@ export interface TurnFinalizeResult {
   ended: boolean;
 }
 
-// debate 행에 반영할 변경. 세 값을 함께 쓰므로 부분 갱신 없이 통째로 넘긴다.
+// debate 행에 반영할 변경. 함께 움직이는 값이라 부분 갱신 없이 통째로 넘긴다.
+// 상태가 읽어 온 값 그대로를 다시 쓰는 필드(winnerId 등)가 섞여 있어도 결과는 같다.
 export interface DebateRowChanges {
   debateStatus: DebateStatus;
   startedAt: Date | null;
   endedAt: Date | null;
+  expiresAt: Date | null;
+  winnerId: string | null;
 }
 
 /**
@@ -173,6 +107,8 @@ export interface DebateChatStateProps {
   debateStatus: DebateStatus;
   startedAt: Date | null;
   endedAt: Date | null;
+  expiresAt: Date | null;
+  winnerId: string | null;
   // 확정된 턴(sequence 오름차순)과 현재 차례의 draft.
   turns: DebateChatTurn[];
   drafts: DraftMessage[];
@@ -202,6 +138,8 @@ export class DebateChatState {
   private status: DebateStatus;
   private startedAt: Date | null;
   private endedAt: Date | null;
+  private expiresAt: Date | null;
+  private winnerId: string | null;
   private readonly turns: DebateChatTurn[];
   private drafts: DraftMessage[];
   private readonly draftsByClientMessageId: Map<string, DraftMessage>;
@@ -218,6 +156,8 @@ export class DebateChatState {
     this.status = props.debateStatus;
     this.startedAt = props.startedAt;
     this.endedAt = props.endedAt;
+    this.expiresAt = props.expiresAt;
+    this.winnerId = props.winnerId;
     this.turns = [...props.turns];
     this.drafts = [...props.drafts];
     this.draftsByClientMessageId = new Map(props.clientMessages ?? []);
@@ -244,14 +184,39 @@ export class DebateChatState {
     }
     this.status = DebateStatus.IN_PROGRESS;
     this.startedAt = this.now();
+    // 아무도 발언하지 않아도 차례가 제한 시간 간격으로 흘러 이 시각에 토론이 스스로 끝난다(R-6·D16).
+    this.expiresAt = new Date(
+      this.startedAt.getTime() +
+        this.schedule.size * this.limits.maxDurationSeconds * 1000,
+    );
     this.recordDebateChange();
+  }
+
+  /**
+   * 발언자가 기권한다(R-3). 토론은 판정 없이 FAILED로 끝나고 승자는 상대다.
+   * 관전자는 부를 수 없고(NOT_PARTICIPANT), 진행 중이 아니면 거절한다(NOT_IN_PROGRESS).
+   */
+  forfeit(memberId: string): void {
+    const side = this.requireSpeakerSide(memberId);
+    if (this.status !== DebateStatus.IN_PROGRESS) {
+      throw new GeneralException(DebateChatErrorCode.NOT_IN_PROGRESS);
+    }
+    this.winnerId = this.speakers[oppositeSide(side)];
+    this.end(DebateStatus.FAILED, DebateEndReason.FORFEIT);
+  }
+
+  // 발언자만 낼 수 있는 명령(REST의 /start·/forfeit)의 공통 검증.
+  requireSpeakerSide(memberId: string): DebateSide {
+    const side = this.resolveSide(memberId);
+    if (side === null) {
+      throw new GeneralException(DebateChatErrorCode.NOT_PARTICIPANT);
+    }
+    return side;
   }
 
   // 회원이 어느 편인지. 관전자는 null.
   resolveSide(memberId: string): DebateSide | null {
-    if (memberId === this.speakers[DebateSide.SIDE_A]) return DebateSide.SIDE_A;
-    if (memberId === this.speakers[DebateSide.SIDE_B]) return DebateSide.SIDE_B;
-    return null;
+    return resolveSide(this.speakers, memberId);
   }
 
   // draft 추가. 발언자·차례·길이를 검증하고, clientMessageId가 같으면 저장 없이 DUPLICATE로 응답한다.
@@ -398,24 +363,31 @@ export class DebateChatState {
       debateStatus: this.status,
       startedAt: this.startedAt,
       endedAt: this.endedAt,
+      expiresAt: this.expiresAt,
+      winnerId: this.winnerId,
     };
+  }
+
+  // 현재 차례와 그 시작 시각. 규칙은 REST와 공유하는 deriveCurrentTurn 하나뿐이다(P2-8).
+  private currentPosition(): CurrentTurnPosition | null {
+    const lastTurn = this.turns[this.turns.length - 1];
+    return deriveCurrentTurn({
+      debateStatus: this.status,
+      schedule: this.schedule,
+      finalizedTurnCount: this.turns.length,
+      lastTurnCreatedAt: lastTurn ? new Date(lastTurn.createdAt) : null,
+      startedAt: this.startedAt,
+    });
   }
 
   // 현재 차례. 진행 중이 아니거나 모든 차례가 끝났으면 null.
   private currentSlot(): TurnSlot | null {
-    if (this.status !== DebateStatus.IN_PROGRESS) {
-      return null;
-    }
-    return this.schedule.at(this.turns.length);
+    return this.currentPosition()?.slot ?? null;
   }
 
-  // 현재 차례가 시작된 시각 = 마지막 확정 턴의 createdAt, 없으면 토론 시작 시각(P2-8).
+  // 현재 차례가 시작된 시각.
   private currentTurnStartedAt(): Date | null {
-    if (this.currentSlot() === null) {
-      return null;
-    }
-    const lastTurn = this.turns[this.turns.length - 1];
-    return lastTurn ? new Date(lastTurn.createdAt) : this.startedAt;
+    return this.currentPosition()?.startedAt ?? null;
   }
 
   private currentTurn(): CurrentTurn | null {

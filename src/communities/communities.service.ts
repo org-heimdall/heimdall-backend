@@ -111,7 +111,7 @@ export class CommunitiesService {
   // 커뮤니티 삭제: host만 가능. 커뮤니티 엔티티만 soft-delete(상태 전환)하고
   // 자식 리소스(favorite/member_community)는 그대로 둔다.
   async delete(communityId: string, currentMemberId: string): Promise<void> {
-    const community = await this.getCommunityOrThrow(communityId);
+    const community = await this.findOneOrThrow(communityId);
     if (community.hostId !== currentMemberId) {
       throw new GeneralException(CommunityErrorCode.DELETE_FORBIDDEN);
     }
@@ -125,7 +125,7 @@ export class CommunitiesService {
     communityId: string,
     memberType?: CommunityMemberType,
   ): Promise<MemberPreviewDto[]> {
-    const community = await this.getCommunityOrThrow(communityId);
+    const community = await this.findOneOrThrow(communityId);
 
     const participants =
       await this.memberCommunitiesService.findParticipants(communityId);
@@ -181,7 +181,7 @@ export class CommunitiesService {
     memberId: string,
     keynoteDto: KeynoteDto,
   ): Promise<KeynoteDto> {
-    await this.getCommunityOrThrow(communityId);
+    await this.findOneOrThrow(communityId);
 
     const saved = await this.memberCommunitiesService.upsertKeynote(
       memberId,
@@ -196,9 +196,60 @@ export class CommunitiesService {
     };
   }
 
+  /**
+   * 커뮤니티 참여(본인). 이미 참여 중이면 아무 일도 하지 않는다(멱등) —
+   * 참여 행이 실제로 생겼을 때만 인원 수를 늘려야 하므로 둘을 한 트랜잭션에서 처리한다.
+   */
+  async joinMe(communityId: string, memberId: string): Promise<void> {
+    await this.findOneOrThrow(communityId);
+
+    await this.dataSource.transaction(async (manager) => {
+      const joined = await this.memberCommunitiesService.insertIfAbsent(
+        memberId,
+        communityId,
+        manager,
+      );
+      if (joined) {
+        await manager.increment(
+          Community,
+          { id: communityId },
+          'memberCount',
+          1,
+        );
+      }
+    });
+  }
+
+  /**
+   * 커뮤니티 나가기(본인). 참여 중이 아니면 아무 일도 하지 않는다(멱등).
+   * 방장은 나갈 수 없다 — hostId가 참여자가 아닌 커뮤니티가 되어 참여자 분류·토론 생성이 깨진다.
+   */
+  async leaveMe(communityId: string, memberId: string): Promise<void> {
+    const community = await this.findOneOrThrow(communityId);
+    if (community.hostId === memberId) {
+      throw new GeneralException(CommunityErrorCode.HOST_CANNOT_LEAVE);
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const left = await this.memberCommunitiesService.deleteOne(
+        memberId,
+        communityId,
+        manager,
+      );
+      if (left) {
+        await manager.decrement(
+          Community,
+          { id: communityId },
+          'memberCount',
+          1,
+        );
+      }
+    });
+  }
+
   // 즐겨찾기 추가: (memberId, communityId) 유니크 제약 기반 upsert로 원자적 처리
   async addMyFavorite(communityId: string, memberId: string): Promise<void> {
-    await this.getCommunityOrThrow(communityId);
+    await this.findOneOrThrow(communityId);
 
     await this.communityFavoriteRepository.upsert(
       { memberId, communityId, isFavored: true },
@@ -208,7 +259,7 @@ export class CommunitiesService {
 
   // 즐겨찾기 삭제: 단일 UPDATE로 isFavored=false 처리 (row가 없으면 no-op)
   async deleteMyFavorite(communityId: string, memberId: string): Promise<void> {
-    await this.getCommunityOrThrow(communityId);
+    await this.findOneOrThrow(communityId);
 
     await this.communityFavoriteRepository.update(
       { memberId, communityId },
@@ -253,7 +304,8 @@ export class CommunitiesService {
     return new Map(members.map((member) => [member.id, member]));
   }
 
-  private async getCommunityOrThrow(communityId: string): Promise<Community> {
+  // 커뮤니티 1건 조회(soft-delete 제외). 다른 도메인(토론 생성 등)도 이 경로로만 커뮤니티를 읽는다.
+  async findOneOrThrow(communityId: string): Promise<Community> {
     const community = await this.communityRepository.findOneBy({
       id: communityId,
       status: ResourceStatus.NORMAL,

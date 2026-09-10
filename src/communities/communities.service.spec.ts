@@ -34,6 +34,8 @@ describe('CommunitiesService', () => {
     findParticipants: jest.Mock;
     findOne: jest.Mock;
     upsertKeynote: jest.Mock;
+    insertIfAbsent: jest.Mock;
+    deleteOne: jest.Mock;
   };
   let queryBuilder: {
     where: jest.Mock;
@@ -49,7 +51,11 @@ describe('CommunitiesService', () => {
     unknown,
     { create: jest.Mock; save: jest.Mock; delete: jest.Mock }
   >;
-  let manager: { getRepository: jest.Mock };
+  let manager: {
+    getRepository: jest.Mock;
+    increment: jest.Mock;
+    decrement: jest.Mock;
+  };
 
   const buildMember = (overrides: Partial<Member> = {}): Member =>
     Object.assign(new Member(), {
@@ -89,6 +95,8 @@ describe('CommunitiesService', () => {
 
     txRepos = new Map();
     manager = {
+      increment: jest.fn().mockResolvedValue({ affected: 1 }),
+      decrement: jest.fn().mockResolvedValue({ affected: 1 }),
       getRepository: jest.fn((entity: unknown) => {
         if (!txRepos.has(entity)) {
           txRepos.set(entity, {
@@ -115,6 +123,8 @@ describe('CommunitiesService', () => {
       findParticipants: jest.fn(),
       findOne: jest.fn(),
       upsertKeynote: jest.fn(),
+      insertIfAbsent: jest.fn().mockResolvedValue(true),
+      deleteOne: jest.fn().mockResolvedValue(true),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -392,6 +402,102 @@ describe('CommunitiesService', () => {
       );
 
       expect(result).toEqual({ opinion: '찬성', reasons: ['이유1'] });
+    });
+  });
+
+  describe('joinMe (커뮤니티 참여)', () => {
+    beforeEach(() => {
+      communityRepository.findOneBy.mockResolvedValue({
+        id: 'community-uuid',
+        hostId: 'host-uuid',
+      });
+    });
+
+    it('참여 행을 넣고 같은 트랜잭션에서 참여자 수를 1 늘린다', async () => {
+      await service.joinMe('community-uuid', 'member-uuid');
+
+      expect(memberCommunitiesService.insertIfAbsent).toHaveBeenCalledWith(
+        'member-uuid',
+        'community-uuid',
+        manager,
+      );
+      expect(manager.increment).toHaveBeenCalledWith(
+        Community,
+        { id: 'community-uuid' },
+        'memberCount',
+        1,
+      );
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('이미 참여 중이면 참여자 수를 늘리지 않는다(멱등)', async () => {
+      memberCommunitiesService.insertIfAbsent.mockResolvedValue(false);
+
+      await expect(
+        service.joinMe('community-uuid', 'member-uuid'),
+      ).resolves.toBeUndefined();
+      expect(manager.increment).not.toHaveBeenCalled();
+    });
+
+    it('커뮤니티가 없으면 NOT_FOUND를 던지고 아무것도 넣지 않는다', async () => {
+      communityRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.joinMe('community-uuid', 'member-uuid'),
+      ).rejects.toMatchObject({ appError: CommunityErrorCode.NOT_FOUND });
+      expect(memberCommunitiesService.insertIfAbsent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('leaveMe (커뮤니티 나가기)', () => {
+    beforeEach(() => {
+      communityRepository.findOneBy.mockResolvedValue({
+        id: 'community-uuid',
+        hostId: 'host-uuid',
+      });
+    });
+
+    it('참여 행을 지우고 같은 트랜잭션에서 참여자 수를 1 줄인다', async () => {
+      await service.leaveMe('community-uuid', 'member-uuid');
+
+      expect(memberCommunitiesService.deleteOne).toHaveBeenCalledWith(
+        'member-uuid',
+        'community-uuid',
+        manager,
+      );
+      expect(manager.decrement).toHaveBeenCalledWith(
+        Community,
+        { id: 'community-uuid' },
+        'memberCount',
+        1,
+      );
+    });
+
+    it('참여 중이 아니었으면 참여자 수를 줄이지 않는다(멱등)', async () => {
+      memberCommunitiesService.deleteOne.mockResolvedValue(false);
+
+      await expect(
+        service.leaveMe('community-uuid', 'member-uuid'),
+      ).resolves.toBeUndefined();
+      expect(manager.decrement).not.toHaveBeenCalled();
+    });
+
+    it('방장은 나갈 수 없다', async () => {
+      await expect(
+        service.leaveMe('community-uuid', 'host-uuid'),
+      ).rejects.toMatchObject({
+        appError: CommunityErrorCode.HOST_CANNOT_LEAVE,
+      });
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('커뮤니티가 없으면 NOT_FOUND를 던진다', async () => {
+      communityRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.leaveMe('community-uuid', 'member-uuid'),
+      ).rejects.toMatchObject({ appError: CommunityErrorCode.NOT_FOUND });
+      expect(memberCommunitiesService.deleteOne).not.toHaveBeenCalled();
     });
   });
 

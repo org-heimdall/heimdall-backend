@@ -11,16 +11,18 @@ import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
 import {
-  DebateChatState,
-  DebateChatStateChanges,
   DebateSpeakers,
   DebateTurnSchedule,
+  toDebateTurn,
+} from '../debates/debate-turn';
+import {
+  DebateChatState,
+  DebateChatStateChanges,
   toSpeakers,
 } from './debate-chat-state';
 import { DebateChatConfig } from './debate-chat.config';
 import {
   DebateChatTurn,
-  DebateSide,
   DebateStatus,
   DraftMessage,
 } from './debate-chat.types';
@@ -134,7 +136,8 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
   private async load(debateId: string): Promise<DebateChatState> {
     const debate = await this.debatesService.findOneOrThrow(debateId);
     const speakers = toSpeakers(debate);
-    const schedule = new DebateTurnSchedule(debate.community.debateRoundCount);
+    // 라운드 수는 토론이 소유한다(R-1). 커뮤니티 설정이 뒤에 바뀌어도 진행 중인 토론은 흔들리지 않는다.
+    const schedule = new DebateTurnSchedule(debate.rebuttalQuestionRounds);
     const turns = await this.loadTurns(debate.id, speakers, schedule);
     const { drafts, clientMessages } = await this.loadDraftState(
       debateId,
@@ -151,6 +154,8 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
       debateStatus: debate.debateStatus ?? DebateStatus.READY,
       startedAt: debate.startedAt,
       endedAt: debate.endedAt,
+      expiresAt: debate.expiresAt,
+      winnerId: debate.winnerId,
       turns,
       drafts,
       clientMessages,
@@ -171,38 +176,7 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
       },
       order: { sequence: 'ASC' },
     });
-    return rows.map((row) => this.toTurn(row, speakers, schedule));
-  }
-
-  // phase/round는 스케줄에서, 편은 발언자에서 파생한다(P2-8: 사실만 저장하고 나머지는 계산).
-  private toTurn(
-    row: DebateMessage,
-    speakers: DebateSpeakers,
-    schedule: DebateTurnSchedule,
-  ): DebateChatTurn {
-    const sequence = row.sequence as number;
-    const slot = schedule.at(sequence - 1);
-    if (slot === null) {
-      throw new Error(
-        `스케줄 범위를 벗어난 확정 턴입니다: debateId=${row.debateId}, sequence=${sequence}`,
-      );
-    }
-    const speakerSide =
-      row.memberId === speakers[DebateSide.SIDE_A]
-        ? DebateSide.SIDE_A
-        : DebateSide.SIDE_B;
-
-    return {
-      id: row.id,
-      debateId: row.debateId,
-      speakerId: row.memberId,
-      speakerSide,
-      phase: slot.phase,
-      round: slot.round,
-      content: row.body ?? '',
-      createdAt: row.createdAt.toISOString(),
-      sequence,
-    };
+    return rows.map((row) => toDebateTurn(row, speakers, schedule));
   }
 
   // 현재 차례의 draft와 토론 단위 clientMessageId 기록.

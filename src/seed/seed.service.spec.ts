@@ -67,7 +67,11 @@ describe('SeedService', () => {
       // 커뮤니티도 이미 존재 → seedCommunities는 전부 건너뛴다.
       exists: jest.fn().mockResolvedValue(true),
       findOneBy: jest.fn(({ topic }: { topic: string }) =>
-        Promise.resolve(topic === TOPIC ? { id: COMMUNITY_ID, topic } : null),
+        Promise.resolve(
+          topic === TOPIC
+            ? { id: COMMUNITY_ID, topic, debateRoundCount: 3 }
+            : null,
+        ),
       ),
     };
     debateRepository = {
@@ -156,6 +160,16 @@ describe('SeedService', () => {
         sequence: 3,
       },
     ]);
+  });
+
+  it('주제·반론 질의 라운드 수는 커뮤니티 값을 토론에 복사한다', async () => {
+    debateSeedSource.load.mockResolvedValue([buildSeed()]);
+
+    await service.seed();
+
+    expect(debateRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: TOPIC, rebuttalQuestionRounds: 3 }),
+    );
   });
 
   it('시드 토론은 이미 끝난 토론(DEBATE_FINALIZED)으로 넣어 채팅이 이어지지 않게 한다', async () => {

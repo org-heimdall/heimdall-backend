@@ -19,7 +19,7 @@ import {
 import { DebateChatPublisher } from './debate-chat.publisher';
 import {
   DebateChatSnapshotDto,
-  DebateChatTurnDto,
+  DebateTurnDto,
   DebateTurnMessageAppendResultDto,
 } from './debate-chat.response.dto';
 import { DebateChatService } from './debate-chat.service';
@@ -109,7 +109,7 @@ export class DebateChatController {
       '현재 차례의 draft를 개행으로 이어 붙여 하나의 턴으로 확정하고 다음 차례로 넘긴다. ' +
       'draft가 없으면 확정할 수 없다.',
   })
-  @ApiOkResponse({ description: '확정 성공', type: DebateChatTurnDto })
+  @ApiOkResponse({ description: '확정 성공', type: DebateTurnDto })
   @ApiErrorResponses(
     DebateErrorCode.NOT_FOUND,
     DebateChatErrorCode.NOT_PARTICIPANT,
@@ -127,7 +127,7 @@ export class DebateChatController {
     @Param('debateId', ParseUUIDPipe) debateId: string,
     @CurrentMember() memberId: string,
     @Body() request: DebateTurnFinalizeRequestDto,
-  ): Promise<DebateChatTurnDto> {
+  ): Promise<DebateTurnDto> {
     return this.service.finalizeTurn(debateId, memberId, request.toPayload());
   }
 }

@@ -1,4 +1,6 @@
 import { GeneralException } from '../common/exceptions/general.exception';
+import { DebateDto } from '../debates/dto/debate.dto';
+import { Debate } from '../debates/entities/debate.entity';
 import {
   DebateChatState,
   DebateChatStateProps,
@@ -121,6 +123,8 @@ describe('DebateChatState', () => {
       debateStatus: DebateStatus.IN_PROGRESS,
       startedAt: NOW,
       endedAt: null,
+      expiresAt: null,
+      winnerId: null,
       turns: [],
       drafts: [],
       now: () => clock,
@@ -496,6 +500,11 @@ describe('DebateChatState', () => {
         debateStatus: DebateStatus.IN_PROGRESS,
         startedAt: clock,
         endedAt: null,
+        // 시작 시각 + 차례 수(4) × 제한 시간(R-6)
+        expiresAt: new Date(
+          clock.getTime() + 4 * limits.maxDurationSeconds * 1000,
+        ),
+        winnerId: null,
       });
     });
 
@@ -733,5 +742,110 @@ describe('DebateChatState', () => {
         endReason: DebateEndReason.ALL_TURNS_FINALIZED,
       });
     });
+  });
+  describe('forfeit', () => {
+    it('발언자가 기권하면 FAILED로 끝나고 승자는 상대다(R-3)', () => {
+      clock = new Date(NOW.getTime() + 10_000);
+
+      state.forfeit(SIDE_A_ID);
+
+      expect(state.currentStatus).toBe(DebateStatus.FAILED);
+      expect(state.snapshot().currentTurn).toBeNull();
+      const changes = state.drainChanges();
+      expect(changes.endReason).toBe(DebateEndReason.FORFEIT);
+      expect(changes.debate).toMatchObject({
+        debateStatus: DebateStatus.FAILED,
+        endedAt: clock,
+        winnerId: SIDE_B_ID,
+      });
+    });
+
+    it('관전자는 기권할 수 없다', () => {
+      expectError(
+        () => state.forfeit('watcher-uuid'),
+        DebateChatErrorCode.NOT_PARTICIPANT,
+      );
+      expect(state.currentStatus).toBe(DebateStatus.IN_PROGRESS);
+    });
+
+    it('진행 중이 아니면 기권할 수 없다', () => {
+      const ended = build({
+        debateStatus: DebateStatus.DEBATE_FINALIZED,
+        endedAt: NOW,
+      });
+
+      expectError(
+        () => ended.forfeit(SIDE_A_ID),
+        DebateChatErrorCode.NOT_IN_PROGRESS,
+      );
+      expect(ended.drainChanges().debate).toBeNull();
+    });
+
+    it('기권한 뒤에는 발언·확정 명령을 받지 않는다', () => {
+      state.forfeit(SIDE_B_ID);
+
+      expectError(
+        () =>
+          state.appendDraft(SIDE_A_ID, {
+            ...opening(DebateSide.SIDE_A),
+            content: '가',
+          }),
+        DebateChatErrorCode.NOT_IN_PROGRESS,
+      );
+      expectError(
+        () => state.finalizeTurn(SIDE_A_ID, opening(DebateSide.SIDE_A)),
+        DebateChatErrorCode.NOT_IN_PROGRESS,
+      );
+    });
+  });
+
+  describe('REST와 같은 현재 차례 파생', () => {
+    // 채팅 상태와 Debate DTO가 다른 답을 내면 프론트가 두 화면에서 다른 차례를 본다.
+    // 두 곳 모두 deriveCurrentTurn 하나만 쓰는지 결과로 확인한다.
+    const debateRow: Debate = Object.assign(new Debate(), {
+      id: DEBATE_ID,
+      communityId: COMMUNITY_ID,
+      topic: '주제',
+      rebuttalQuestionRounds: 0,
+      hostId: SIDE_A_ID,
+      opponentId: SIDE_B_ID,
+      debateStatus: DebateStatus.IN_PROGRESS,
+      startedAt: NOW,
+      endedAt: null,
+      expiresAt: null,
+      winnerId: null,
+      createdAt: NOW,
+    });
+
+    it.each([0, 1, 3, 4])(
+      '확정 턴 %d개에서 두 파생 결과가 같다',
+      (turnCount) => {
+        const lastTurnAt = new Date(NOW.getTime() + turnCount * 60_000);
+        const turns = Array.from({ length: turnCount }, (_, index) =>
+          finalizedTurn(
+            index + 1,
+            new Date(NOW.getTime() + (index + 1) * 60_000),
+          ),
+        );
+        const chatTurn = build({ turns }).snapshot().currentTurn;
+
+        const dto = DebateDto.from(debateRow, {
+          finalizedTurnCount: turnCount,
+          lastTurnCreatedAt: turnCount === 0 ? null : lastTurnAt,
+        });
+
+        expect({
+          phase: dto.currentPhase,
+          round: dto.currentRound,
+          turnSide: dto.currentTurnSide,
+          startedAt: dto.currentTurnStartedAt,
+        }).toEqual({
+          phase: chatTurn?.phase ?? null,
+          round: chatTurn?.round ?? null,
+          turnSide: chatTurn?.turnSide ?? null,
+          startedAt: chatTurn?.startedAt ?? null,
+        });
+      },
+    );
   });
 });

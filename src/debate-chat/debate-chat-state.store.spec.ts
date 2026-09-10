@@ -41,15 +41,18 @@ describe('RedisDebateChatStateStore', () => {
       opponentId: OPPONENT_ID,
       opponentNickname: '호날두',
       currentTurn: DebateTurn.HOST,
+      topic: 'AI 규제, 필요한가?',
+      // N=0 → OPENING(A,B) → CLOSING(A,B) 4턴
+      rebuttalQuestionRounds: 0,
       debateStatus: DebateStatus.IN_PROGRESS,
       startedAt: NOW,
       endedAt: null,
+      expiresAt: null,
       winnerId: null,
       solution: null,
       status: ResourceStatus.NORMAL,
       community: Object.assign(new Community(), {
         id: COMMUNITY_ID,
-        // N=0 → OPENING(A,B) → CLOSING(A,B) 4턴
         debateRoundCount: 0,
         status: ResourceStatus.NORMAL,
       }),
@@ -413,6 +416,8 @@ describe('RedisDebateChatStateStore', () => {
         debateStatus: DebateStatus.DEBATE_FINALIZED,
         startedAt: NOW,
         endedAt: expect.any(Date) as unknown,
+        expiresAt: null,
+        winnerId: null,
       });
     });
   });
