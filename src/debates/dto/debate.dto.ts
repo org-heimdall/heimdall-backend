@@ -15,7 +15,7 @@ import type { DebateSpeakers } from '../debate-turn';
 import { DebateTurnWithVotesDto } from './debate-turn.dto';
 
 /**
- * 토론의 진행 정도. 현재 차례(phase/round/side)는 저장하지 않고 확정 턴에서 파생하므로(P2-8),
+ * 토론의 진행 정도. 현재 차례(phase/round/side)는 저장하지 않고 확정 턴에서 파생하므로,
  * DTO를 만들려면 확정 턴 수와 마지막 턴의 시각이 필요하다.
  */
 export interface DebateProgress {
@@ -80,8 +80,9 @@ export class DebateDto {
   endedAt: string | null;
 
   @ApiProperty({
+    example: '2026-09-07T12:12:30.000Z',
     nullable: true,
-    description: '판정 시작 시각. 판정 파이프라인 구현 전까지 항상 null.',
+    description: '판정이 시작된 시각. Judge 작업이 만들어질 때 기록된다.',
   })
   judgingStartedAt: string | null;
 
@@ -106,7 +107,7 @@ export class DebateDto {
       id: debate.id,
       communityId: debate.communityId,
       topic: debate.topic,
-      // 컬럼 이름은 host/opponent 그대로 두고 계약 이름으로만 바꿔 내보낸다(D3).
+      // 컬럼 이름은 host/opponent 그대로 두고 계약 이름으로만 바꿔 내보낸다.
       sideASpeakerId: debate.hostId,
       sideBSpeakerId: debate.opponentId,
       rebuttalQuestionRounds: debate.rebuttalQuestionRounds,
@@ -118,8 +119,7 @@ export class DebateDto {
       createdAt: debate.createdAt.toISOString(),
       startedAt: debate.startedAt?.toISOString() ?? null,
       endedAt: debate.endedAt?.toISOString() ?? null,
-      // TODO: 판정 파이프라인에서 judging_started_at 컬럼과 함께 채운다.
-      judgingStartedAt: null,
+      judgingStartedAt: debate.judgingStartedAt?.toISOString() ?? null,
       expiresAt: debate.expiresAt?.toISOString() ?? null,
     });
   }
@@ -135,7 +135,7 @@ export class DebateSpeakerDto {
   @ApiProperty({ example: 'https://cdn.example.com/1.png', nullable: true })
   profileImageUrl: string | null;
 
-  @ApiProperty({ example: 0, description: '회원이 영구적으로 갖는 점수(R-5)' })
+  @ApiProperty({ example: 0, description: '회원이 영구적으로 갖는 점수' })
   score: number;
 
   @ApiProperty({

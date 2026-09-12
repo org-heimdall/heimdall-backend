@@ -108,7 +108,7 @@ describe('Debate DTO 매퍼', () => {
       socialCredit: 100,
     });
 
-    it('회원의 프로필·영구 점수와 커뮤니티 기조 발언을 합친다(R-5)', () => {
+    it('회원의 프로필·영구 점수와 커뮤니티 기조 발언을 합친다', () => {
       const keynote = Object.assign(new MemberCommunity(), {
         memberId: HOST_ID,
         opinion: 'AI 규제는 필요하다',

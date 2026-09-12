@@ -59,7 +59,6 @@ describe('DebatesService', () => {
       endedAt: null,
       expiresAt: null,
       winnerId: null,
-      solution: null,
       createdAt: NOW,
       status: ResourceStatus.NORMAL,
       community: Object.assign(new Community(), {
@@ -407,7 +406,7 @@ describe('DebatesService', () => {
         expect.objectContaining({
           communityId: COMMUNITY_ID,
           topic: 'AI 규제, 필요한가?',
-          // 커뮤니티의 debateRoundCount(5)가 아니라 요청 값을 쓴다(R-1).
+          // 커뮤니티의 debateRoundCount(5)가 아니라 요청 값을 쓴다.
           rebuttalQuestionRounds: 3,
           hostId: HOST_ID,
           hostNickname: '메시',

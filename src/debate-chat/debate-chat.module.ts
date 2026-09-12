@@ -10,40 +10,35 @@ import {
   RedisDebateChatStateStore,
 } from './debate-chat-state.store';
 import { DebateChatConfig } from './debate-chat.config';
+import { DebateChatPublisherModule } from './debate-chat-publisher.module';
 import { DebateChatController } from './debate-chat.controller';
 import { DebateLifecycleController } from './debate-lifecycle.controller';
 import { DebateChatGateway } from './debate-chat.gateway';
-import { DebateChatPublisher } from './debate-chat.publisher';
 import { DebateChatService } from './debate-chat.service';
 import { DebateTurnTimeoutScheduler } from './debate-turn-timeout.scheduler';
-import {
-  DEBATE_PROCESSING_PIPELINE,
-  MockDebateProcessingPipeline,
-} from './debate-processing-pipeline';
+import { JudgeModule } from '../judge/judge.module';
 
 @Module({
   imports: [
     TokenModule,
     DebatesModule,
     RedisModule,
+    DebateChatPublisherModule,
+    // 확정된 턴을 처리(Analyzer→FactCheck→Judge)로 넘기는 파이프라인은 이 모듈이 제공한다.
+    JudgeModule,
     // 확정 턴 저장과 토론 상태 갱신은 저장소가 직접 한다(judge 모듈과 같은 방식).
     TypeOrmModule.forFeature([Debate, DebateMessage]),
   ],
   controllers: [DebateChatController, DebateLifecycleController],
   providers: [
     DebateChatConfig,
-    DebateChatPublisher,
     DebateChatService,
     DebateChatGateway,
     DebateTurnTimeoutScheduler,
-    // 상태는 Redis(draft·락) + Postgres(확정 턴). 파이프라인은 Phase 3에서 LLM 구현체로 교체한다.
+    // 상태는 Redis(draft·락) + Postgres(확정 턴).
     {
       provide: DEBATE_CHAT_STATE_STORE,
       useClass: RedisDebateChatStateStore,
-    },
-    {
-      provide: DEBATE_PROCESSING_PIPELINE,
-      useClass: MockDebateProcessingPipeline,
     },
   ],
   exports: [DebateChatService],

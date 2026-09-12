@@ -40,7 +40,7 @@ export interface TurnSlot {
 
 /**
  * 토론 1건의 발언 순서. OPENING(1라운드) → REBUTTAL_QUESTION(N라운드) → CLOSING(1라운드),
- * 모든 라운드는 SIDE_A → SIDE_B(D6). 순서 규칙이 바뀌면 build()만 고치면 된다.
+ * 모든 라운드는 SIDE_A → SIDE_B. 순서 규칙이 바뀌면 build()만 고치면 된다.
  */
 export class DebateTurnSchedule {
   private readonly slots: readonly TurnSlot[];
@@ -57,7 +57,7 @@ export class DebateTurnSchedule {
     this.slots = DebateTurnSchedule.build(rebuttalQuestionRounds);
   }
 
-  // 토론에 있는 차례의 총 개수. 전체 제한 시간(expiresAt) 계산의 근거다(R-6).
+  // 토론에 있는 차례의 총 개수. 전체 제한 시간(expiresAt) 계산의 근거다.
   get size(): number {
     return this.slots.length;
   }
@@ -119,7 +119,7 @@ export class DebateTurnSchedule {
 
 export type DebateSpeakers = Record<DebateSide, string>;
 
-// 기존 엔티티(host/opponent) → 계약(SIDE_A/SIDE_B) 매핑의 단일 출처(D3: 엔티티는 바꾸지 않는다).
+// 기존 엔티티(host/opponent) → 계약(SIDE_A/SIDE_B) 매핑의 단일 출처(엔티티는 바꾸지 않는다).
 // 상대가 아직 없는 토론은 편을 정할 수 없어 null이다. 편이 반드시 있어야 하는 채팅은 toSpeakers로 감싼다.
 export function resolveSpeakers(debate: Debate): DebateSpeakers | null {
   if (debate.opponentId === null) {
@@ -147,7 +147,7 @@ export function resolveSide(
 }
 
 // 확정 턴 행 → 계약 turn. phase/round는 스케줄에서, 편은 발언자에서 파생한다
-// (P2-8: 사실만 저장하고 나머지는 계산). 채팅 저장소와 REST 조회가 같은 변환을 쓴다.
+// (사실만 저장하고 나머지는 계산). 채팅 저장소와 REST 조회가 같은 변환을 쓴다.
 export function toDebateTurn(
   row: DebateMessage,
   speakers: DebateSpeakers,
@@ -194,7 +194,7 @@ export interface CurrentTurnPosition {
 }
 
 /**
- * 현재 차례(phase/round/side)와 그 시작 시각을 저장된 사실에서 파생한다(P2-8).
+ * 현재 차례(phase/round/side)와 그 시작 시각을 저장된 사실에서 파생한다.
  * 진행 중이 아니거나 모든 차례가 끝났으면 null이다.
  *
  * 채팅 상태(DebateChatState)와 REST의 Debate DTO가 **반드시 같은 답을 내야 하므로**
