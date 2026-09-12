@@ -744,7 +744,7 @@ describe('DebateChatState', () => {
     });
   });
   describe('forfeit', () => {
-    it('발언자가 기권하면 FAILED로 끝나고 승자는 상대다(R-3)', () => {
+    it('발언자가 기권하면 FAILED로 끝나고 승자는 상대다(S18)', () => {
       clock = new Date(NOW.getTime() + 10_000);
 
       state.forfeit(SIDE_A_ID);

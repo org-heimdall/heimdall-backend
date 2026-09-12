@@ -59,7 +59,6 @@ describe('DebatesService', () => {
       endedAt: null,
       expiresAt: null,
       winnerId: null,
-      solution: null,
       createdAt: NOW,
       status: ResourceStatus.NORMAL,
       community: Object.assign(new Community(), {

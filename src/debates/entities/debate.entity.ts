@@ -69,14 +69,15 @@ export class Debate extends SoftDeletableEntity {
   @Column({ type: 'timestamptz', nullable: true })
   expiresAt: Date | null;
 
+  // 판정(JUDGING)이 시작된 시각. Judge 작업이 만들어질 때 함께 기록한다(작업 항목 ⑥).
+  @Column({ type: 'timestamptz', nullable: true })
+  judgingStartedAt: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
   @Column({ type: 'uuid', nullable: true })
   winnerId: string | null;
-
-  @Column({ type: 'jsonb', nullable: true })
-  solution: object | null;
 
   @ManyToOne(() => Community, { nullable: false })
   @JoinColumn({ name: 'community_id' })

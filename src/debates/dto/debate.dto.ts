@@ -80,8 +80,9 @@ export class DebateDto {
   endedAt: string | null;
 
   @ApiProperty({
+    example: '2026-09-07T12:12:30.000Z',
     nullable: true,
-    description: '판정 시작 시각. 판정 파이프라인 구현 전까지 항상 null.',
+    description: '판정이 시작된 시각. Judge 작업이 만들어질 때 기록된다.',
   })
   judgingStartedAt: string | null;
 
@@ -118,8 +119,7 @@ export class DebateDto {
       createdAt: debate.createdAt.toISOString(),
       startedAt: debate.startedAt?.toISOString() ?? null,
       endedAt: debate.endedAt?.toISOString() ?? null,
-      // TODO: 판정 파이프라인에서 judging_started_at 컬럼과 함께 채운다.
-      judgingStartedAt: null,
+      judgingStartedAt: debate.judgingStartedAt?.toISOString() ?? null,
       expiresAt: debate.expiresAt?.toISOString() ?? null,
     });
   }

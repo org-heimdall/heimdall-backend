@@ -8,9 +8,9 @@ import { CommunitiesModule } from './communities/communities.module';
 import { MemberCommunitiesModule } from './member-communities/member-communities.module';
 import { MembersModule } from './members/members.module';
 import { DebatesModule } from './debates/debates.module';
-import { JudgeModule } from './judge/judge.module';
 import { SeedModule } from './seed/seed.module';
 import { DebateChatModule } from './debate-chat/debate-chat.module';
+import { JudgeModule } from './judge/judge.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SnakeNamingStrategy } from './common/naming/snake-naming.strategy';
@@ -58,6 +58,47 @@ import * as Joi from 'joi';
         OPENAI_TIMEOUT_MS: Joi.number().default(60000),
         OPENAI_MAX_RETRIES: Joi.number().default(2),
 
+        // 토론 팩트체크용 Gemini 설정(J1). Google Search grounding을 쓰므로 OpenAI와 분리한다.
+        // 키 규칙은 OPENAI_*와 같다(production에서만 필수).
+        GEMINI_API_KEY: Joi.string().when('NODE_ENV', {
+          is: 'production',
+          then: Joi.required(),
+          otherwise: Joi.string().allow('').optional(),
+        }),
+        // structured output + Google Search grounding 조합은 Gemini 3 계열에서만 된다.
+        GEMINI_MODEL: Joi.string().default('gemini-3.8-flash'),
+        GEMINI_TIMEOUT_MS: Joi.number().default(60000),
+
+        // 토론 판정 파이프라인(Phase 3) 운영값.
+        DEBATE_PIPELINE_WORKER_CONCURRENCY: Joi.number()
+          .integer()
+          .min(1)
+          .default(2),
+        // 한 작업(LLM 호출 포함)이 이 시간을 넘기면 실패로 보고 재시도한다.
+        DEBATE_PIPELINE_JOB_TIMEOUT_MS: Joi.number()
+          .integer()
+          .min(1)
+          .default(120000),
+        // 지수 backoff의 기준 간격.
+        DEBATE_PIPELINE_BACKOFF_MS: Joi.number().integer().min(1).default(5000),
+        DEBATE_PIPELINE_ANALYZER_MAX_ATTEMPTS: Joi.number()
+          .integer()
+          .min(1)
+          .default(3),
+        DEBATE_PIPELINE_FACT_CHECK_MAX_ATTEMPTS: Joi.number()
+          .integer()
+          .min(1)
+          .default(3),
+        DEBATE_PIPELINE_JUDGE_MAX_ATTEMPTS: Joi.number()
+          .integer()
+          .min(1)
+          .default(2),
+        // Judge가 최종 실패한 뒤 /judge/retry를 받아 줄 때까지의 대기 시간(J2).
+        DEBATE_JUDGE_RETRY_COOLDOWN_SECONDS: Joi.number()
+          .integer()
+          .min(0)
+          .default(300),
+
         // 비공개 대화 시드 파일 경로(저장소 밖). 없으면 대화 시딩만 건너뛰므로 optional이다.
         SEED_DEBATE_DATA_PATH: Joi.string().optional(),
 
@@ -97,9 +138,9 @@ import * as Joi from 'joi';
     MemberCommunitiesModule,
     MembersModule,
     DebatesModule,
-    JudgeModule,
     SeedModule,
     DebateChatModule,
+    JudgeModule,
   ],
   controllers: [AppController],
   providers: [

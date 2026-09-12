@@ -1,356 +1,309 @@
-import { randomUUID } from 'node:crypto';
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { ErrorCode } from '../common/exceptions/error-code';
 import { GeneralException } from '../common/exceptions/general.exception';
+import { DebateChatTurn } from '../debate-chat/debate-chat.types';
+import { resolveSide, resolveSpeakers } from '../debates/debate-turn';
+import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
+import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate } from '../debates/entities/debate.entity';
-import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
-import { MembersService } from '../members/members.service';
+import { JudgeConfig } from './judge.config';
+import { JudgeTaskRepository } from './judge-task.repository';
+import { JudgeTaskKind } from './judge.types';
+import { JudgeTaskQueue, JudgeTaskListener } from './judge-task.worker';
+import { JudgeResultRepository } from './judge-result.repository';
 import {
-  createFailedSolution,
-  createJudgedSolution,
-  createPendingSolution,
-  isPendingOwnedBy,
-  toDebateSolution,
-} from './debate-solution';
-import type { JudgmentWinner, ParticipantSolution } from './debate-solution';
-import { DebateJudgmentDto } from './dto/debate-judgment.dto';
+  DebateResultDto,
+  FactCheckResultDto,
+  JudgmentResultDto,
+} from './dto/debate-result.dto';
+import { JudgeTask } from './entities/judge-task.entity';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
-import { JUDGE } from './judge.interface';
-import { toSocialCreditPenalty } from './violation-penalty';
-// 데코레이터가 붙은 시그니처의 타입은 isolatedModules + emitDecoratorMetadata 조합에서
-// 반드시 type-only로 가져와야 한다.
-import type {
-  DebateSide,
-  DebateTranscriptTurn,
-  DebateViolation,
-  Judge,
-  JudgeRequest,
-  JudgeResult,
-  ParticipantJudgment,
-} from './judge.interface';
 
+// 재시도로 되돌릴 작업 종류. FactCheck 실패는 판정을 막지 않으므로(J5) 여기 없다.
+const RETRYABLE_KINDS = [JudgeTaskKind.ANALYZER, JudgeTaskKind.JUDGE];
+
+// 판정을 시작할 수 없는 이유. REST가 이걸로 응답을 나눈다.
+export type JudgeReadiness =
+  | 'STARTED' // Judge 작업이 준비됐다(이번에 만들었거나 이미 있다)
+  | 'NOT_FINALIZED' // 토론이 아직 끝나지 않았다
+  | 'ALREADY_COMPLETED' // 판정이 이미 끝났다
+  | 'ANALYZER_FAILED' // 분석이 최종 실패해 판정할 수 없다
+  | 'IN_PROGRESS'; // 앞 단계가 아직 돌고 있다
+
+/**
+ * 파이프라인을 미는 쪽 전부. 채팅 훅과 REST 3개, 그리고 둘이 함께 쓰는 판정 조건 평가가 있다.
+ *
+ * 하는 일은 "작업을 만든다"와 "지금 판정해도 되는지 본다" 둘뿐이다. 실제 실행은 worker가 하므로
+ * finalize 응답도, REST 응답도 LLM 호출을 기다리지 않는다.
+ *
+ * POST /judge는 시작이 아니라 **재개**다(J4): 빠진 분석 작업부터 채우고 조건을 다시 본다.
+ * 정상 흐름에서는 이미 다 채워져 있어 곧바로 판정으로 가고, 시드 토론처럼 분석이 통째로 없는
+ * 토론도 같은 경로로 결과까지 갈 수 있다.
+ */
 @Injectable()
-export class JudgeService {
+export class JudgeService implements JudgeTaskListener {
   private readonly logger = new Logger(JudgeService.name);
 
   constructor(
-    @InjectRepository(Debate)
-    private readonly debateRepository: Repository<Debate>,
     @InjectRepository(DebateMessage)
-    private readonly debateMessageRepository: Repository<DebateMessage>,
-    @Inject(JUDGE)
-    private readonly judge: Judge,
-    private readonly membersService: MembersService,
-    private readonly dataSource: DataSource,
-    private readonly configService: ConfigService,
+    private readonly messages: Repository<DebateMessage>,
+    private readonly tasks: JudgeTaskRepository,
+    private readonly queue: JudgeTaskQueue,
+    private readonly results: JudgeResultRepository,
+    private readonly debates: DebatesService,
+    private readonly config: JudgeConfig,
   ) {}
 
+  // ------------------------------------------------------------- 채팅 훅
+
+  // 확정 턴마다 분석 작업 하나. 빈 턴(시간 초과)은 뽑아낼 주장이 없어 작업을 만들지 않는다(J3).
+  async onTurnFinalized(turn: DebateChatTurn): Promise<void> {
+    if (turn.content.trim() === '') {
+      this.logger.log(
+        `빈 턴이라 분석하지 않습니다: debateId=${turn.debateId}, sequence=${turn.sequence}`,
+      );
+      return;
+    }
+
+    await this.queue.schedule(turn.debateId, JudgeTaskKind.ANALYZER, turn.id);
+  }
+
   /**
-   * 판정 요청. 검증 후 solution을 PENDING으로 표시하고 즉시 반환하며,
-   * 실제 LLM 호출은 백그라운드로 넘긴다(클라이언트는 폴링으로 결과를 받는다).
-   *
-   * PENDING 선점은 조건부 UPDATE 한 번으로 처리한다(read-then-write가 아니므로
-   * 동시 요청이 둘 다 통과할 수 없고, 영향받은 행이 없으면 이미 선점된 것이다).
+   * 토론이 끝나면 판정 조건을 확인한다. 대개 분석이 아직 남아 있어 여기서는 시작되지 않고,
+   * 마지막 분석이 끝나는 순간 그쪽에서 시작된다(어느 쪽이 먼저든 결과는 같다).
    */
-  async requestJudgment(debateId: string, memberId: string): Promise<void> {
-    const debate = await this.getDebateOrThrow(debateId);
+  async onDebateEnded(debateId: string): Promise<void> {
+    const readiness = await this.tryStartJudge(debateId);
+    this.logger.log(
+      `토론 종료 처리: debateId=${debateId}, readiness=${readiness}`,
+    );
+  }
+
+  // 작업이 확정될 때마다(성공·최종 실패 모두) 다시 판단한다. 판정 자신의 결과는 볼 필요가 없다.
+  async onTaskSettled(task: JudgeTask): Promise<void> {
+    if (task.kind === JudgeTaskKind.JUDGE) {
+      return;
+    }
+    await this.tryStartJudge(task.debateId);
+  }
+
+  // ---------------------------------------------------------- 판정 조건
+
+  /**
+   * 지금 판정을 시작해도 되는지 보고, 되면 Judge 작업을 만든다.
+   * 어디서 몇 번 불러도 결과는 같다 — 작업 행이 (kind, target) unique라 Judge 작업은 토론당 하나다.
+   */
+  async tryStartJudge(debateId: string): Promise<JudgeReadiness> {
+    const debate = await this.debates.findOneOrThrow(debateId);
+    const status = debate.debateStatus;
+
+    if (status === DebateStatus.COMPLETED) {
+      return 'ALREADY_COMPLETED';
+    }
+    // 판정을 시작할 수 있는 자리는 "끝났지만 아직 판정 전"과 "이미 판정 중" 둘뿐이다.
+    if (
+      status !== DebateStatus.DEBATE_FINALIZED &&
+      status !== DebateStatus.JUDGING
+    ) {
+      return 'NOT_FINALIZED';
+    }
+
+    const counts = await this.tasks.countByKind(debateId);
+    const analyzer = counts[JudgeTaskKind.ANALYZER];
+    const factCheck = counts[JudgeTaskKind.FACT_CHECK];
+
+    // 분석이 최종 실패하면 논증 그래프가 반쪽이라 판정할 수 없다. 재개(/judge/retry)로만 풀린다.
+    if (analyzer.failed > 0) {
+      await this.results.markFailed(debateId);
+      this.logger.warn(
+        `분석 실패로 판정 불가: debateId=${debateId}, failed=${analyzer.failed}`,
+      );
+      return 'ANALYZER_FAILED';
+    }
+
+    if (analyzer.pending + analyzer.processing > 0) {
+      return 'IN_PROGRESS';
+    }
+    // 검증의 최종 실패는 판정을 막지 않는다(J5). 아직 돌고 있는 것만 기다린다.
+    if (factCheck.pending + factCheck.processing > 0) {
+      return 'IN_PROGRESS';
+    }
+
+    // 판정 작업은 토론 자체를 대상으로 한다.
+    await this.queue.schedule(debateId, JudgeTaskKind.JUDGE, debateId);
+    await this.results.startJudging(debateId);
+    return 'STARTED';
+  }
+
+  // ---------------------------------------------------------------- REST
+
+  /**
+   * 판정 요청(계약 POST /debates/:id/judge). 이미 끝났으면 저장된 결과를 그대로 돌려주고,
+   * 그렇지 않으면 빠진 작업을 채운 뒤 진행 상황에 맞는 409로 답한다(판정은 비동기다).
+   */
+  async requestJudgment(
+    debateId: string,
+    memberId: string,
+  ): Promise<JudgmentResultDto> {
+    const debate = await this.debates.findOneOrThrow(debateId);
     this.assertParticipant(debate, memberId);
 
-    // 상대가 없는 토론은 양측을 비교할 수 없다.
-    if (debate.opponentId === null) {
-      throw new GeneralException(JudgeErrorCode.NOT_JUDGEABLE);
+    const completed = await this.results.findJudgment(debateId);
+    if (completed !== null) {
+      return JudgmentResultDto.from(completed);
     }
 
-    // 이 시도만의 식별자. PENDING 선점부터 결과 저장까지 같은 값을 들고 다니며, 다른
-    // 시도가 선점해 갔거나 이미 결과가 저장된 뒤에는 내 결과를 적용하지 않도록 막는다.
-    const requestId = randomUUID();
-    const acquired = await this.tryAcquirePendingSolution(debate.id, requestId);
-    if (!acquired) {
-      throw new GeneralException(JudgeErrorCode.ALREADY_REQUESTED);
+    const scheduled = await this.resumeAnalyzers(debateId);
+    if (scheduled > 0) {
+      this.logger.log(
+        `빠진 분석 작업 ${scheduled}건을 채웠습니다: debateId=${debateId}`,
+      );
     }
 
-    void this.executeJudgment(debate.id, requestId);
+    throw this.toReadinessException(await this.tryStartJudge(debateId));
   }
 
   /**
-   * solution이 없거나 FAILED이거나, PENDING인데 LLM 호출이 정상적으로 끝날 수 없는
-   * 시간(=OpenAI 타임아웃 * 재시도 포함 시도 횟수)을 넘긴 경우에만 PENDING으로 선점한다.
-   * 갓 요청된 PENDING과 JUDGED는 계속 거부한다.
-   *
-   * read-then-write 대신 조건부 UPDATE 하나로 처리해 동시 요청 중 하나만 성공시킨다.
+   * 판정 재시도(계약 POST /debates/:id/judge/retry). 최종 실패한 분석·판정을 되돌려
+   * 다시 큐에 올린다. 실패 직후 연타를 막기 위해 쿨다운을 둔다(J2).
    */
-  private async tryAcquirePendingSolution(
+  async retryJudgment(
     debateId: string,
-    requestId: string,
-  ): Promise<boolean> {
-    const expiredBefore = new Date(
-      Date.now() - this.resolveJudgmentExpirationMs(),
-    ).toISOString();
+    memberId: string,
+  ): Promise<JudgmentResultDto> {
+    const debate = await this.debates.findOneOrThrow(debateId);
+    this.assertParticipant(debate, memberId);
 
-    const result = await this.debateRepository
-      .createQueryBuilder()
-      .update(Debate)
-      .set({ solution: createPendingSolution(requestId) })
-      .where('id = :debateId', { debateId })
-      .andWhere('status = :status', { status: ResourceStatus.NORMAL })
-      .andWhere(
-        `(
-          solution IS NULL
-          OR solution ->> 'status' = 'FAILED'
-          OR (
-            solution ->> 'status' = 'PENDING'
-            AND (solution ->> 'requestedAt')::timestamptz < :expiredBefore
-          )
-        )`,
-        { expiredBefore },
-      )
-      .execute();
+    if ((await this.results.findJudgment(debateId)) !== null) {
+      throw new GeneralException(JudgeErrorCode.ALREADY_COMPLETED);
+    }
 
-    return (result.affected ?? 0) > 0;
+    const failed = await this.tasks.findFailed(debateId, RETRYABLE_KINDS);
+    const missing = await this.resumeAnalyzers(debateId);
+    if (failed.length === 0 && missing === 0) {
+      throw new GeneralException(JudgeErrorCode.NOTHING_TO_RETRY);
+    }
+
+    this.assertCooldownPassed(failed.map((task) => task.updatedAt));
+
+    for (const task of await this.tasks.resetFailed(
+      debateId,
+      RETRYABLE_KINDS,
+    )) {
+      await this.queue.enqueue(task);
+    }
+    // 분석 실패로 FAILED가 된 토론을 판정 가능한 상태로 되돌린다.
+    await this.results.restoreFinalized(debateId);
+
+    throw this.toReadinessException(await this.tryStartJudge(debateId));
   }
 
-  // 판정 1건은 성능/위반 평가를 병렬로 호출하므로(각각 SDK 자체 재시도 포함), 이 시간을
-  // 넘겨도 여전히 PENDING이면 프로세스 재시작 등으로 결과를 영영 못 받은 것으로 간주한다.
-  private resolveJudgmentExpirationMs(): number {
-    const timeoutMs =
-      this.configService.getOrThrow<number>('OPENAI_TIMEOUT_MS');
-    const maxRetries =
-      this.configService.getOrThrow<number>('OPENAI_MAX_RETRIES');
-    return timeoutMs * (maxRetries + 1);
+  // 결과 조회(계약 GET /debates/:id/result). 판정이 끝난 토론에만 있다.
+  async getResult(
+    debateId: string,
+    memberId: string,
+  ): Promise<DebateResultDto> {
+    const debate = await this.debates.findOneOrThrow(debateId);
+    const judgment = await this.results.findJudgment(debateId);
+    if (judgment === null) {
+      throw new GeneralException(JudgeErrorCode.RESULT_NOT_READY);
+    }
+
+    return Object.assign(new DebateResultDto(), {
+      debate: await this.debates.findOneDto(debateId),
+      viewerSide: resolveSide(resolveSpeakers(debate), memberId),
+      judgmentResult: JudgmentResultDto.from(judgment),
+      factChecks: await this.loadFactChecks(debateId),
+    });
   }
 
   /**
-   * 백그라운드 판정 본체. 호출자가 응답을 기다리지 않으므로 예외를 밖으로 내보내지 않고,
-   * 실패는 solution을 FAILED로 남겨 재요청할 수 있게 한다.
-   *
-   * requestId는 이 실행이 선점했던 PENDING의 식별자다. LLM 호출이 오래 걸리는 동안
-   * 만료된 것으로 간주되어 다른 요청이 새 PENDING을 선점했을 수 있으므로, 결과를 저장하기
-   * 직전 "지금도 내가 선점한 PENDING이 맞는지"를 확인해 stale한 결과가 최신 시도를
-   * 덮어쓰지 않도록 한다.
+   * 확정된 턴 가운데 분석 작업이 없는 것을 채운다(J4의 재개).
+   * 빈 턴은 뽑아낼 주장이 없어 건너뛴다(J3). 이미 있는 작업은 그대로 둔다(멱등).
    */
-  async executeJudgment(debateId: string, requestId: string): Promise<void> {
-    try {
-      const debate = await this.getDebateOrThrow(debateId);
-      const result = await this.judge.judge(await this.buildRequest(debate));
-
-      // 판정 저장과 신뢰도 차감은 원자적. 동시 실행(재시도 등)이 신뢰도를 이중 차감하거나
-      // 서로의 결과를 덮어쓰지 않도록, 트랜잭션 안에서 비관적 쓰기 락으로 다시 읽어
-      // 내가 선점한 PENDING이 아니면(이미 JUDGED됐거나 다른 요청이 선점) 적용을 건너뛴다.
-      await this.dataSource.transaction(async (manager) => {
-        const locked = await manager.findOne(Debate, {
-          where: { id: debate.id },
-          lock: { mode: 'pessimistic_write' },
-        });
-
-        if (
-          locked === null ||
-          !isPendingOwnedBy(toDebateSolution(locked.solution), requestId)
-        ) {
-          return;
-        }
-
-        await this.applyJudgment(locked, result, manager);
-      });
-    } catch (error) {
-      this.logger.error(`토론 판정 실패: debateId=${debateId}`, error);
-      await this.markFailed(debateId, requestId);
-    }
-  }
-
-  // 판정 상태 조회(폴링). 요청된 적이 없으면 NOT_REQUESTED.
-  async getJudgment(debateId: string): Promise<DebateJudgmentDto> {
-    const debate = await this.getDebateOrThrow(debateId);
-
-    const solution = toDebateSolution(debate.solution);
-    if (solution === null) {
-      throw new GeneralException(JudgeErrorCode.NOT_REQUESTED);
-    }
-
-    return DebateJudgmentDto.from(debate, solution);
-  }
-
-  // 토론 내역을 판정기 입력 계약으로 조립한다.
-  private async buildRequest(debate: Debate): Promise<JudgeRequest> {
-    const turns = await this.loadTranscript(debate);
-
-    // 발화가 하나도 없으면 판정할 근거가 없다.
-    if (turns.length === 0) {
-      throw new GeneralException(JudgeErrorCode.NOT_JUDGEABLE);
-    }
-
-    return {
-      topic: debate.community.topic,
-      host: { nickname: debate.hostNickname },
-      opponent: { nickname: debate.opponentNickname ?? '' },
-      turns,
-    };
-  }
-
-  // DB로부터 sequence(확정 순서) 오름차순으로 확정 턴을 조회하여 발화자를 host/opponent로 표시한다.
-  private async loadTranscript(
-    debate: Debate,
-  ): Promise<DebateTranscriptTurn[]> {
-    const messages = await this.debateMessageRepository.find({
-      where: { debateId: debate.id, status: ResourceStatus.NORMAL },
+  private async resumeAnalyzers(debateId: string): Promise<number> {
+    const turns = await this.messages.find({
+      where: { debateId, status: ResourceStatus.NORMAL },
       order: { sequence: 'ASC' },
     });
 
-    return messages
-      .map((message) => {
-        const speaker = this.resolveSide(debate, message.memberId);
-        // 참가자가 아닌 회원의 메시지는 판정 대상이 아니다(데이터 이상).
-        if (speaker === null) {
-          this.logger.warn(
-            `토론 참가자가 아닌 발화를 제외: debateId=${debate.id}, memberId=${message.memberId}`,
-          );
-          return null;
-        }
-
-        return {
-          speaker,
-          turn: message.sequence,
-          body: message.body,
-          imageUrl: message.imageUrl,
-        };
-      })
-      .filter((turn): turn is DebateTranscriptTurn => turn !== null);
+    let scheduled = 0;
+    for (const turn of turns) {
+      if (turn.sequence === null || (turn.body ?? '').trim() === '') {
+        continue;
+      }
+      const existing = await this.tasks.findByTarget(
+        JudgeTaskKind.ANALYZER,
+        turn.id,
+      );
+      if (existing !== null) {
+        continue;
+      }
+      await this.queue.schedule(debateId, JudgeTaskKind.ANALYZER, turn.id);
+      scheduled += 1;
+    }
+    return scheduled;
   }
 
-  private async applyJudgment(
-    debate: Debate,
-    result: JudgeResult,
-    manager: EntityManager,
-  ): Promise<void> {
-    const { winner } = result.performance;
-    const penalties: Record<DebateSide, number> = {
-      host: toSocialCreditPenalty(result.violation.host),
-      opponent: toSocialCreditPenalty(result.violation.opponent),
-    };
+  // 검증 결과에 발언자·문장을 붙인다(계약 FactCheckResult).
+  private async loadFactChecks(
+    debateId: string,
+  ): Promise<FactCheckResultDto[]> {
+    const checks = await this.results.findFactChecks(debateId);
+    if (checks.length === 0) {
+      return [];
+    }
 
-    debate.winnerId = this.resolveWinnerId(debate, winner);
-    debate.solution = createJudgedSolution(result.model, winner, {
-      host: this.toParticipantSolution(
-        result.performance.host,
-        result.violation.host,
-        penalties.host,
-      ),
-      opponent: this.toParticipantSolution(
-        result.performance.opponent,
-        result.violation.opponent,
-        penalties.opponent,
-      ),
-    });
-
-    await manager.save(debate);
-    await this.deductPenalties(debate, penalties, manager);
-  }
-
-  // 판정 결과와 위반 내역을 solution에 남길 형태로 묶는다(차감 근거를 되짚기 위한 감사 기록).
-  private toParticipantSolution(
-    judgment: ParticipantJudgment,
-    violations: DebateViolation[],
-    socialCreditPenalty: number,
-  ): ParticipantSolution {
-    return {
-      score: judgment.score,
-      judgeReason: judgment.judgeReason,
-      violations,
-      socialCreditPenalty,
-    };
-  }
-
-  // 양측의 신뢰도를 차감한다. 차감량이 0이면 MembersService가 조회 없이 넘긴다.
-  private async deductPenalties(
-    debate: Debate,
-    penalties: Record<DebateSide, number>,
-    manager: EntityManager,
-  ): Promise<void> {
-    await this.membersService.deductSocialCredit(
-      debate.hostId,
-      penalties.host,
-      manager,
+    const components = new Map(
+      (await this.results.findComponents(debateId)).map((component) => [
+        component.id,
+        component,
+      ]),
     );
 
-    // 판정까지 온 토론은 상대가 반드시 있지만, 타입상 null이 가능하므로 방어한다.
-    if (debate.opponentId !== null) {
-      await this.membersService.deductSocialCredit(
-        debate.opponentId,
-        penalties.opponent,
-        manager,
-      );
+    return checks.flatMap((check) => {
+      const component = components.get(check.componentId);
+      // 재분석으로 컴포넌트가 교체되면 결과만 남을 수 있다. 보여 줄 문장이 없으므로 뺀다.
+      return component === undefined
+        ? []
+        : [FactCheckResultDto.from(check, component)];
+    });
+  }
+
+  // 마지막 실패로부터 쿨다운이 지나야 재시도를 받는다(J2).
+  private assertCooldownPassed(failedAt: Date[]): void {
+    if (failedAt.length === 0) {
+      return;
+    }
+    const latest = Math.max(...failedAt.map((date) => date.getTime()));
+    const readyAt = latest + this.config.judgeRetryCooldownSeconds * 1000;
+    if (Date.now() < readyAt) {
+      throw new GeneralException(JudgeErrorCode.RETRY_NOT_READY);
     }
   }
 
-  // 무승부는 winnerId를 비워 둔다. 판정 여부는 solution의 winner로 구분되므로 모호하지 않다.
-  private resolveWinnerId(
-    debate: Debate,
-    winner: JudgmentWinner,
-  ): string | null {
-    if (winner === 'host') {
-      return debate.hostId;
-    }
-    return winner === 'opponent' ? debate.opponentId : null;
-  }
-
-  /**
-   * 실패 기록. 백그라운드 흐름이라 기록마저 실패해도 예외를 올리지 않고 로그만 남긴다.
-   *
-   * tryAcquirePendingSolution과 마찬가지로 조건부 UPDATE 한 번으로 처리한다: 지금도
-   * 내가 선점한(requestId 일치) PENDING일 때만 FAILED로 바꾼다. 이미 다른 요청이
-   * 선점해 갔거나(다른 requestId) 결과가 저장된 뒤라면(JUDGED) 조건이 맞지 않아
-   * 아무 행도 바뀌지 않으므로, 최신 시도의 결과를 stale한 실패로 덮어쓰지 않는다.
-   */
-  private async markFailed(debateId: string, requestId: string): Promise<void> {
-    try {
-      await this.debateRepository
-        .createQueryBuilder()
-        .update(Debate)
-        .set({ solution: createFailedSolution() })
-        .where('id = :debateId', { debateId })
-        .andWhere(`solution ->> 'status' = 'PENDING'`)
-        .andWhere(`solution ->> 'requestId' = :requestId`, { requestId })
-        .execute();
-    } catch (error) {
-      this.logger.error(
-        `판정 실패 상태 기록 실패: debateId=${debateId}`,
-        error,
-      );
+  // 판정 조건을 그대로 응답으로 옮긴다. 판정은 비동기라 성공 경로도 409(진행 중)다.
+  private toReadinessException(readiness: JudgeReadiness): GeneralException {
+    switch (readiness) {
+      case 'NOT_FINALIZED':
+        return new GeneralException(JudgeErrorCode.NOT_FINALIZED);
+      case 'ALREADY_COMPLETED':
+        return new GeneralException(JudgeErrorCode.ALREADY_COMPLETED);
+      case 'ANALYZER_FAILED':
+        return new GeneralException(JudgeErrorCode.PROCESSING_FAILED);
+      default:
+        return new GeneralException(JudgeErrorCode.IN_PROGRESS);
     }
   }
 
-  private resolveSide(debate: Debate, memberId: string): DebateSide | null {
-    if (memberId === debate.hostId) {
-      return 'host';
-    }
-    return memberId === debate.opponentId ? 'opponent' : null;
-  }
-
-  // 판정을 요청할 수 있는 사람은 토론 당사자(host/opponent)뿐이다.
+  // 판정을 요청할 수 있는 사람은 토론 당사자뿐이다(관전자는 결과 조회만 한다).
   private assertParticipant(debate: Debate, memberId: string): void {
-    if (this.resolveSide(debate, memberId) === null) {
+    if (resolveSide(resolveSpeakers(debate), memberId) === null) {
       throw new GeneralException(ErrorCode.FORBIDDEN);
     }
-  }
-
-  // 토론 조회. 주제(topic)는 community에 있으므로 함께 읽고, 조인 대상의 soft-delete도 제외한다.
-  private async getDebateOrThrow(debateId: string): Promise<Debate> {
-    const debate = await this.debateRepository.findOne({
-      where: {
-        id: debateId,
-        status: ResourceStatus.NORMAL,
-        community: { status: ResourceStatus.NORMAL },
-      },
-      relations: { community: true },
-    });
-
-    if (!debate) {
-      throw new GeneralException(DebateErrorCode.NOT_FOUND);
-    }
-    return debate;
   }
 }

@@ -22,8 +22,7 @@ import {
   DebateEndReason,
   DebateStatus,
 } from './debate-chat.types';
-import { DEBATE_PROCESSING_PIPELINE } from './debate-processing-pipeline';
-import type { DebateProcessingPipeline } from './debate-processing-pipeline';
+import { JudgeService } from '../judge/judge.service';
 import { DebateTurnTimeoutScheduler } from './debate-turn-timeout.scheduler';
 import { DebateChatErrorCode } from './exceptions/debate-chat-error-code';
 
@@ -44,8 +43,7 @@ export class DebateChatService implements OnApplicationBootstrap {
     @Inject(DEBATE_CHAT_STATE_STORE)
     private readonly store: DebateChatStateStore,
     private readonly publisher: DebateChatPublisher,
-    @Inject(DEBATE_PROCESSING_PIPELINE)
-    private readonly pipeline: DebateProcessingPipeline,
+    private readonly judge: JudgeService,
     private readonly timeouts: DebateTurnTimeoutScheduler,
     private readonly debatesService: DebatesService,
   ) {
@@ -197,8 +195,12 @@ export class DebateChatService implements OnApplicationBootstrap {
     }
   }
 
-  // 확정된 턴을 방에 알리고, 마지막 차례였으면 종료까지 알린 뒤 처리 파이프라인을 띄운다.
-  // 직접 확정이든 시간 초과든 확정 이후는 같다.
+  /**
+   * 확정된 턴을 방에 알리고 처리 파이프라인에 넘긴다. 마지막 차례였으면 종료까지 알린다.
+   * 직접 확정이든 시간 초과든 확정 이후는 같다.
+   *
+   * 저장소가 커밋을 끝낸 뒤에 불리므로, 파이프라인이 보는 턴은 이미 DB에 있다.
+   */
   private announceTurn(
     debateId: string,
     communityId: string,
@@ -206,6 +208,11 @@ export class DebateChatService implements OnApplicationBootstrap {
     { turn, ended }: TurnFinalizeResult,
   ): void {
     this.publisher.turnFinalized(debateId, turn);
+    this.inBackground(
+      () => this.judge.onTurnFinalized(turn),
+      `턴 처리 등록 실패: debateId=${debateId}, sequence=${turn.sequence}`,
+    );
+
     if (!ended) {
       return;
     }
@@ -215,16 +222,16 @@ export class DebateChatService implements OnApplicationBootstrap {
       status,
       reason: DebateEndReason.ALL_TURNS_FINALIZED,
     });
-    this.startProcessing(debateId);
+    this.inBackground(
+      () => this.judge.onDebateEnded(debateId),
+      `토론 종료 처리 실패: debateId=${debateId}`,
+    );
   }
 
   // 처리 파이프라인은 백그라운드. 실패해도 finalize 응답에는 영향을 주지 않고 로그만 남긴다.
-  private startProcessing(debateId: string): void {
-    this.pipeline.start(debateId).catch((error: unknown) => {
-      this.logger.error(
-        `토론 처리 파이프라인 실패: debateId=${debateId}`,
-        this.describe(error),
-      );
+  private inBackground(run: () => Promise<void>, failureMessage: string): void {
+    run().catch((error: unknown) => {
+      this.logger.error(failureMessage, this.describe(error));
     });
   }
 

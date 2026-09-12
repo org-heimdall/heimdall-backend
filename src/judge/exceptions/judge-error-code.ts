@@ -1,31 +1,51 @@
 import { HttpStatus } from '@nestjs/common';
 import { AppError } from '../../common/exceptions/app-error.interface';
 
-// judge 도메인 에러 코드 카탈로그.
-// 토론을 찾지 못하는 경우는 DebateErrorCode.NOT_FOUND를 재사용한다.
+/**
+ * 판정 파이프라인 에러 카탈로그.
+ * 토론을 찾지 못하는 경우는 DebateErrorCode.NOT_FOUND를 재사용한다.
+ */
 export const JudgeErrorCode = {
-  ALREADY_REQUESTED: {
+  NOT_FINALIZED: {
     httpStatus: HttpStatus.CONFLICT,
-    code: 'JUDGE.ALREADY_REQUESTED',
-    title: 'Judgment Already Requested',
-    detail: '이미 판정이 진행 중이거나 완료된 토론입니다.',
+    code: 'JUDGE.NOT_FINALIZED',
+    title: 'Debate Not Finalized',
+    detail: '아직 끝나지 않은 토론은 판정할 수 없습니다.',
   },
-  NOT_JUDGEABLE: {
+  IN_PROGRESS: {
     httpStatus: HttpStatus.CONFLICT,
-    code: 'JUDGE.NOT_JUDGEABLE',
-    title: 'Debate Not Judgeable',
-    detail: '판정할 수 있는 상태의 토론이 아닙니다.',
+    code: 'JUDGE.IN_PROGRESS',
+    title: 'Judgment In Progress',
+    detail: '판정이 진행 중입니다. 잠시 후 다시 확인해 주세요.',
   },
-  NOT_REQUESTED: {
-    httpStatus: HttpStatus.NOT_FOUND,
-    code: 'JUDGE.NOT_REQUESTED',
-    title: 'Judgment Not Requested',
-    detail: '아직 판정이 요청되지 않은 토론입니다.',
+  ALREADY_COMPLETED: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'JUDGE.ALREADY_COMPLETED',
+    title: 'Judgment Already Completed',
+    detail: '이미 판정이 끝난 토론입니다.',
   },
-  UNAVAILABLE: {
-    httpStatus: HttpStatus.SERVICE_UNAVAILABLE,
-    code: 'JUDGE.UNAVAILABLE',
-    title: 'Judge Unavailable',
-    detail: '판정 서비스를 일시적으로 사용할 수 없습니다.',
+  PROCESSING_FAILED: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'JUDGE.PROCESSING_FAILED',
+    title: 'Processing Failed',
+    detail: '판정에 필요한 처리가 실패했습니다. 재시도해 주세요.',
+  },
+  RETRY_NOT_READY: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'JUDGE.RETRY_NOT_READY',
+    title: 'Retry Not Ready',
+    detail: '재시도까지 잠시 기다려 주세요.',
+  },
+  NOTHING_TO_RETRY: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'JUDGE.NOTHING_TO_RETRY',
+    title: 'Nothing To Retry',
+    detail: '재시도할 실패한 작업이 없습니다.',
+  },
+  RESULT_NOT_READY: {
+    httpStatus: HttpStatus.CONFLICT,
+    code: 'JUDGE.RESULT_NOT_READY',
+    title: 'Result Not Ready',
+    detail: '아직 판정 결과가 없습니다.',
   },
 } as const satisfies Record<string, AppError>;

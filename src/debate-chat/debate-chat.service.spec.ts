@@ -15,14 +15,14 @@ import {
   DebateSide,
   DebateStatus,
 } from './debate-chat.types';
-import { DEBATE_PROCESSING_PIPELINE } from './debate-processing-pipeline';
+import { JudgeService } from '../judge/judge.service';
 import { DebateTurnTimeoutScheduler } from './debate-turn-timeout.scheduler';
 import { DebateChatErrorCode } from './exceptions/debate-chat-error-code';
 
 describe('DebateChatService', () => {
   let service: DebateChatService;
   let publisher: { turnFinalized: jest.Mock; debateEnded: jest.Mock };
-  let pipeline: { start: jest.Mock };
+  let pipeline: { onTurnFinalized: jest.Mock; onDebateEnded: jest.Mock };
   let timeouts: { arm: jest.Mock; clear: jest.Mock; register: jest.Mock };
   let debatesService: { findInProgressIds: jest.Mock; findOneDto: jest.Mock };
   let state: DebateChatState;
@@ -112,7 +112,10 @@ describe('DebateChatService', () => {
     };
 
     publisher = { turnFinalized: jest.fn(), debateEnded: jest.fn() };
-    pipeline = { start: jest.fn().mockResolvedValue(undefined) };
+    pipeline = {
+      onTurnFinalized: jest.fn().mockResolvedValue(undefined),
+      onDebateEnded: jest.fn().mockResolvedValue(undefined),
+    };
     timeouts = { arm: jest.fn(), clear: jest.fn(), register: jest.fn() };
     debatesService = {
       findInProgressIds: jest.fn().mockResolvedValue([]),
@@ -124,7 +127,7 @@ describe('DebateChatService', () => {
         DebateChatService,
         { provide: DEBATE_CHAT_STATE_STORE, useValue: store },
         { provide: DebateChatPublisher, useValue: publisher },
-        { provide: DEBATE_PROCESSING_PIPELINE, useValue: pipeline },
+        { provide: JudgeService, useValue: pipeline },
         { provide: DebateTurnTimeoutScheduler, useValue: timeouts },
         { provide: DebatesService, useValue: debatesService },
       ],
@@ -233,7 +236,10 @@ describe('DebateChatService', () => {
       expect(turn).toMatchObject({ sequence: 1, content: '하나\n둘' });
       expect(publisher.turnFinalized).toHaveBeenCalledWith(DEBATE_ID, turn);
       expect(publisher.debateEnded).not.toHaveBeenCalled();
-      expect(pipeline.start).not.toHaveBeenCalled();
+      expect(pipeline.onDebateEnded).not.toHaveBeenCalled();
+      // 마지막이 아니어도 확정된 턴은 매번 파이프라인으로 넘어간다.
+      expect(pipeline.onTurnFinalized).toHaveBeenCalledTimes(1);
+      expect(pipeline.onTurnFinalized).toHaveBeenCalledWith(turn);
     });
 
     it('확정 뒤에는 다음 차례의 만료 시각으로 타이머를 옮긴다', async () => {
@@ -267,8 +273,9 @@ describe('DebateChatService', () => {
         status: DebateStatus.DEBATE_FINALIZED,
         reason: DebateEndReason.ALL_TURNS_FINALIZED,
       });
-      expect(pipeline.start).toHaveBeenCalledTimes(1);
-      expect(pipeline.start).toHaveBeenCalledWith(DEBATE_ID);
+      expect(pipeline.onTurnFinalized).toHaveBeenCalledTimes(4);
+      expect(pipeline.onDebateEnded).toHaveBeenCalledTimes(1);
+      expect(pipeline.onDebateEnded).toHaveBeenCalledWith(DEBATE_ID);
       expect(timeouts.arm).toHaveBeenLastCalledWith(DEBATE_ID, null);
 
       // 종료 뒤의 명령은 거부된다.
@@ -279,7 +286,8 @@ describe('DebateChatService', () => {
     });
 
     it('파이프라인이 실패해도 finalize 결과에는 영향이 없다', async () => {
-      pipeline.start.mockRejectedValue(new Error('llm down'));
+      pipeline.onTurnFinalized.mockRejectedValue(new Error('llm down'));
+      pipeline.onDebateEnded.mockRejectedValue(new Error('llm down'));
       let last: unknown;
       for (const [side, phase] of ALL_TURNS) {
         await send(side, 'x', undefined, phase);
@@ -312,7 +320,9 @@ describe('DebateChatService', () => {
       );
       // 토론은 끝나지 않았고, 다음 차례(SIDE_B)의 만료 시각으로 타이머가 옮겨간다.
       expect(publisher.debateEnded).not.toHaveBeenCalled();
-      expect(pipeline.start).not.toHaveBeenCalled();
+      expect(pipeline.onDebateEnded).not.toHaveBeenCalled();
+      // 시간 초과로 확정된 턴도 직접 확정과 똑같이 파이프라인으로 넘어간다.
+      expect(pipeline.onTurnFinalized).toHaveBeenCalledTimes(1);
       expect(timeouts.arm).toHaveBeenLastCalledWith(
         DEBATE_ID,
         new Date(clock.getTime() + 180_000),
@@ -337,7 +347,7 @@ describe('DebateChatService', () => {
         status: DebateStatus.DEBATE_FINALIZED,
         reason: DebateEndReason.ALL_TURNS_FINALIZED,
       });
-      expect(pipeline.start).toHaveBeenCalledTimes(1);
+      expect(pipeline.onDebateEnded).toHaveBeenCalledTimes(1);
       expect(timeouts.arm).toHaveBeenLastCalledWith(DEBATE_ID, null);
     });
 
@@ -466,7 +476,7 @@ describe('DebateChatService', () => {
         reason: DebateEndReason.FORFEIT,
       });
       // 판정 파이프라인은 띄우지 않는다.
-      expect(pipeline.start).not.toHaveBeenCalled();
+      expect(pipeline.onDebateEnded).not.toHaveBeenCalled();
     });
 
     it('기권 뒤 발언·확정 명령은 진행 중이 아니라는 이유로 거절된다', async () => {
