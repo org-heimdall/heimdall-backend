@@ -23,7 +23,7 @@ import {
 import { JudgeTask } from './entities/judge-task.entity';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
 
-// 재시도로 되돌릴 작업 종류. FactCheck 실패는 판정을 막지 않으므로(J5) 여기 없다.
+// 재시도로 되돌릴 작업 종류. FactCheck 실패는 판정을 막지 않으므로 여기 없다.
 const RETRYABLE_KINDS = [JudgeTaskKind.ANALYZER, JudgeTaskKind.JUDGE];
 
 // 판정을 시작할 수 없는 이유. REST가 이걸로 응답을 나눈다.
@@ -40,7 +40,7 @@ export type JudgeReadiness =
  * 하는 일은 "작업을 만든다"와 "지금 판정해도 되는지 본다" 둘뿐이다. 실제 실행은 worker가 하므로
  * finalize 응답도, REST 응답도 LLM 호출을 기다리지 않는다.
  *
- * POST /judge는 시작이 아니라 **재개**다(J4): 빠진 분석 작업부터 채우고 조건을 다시 본다.
+ * POST /judge는 시작이 아니라 **재개**다: 빠진 분석 작업부터 채우고 조건을 다시 본다.
  * 정상 흐름에서는 이미 다 채워져 있어 곧바로 판정으로 가고, 시드 토론처럼 분석이 통째로 없는
  * 토론도 같은 경로로 결과까지 갈 수 있다.
  */
@@ -60,7 +60,7 @@ export class JudgeService implements JudgeTaskListener {
 
   // ------------------------------------------------------------- 채팅 훅
 
-  // 확정 턴마다 분석 작업 하나. 빈 턴(시간 초과)은 뽑아낼 주장이 없어 작업을 만들지 않는다(J3).
+  // 확정 턴마다 분석 작업 하나. 빈 턴(시간 초과)은 뽑아낼 주장이 없어 작업을 만들지 않는다.
   async onTurnFinalized(turn: DebateChatTurn): Promise<void> {
     if (turn.content.trim() === '') {
       this.logger.log(
@@ -128,7 +128,7 @@ export class JudgeService implements JudgeTaskListener {
     if (analyzer.pending + analyzer.processing > 0) {
       return 'IN_PROGRESS';
     }
-    // 검증의 최종 실패는 판정을 막지 않는다(J5). 아직 돌고 있는 것만 기다린다.
+    // 검증의 최종 실패는 판정을 막지 않는다. 아직 돌고 있는 것만 기다린다.
     if (factCheck.pending + factCheck.processing > 0) {
       return 'IN_PROGRESS';
     }
@@ -169,7 +169,7 @@ export class JudgeService implements JudgeTaskListener {
 
   /**
    * 판정 재시도(계약 POST /debates/:id/judge/retry). 최종 실패한 분석·판정을 되돌려
-   * 다시 큐에 올린다. 실패 직후 연타를 막기 위해 쿨다운을 둔다(J2).
+   * 다시 큐에 올린다. 실패 직후 연타를 막기 위해 쿨다운을 둔다.
    */
   async retryJudgment(
     debateId: string,
@@ -222,8 +222,8 @@ export class JudgeService implements JudgeTaskListener {
   }
 
   /**
-   * 확정된 턴 가운데 분석 작업이 없는 것을 채운다(J4의 재개).
-   * 빈 턴은 뽑아낼 주장이 없어 건너뛴다(J3). 이미 있는 작업은 그대로 둔다(멱등).
+   * 확정된 턴 가운데 분석 작업이 없는 것을 채운다(POST /judge의 재개).
+   * 빈 턴은 뽑아낼 주장이 없어 건너뛴다. 이미 있는 작업은 그대로 둔다(멱등).
    */
   private async resumeAnalyzers(debateId: string): Promise<number> {
     const turns = await this.messages.find({
@@ -274,7 +274,7 @@ export class JudgeService implements JudgeTaskListener {
     });
   }
 
-  // 마지막 실패로부터 쿨다운이 지나야 재시도를 받는다(J2).
+  // 마지막 실패로부터 쿨다운이 지나야 재시도를 받는다.
   private assertCooldownPassed(failedAt: Date[]): void {
     if (failedAt.length === 0) {
       return;

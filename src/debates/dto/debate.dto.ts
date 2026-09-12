@@ -15,7 +15,7 @@ import type { DebateSpeakers } from '../debate-turn';
 import { DebateTurnWithVotesDto } from './debate-turn.dto';
 
 /**
- * 토론의 진행 정도. 현재 차례(phase/round/side)는 저장하지 않고 확정 턴에서 파생하므로(P2-8),
+ * 토론의 진행 정도. 현재 차례(phase/round/side)는 저장하지 않고 확정 턴에서 파생하므로,
  * DTO를 만들려면 확정 턴 수와 마지막 턴의 시각이 필요하다.
  */
 export interface DebateProgress {
@@ -107,7 +107,7 @@ export class DebateDto {
       id: debate.id,
       communityId: debate.communityId,
       topic: debate.topic,
-      // 컬럼 이름은 host/opponent 그대로 두고 계약 이름으로만 바꿔 내보낸다(D3).
+      // 컬럼 이름은 host/opponent 그대로 두고 계약 이름으로만 바꿔 내보낸다.
       sideASpeakerId: debate.hostId,
       sideBSpeakerId: debate.opponentId,
       rebuttalQuestionRounds: debate.rebuttalQuestionRounds,
@@ -135,7 +135,7 @@ export class DebateSpeakerDto {
   @ApiProperty({ example: 'https://cdn.example.com/1.png', nullable: true })
   profileImageUrl: string | null;
 
-  @ApiProperty({ example: 0, description: '회원이 영구적으로 갖는 점수(R-5)' })
+  @ApiProperty({ example: 0, description: '회원이 영구적으로 갖는 점수' })
   score: number;
 
   @ApiProperty({

@@ -320,7 +320,7 @@ export class SeedService implements OnApplicationBootstrap {
       const debate = await debateRepository.save(
         debateRepository.create({
           communityId: community.id,
-          // 주제·라운드 수는 토론이 소유하므로 생성 시점의 커뮤니티 값을 복사한다(R-1).
+          // 주제·라운드 수는 토론이 소유하므로 생성 시점의 커뮤니티 값을 복사한다.
           topic: community.topic,
           rebuttalQuestionRounds: community.debateRoundCount,
           hostId: host.id,

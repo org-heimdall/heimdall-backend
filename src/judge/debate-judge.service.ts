@@ -36,7 +36,7 @@ export const MIN_SCORE = 0;
 export const MAX_SCORE = 100;
 
 /**
- * 총점 가중치. 논증을 가장 무겁게 보고 나머지 둘을 같게 둔다(J7 확정).
+ * 총점 가중치. 논증을 가장 무겁게 보고 나머지 둘을 같게 둔다.
  * 합이 1이므로 총점도 0~100이며, 값이 바뀌면 과거 판정과 비교할 수 없다는 점만 유의한다.
  */
 export const SCORE_WEIGHTS = {
@@ -88,7 +88,7 @@ export function calculateTotalScore(scores: SideScores): number {
   );
 }
 
-// 승자도 서버가 정한다. 총점이 정확히 같을 때만 무승부다(J7 확정).
+// 승자도 서버가 정한다. 총점이 정확히 같을 때만 무승부다.
 export function decideWinner(
   sideATotal: number,
   sideBTotal: number,
@@ -132,7 +132,7 @@ export class DebateJudgeService implements JudgeTaskHandler {
     private readonly members: MembersService,
   ) {}
 
-  // 판정은 토론 단위라 턴 접두사가 없다(J6).
+  // 판정은 토론 단위라 턴 접두사가 없다.
   describe(): Promise<string | null> {
     return Promise.resolve(null);
   }
@@ -307,7 +307,7 @@ export class DebateJudgeService implements JudgeTaskHandler {
 
   /**
    * 확정 턴 전부를 발언 순서대로. 시간 초과로 비어 있는 턴도 빼지 않고 "(발언 없음)"으로 남긴다 —
-   * 판정에는 "그 차례를 그냥 넘겼다"는 사실 자체가 필요하다(J3).
+   * 판정에는 "그 차례를 그냥 넘겼다"는 사실 자체가 필요하다.
    */
   private async loadTranscript(
     debate: Debate,

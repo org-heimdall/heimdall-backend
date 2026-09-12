@@ -58,7 +58,7 @@ export interface FactCheckSource {
 }
 
 /**
- * 토론 중 위반 행위. judge 모듈에서 이관했다(J8(b)로 기존 모듈이 삭제 후보이므로 복사해 온다).
+ * 토론 중 위반 행위. 삭제된 구 judge 모듈에서 이관했다.
  * 계약 JudgmentResult에는 위반 필드가 없어 프론트로 나가지 않고, 신뢰도 차감의 근거로만 쓰인다.
  */
 export type ViolationType =

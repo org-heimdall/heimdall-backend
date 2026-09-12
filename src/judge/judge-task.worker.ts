@@ -38,7 +38,7 @@ export interface JudgeTaskHandler {
   readonly kind: JudgeTaskKind;
 
   /**
-   * stage 메시지 앞에 붙는 표시(J6). 턴 단위 작업은 `turn #3`처럼 돌려주고,
+   * stage 메시지 앞에 붙는 표시. 턴 단위 작업은 `turn #3`처럼 돌려주고,
    * 토론 단위(JUDGE)는 null이다. 프론트가 필요하면 이 접두사를 파싱한다.
    */
   describe(task: JudgeTask): Promise<string | null>;
@@ -381,10 +381,10 @@ export class JudgeTaskWorker
   }
 
   /**
-   * 작업 상태 전이를 debate room의 debate.processing.stage 이벤트로 옮긴다(J6).
+   * 작업 상태 전이를 debate room의 debate.processing.stage 이벤트로 옮긴다.
    *
    * worker가 다른 인스턴스에서 돌면 그 프로세스에 방이 없어 이벤트가 나가지 않는다.
-   * 다중 인스턴스 Pub/Sub 전까지의 알려진 한계다(docs/judge.md).
+   * 다중 인스턴스 Pub/Sub 전까지의 알려진 한계다.
    */
   private publish(
     task: JudgeTask,

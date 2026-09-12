@@ -23,12 +23,12 @@ export class Debate extends SoftDeletableEntity {
   @Column({ type: 'uuid' })
   communityId: string;
 
-  // 토론 주제. 생성 시 커뮤니티 값을 복사한다(R-1) — 진행 중인 토론의 주제가
+  // 토론 주제. 생성 시 커뮤니티 값을 복사한다 — 진행 중인 토론의 주제가
   // 커뮤니티 설정 변경으로 흔들리면 안 되기 때문이다.
   @Column({ type: 'varchar', length: 500 })
   topic: string;
 
-  // 반론·질의 라운드 수(D6의 N). 생성 시 community.debateRoundCount를 복사한다(R-1).
+  // 반론·질의 라운드 수(턴 스케줄의 N). 생성 시 community.debateRoundCount를 복사한다.
   // 이 값이 없으면 발언 순서(DebateTurnSchedule)를 만들 수 없어 nullable로 두지 않는다.
   @Column({ type: 'int' })
   rebuttalQuestionRounds: number;
@@ -63,7 +63,7 @@ export class Debate extends SoftDeletableEntity {
 
   /**
    * 토론 전체가 늦어도 끝나는 시각 = startedAt + (차례 수 × 턴 제한 시간). 시작할 때 기록만 하고
-   * 강제하지 않는다(R-6). 아무도 발언하지 않아도 차례가 제한 시간 간격으로 넘어가므로(D16)
+   * 강제하지 않는다. 아무도 발언하지 않아도 차례가 제한 시간 간격으로 넘어가므로
    * 토론은 정확히 이 시각에 스스로 끝난다.
    */
   @Column({ type: 'timestamptz', nullable: true })

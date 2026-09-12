@@ -11,7 +11,7 @@ export const ARGUMENT_ANALYZER = Symbol('ARGUMENT_ANALYZER');
 export const FACT_CHECKER = Symbol('FACT_CHECKER');
 export const DEBATE_JUDGE = Symbol('DEBATE_JUDGE');
 
-// 시간 초과로 아무 말도 하지 않은 차례. 판정에는 "넘겼다"는 사실이 필요하다(J3).
+// 시간 초과로 아무 말도 하지 않은 차례. 판정에는 "넘겼다"는 사실이 필요하다.
 export const SILENT_TURN_PLACEHOLDER = '(발언 없음)';
 
 // ---------------------------------------------------------------- Argument Analyzer

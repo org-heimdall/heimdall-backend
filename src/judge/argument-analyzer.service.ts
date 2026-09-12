@@ -59,7 +59,7 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
     private readonly queue: JudgeTaskQueue,
   ) {}
 
-  // 분석은 턴 단위이므로 stage 메시지에 몇 번째 턴인지 남긴다(J6).
+  // 분석은 턴 단위이므로 stage 메시지에 몇 번째 턴인지 남긴다.
   async describe(task: JudgeTask): Promise<string | null> {
     const turn = await this.messages.findOneBy({ id: task.targetId });
     return turn === null || turn.sequence === null
@@ -223,7 +223,7 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
 
   /**
    * 분석 대상 턴. 삭제됐거나 확정되지 않은(sequence 없는) 행은 다시 시도해도 달라지지 않는다.
-   * 빈 턴(시간 초과)에 작업이 만들어지지 않는 것은 파이프라인이 보장한다(J3).
+   * 빈 턴(시간 초과)에 작업이 만들어지지 않는 것은 파이프라인이 보장한다.
    */
   private async findTurnOrThrow(turnId: string): Promise<DebateMessage> {
     const turn = await this.messages.findOneBy({

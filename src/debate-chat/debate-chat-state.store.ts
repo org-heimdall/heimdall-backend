@@ -58,7 +58,7 @@ end
 return 0`;
 
 /**
- * Phase 2 저장소: 확정 턴·토론 상태는 Postgres, draft·중복 방지·직렬화 락은 Redis(P2-1·P2-7).
+ * Phase 2 저장소: 확정 턴·토론 상태는 Postgres, draft·중복 방지·직렬화 락은 Redis.
  * 프로세스 메모리에 상태를 남기지 않으므로 서버를 재시작해도 같은 자리에서 이어진다.
  */
 @Injectable()
@@ -85,7 +85,7 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
     const token = await this.acquireLock(debateId);
     try {
       const state = await this.load(debateId);
-      // 첫 접근이 토론을 시작시킨다(P2-3). 이미 시작·종료된 토론에서는 아무 일도 하지 않는다.
+      // 첫 접근이 토론을 시작시킨다. 이미 시작·종료된 토론에서는 아무 일도 하지 않는다.
       state.start();
       const result = await work(state);
       await this.persist(debateId, state);
@@ -136,7 +136,7 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
   private async load(debateId: string): Promise<DebateChatState> {
     const debate = await this.debatesService.findOneOrThrow(debateId);
     const speakers = toSpeakers(debate);
-    // 라운드 수는 토론이 소유한다(R-1). 커뮤니티 설정이 뒤에 바뀌어도 진행 중인 토론은 흔들리지 않는다.
+    // 라운드 수는 토론이 소유한다. 커뮤니티 설정이 뒤에 바뀌어도 진행 중인 토론은 흔들리지 않는다.
     const schedule = new DebateTurnSchedule(debate.rebuttalQuestionRounds);
     const turns = await this.loadTurns(debate.id, speakers, schedule);
     const { drafts, clientMessages } = await this.loadDraftState(

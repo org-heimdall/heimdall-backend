@@ -227,7 +227,7 @@ export class JudgeResultRepository {
     ]);
   }
 
-  // 판정할 수 없게 된 토론(분석 최종 실패, J5). /judge/retry로만 풀린다.
+  // 판정할 수 없게 된 토론(분석 최종 실패). /judge/retry로만 풀린다.
   async markFailed(debateId: string): Promise<boolean> {
     return this.transitionDebate(debateId, DebateStatus.FAILED, [
       DebateStatus.DEBATE_FINALIZED,

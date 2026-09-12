@@ -112,7 +112,7 @@ export interface DebateChatStateProps {
   // 확정된 턴(sequence 오름차순)과 현재 차례의 draft.
   turns: DebateChatTurn[];
   drafts: DraftMessage[];
-  // clientMessageId → 그때 저장한 draft. 중복 판정은 토론 단위(D12)라 확정된 차례의 것도 남는다.
+  // clientMessageId → 그때 저장한 draft. 중복 판정은 토론 단위라 확정된 차례의 것도 남는다.
   clientMessages?: Map<string, DraftMessage>;
   // 시각·식별자 생성은 주입 가능하게 두어 테스트에서 고정한다.
   now?: () => Date;
@@ -124,7 +124,7 @@ export interface DebateChatStateProps {
  * 이 클래스 안에서만 바꾼다. 저장소는 저장된 사실로 이 객체를 rehydrate하고, 작업이 끝나면
  * drainChanges()로 변경만 꺼내 반영한다.
  *
- * 현재 차례(phase/round/side)와 차례 시작 시각은 저장하지 않고 확정 턴 수에서 파생한다(P2-8).
+ * 현재 차례(phase/round/side)와 차례 시작 시각은 저장하지 않고 확정 턴 수에서 파생한다.
  */
 export class DebateChatState {
   readonly debateId: string;
@@ -176,7 +176,7 @@ export class DebateChatState {
     return this.turns.length;
   }
 
-  // 아직 시작 전(READY)인 토론을 진행 중으로 전이시킨다(P2-3: 첫 접속 시 시작).
+  // 아직 시작 전(READY)인 토론을 진행 중으로 전이시킨다(첫 접속 시 시작).
   // 이미 시작했거나 끝난 토론에서는 아무 일도 하지 않는다.
   start(): void {
     if (this.status !== DebateStatus.READY) {
@@ -184,7 +184,7 @@ export class DebateChatState {
     }
     this.status = DebateStatus.IN_PROGRESS;
     this.startedAt = this.now();
-    // 아무도 발언하지 않아도 차례가 제한 시간 간격으로 흘러 이 시각에 토론이 스스로 끝난다(R-6·D16).
+    // 아무도 발언하지 않아도 차례가 제한 시간 간격으로 흘러 이 시각에 토론이 스스로 끝난다.
     this.expiresAt = new Date(
       this.startedAt.getTime() +
         this.schedule.size * this.limits.maxDurationSeconds * 1000,
@@ -193,7 +193,7 @@ export class DebateChatState {
   }
 
   /**
-   * 발언자가 기권한다(R-3). 토론은 판정 없이 FAILED로 끝나고 승자는 상대다.
+   * 발언자가 기권한다. 토론은 판정 없이 FAILED로 끝나고 승자는 상대다.
    * 관전자는 부를 수 없고(NOT_PARTICIPANT), 진행 중이 아니면 거절한다(NOT_IN_PROGRESS).
    */
   forfeit(memberId: string): void {
@@ -269,7 +269,7 @@ export class DebateChatState {
     return { status: 'APPENDED', message };
   }
 
-  // 현재 차례의 draft를 하나의 턴으로 확정하고 다음 차례로 넘긴다(D7: 개행으로 병합, 빈 턴 거부).
+  // 현재 차례의 draft를 하나의 턴으로 확정하고 다음 차례로 넘긴다(개행으로 병합, 빈 턴 거부).
   finalizeTurn(memberId: string, command: TurnCommand): TurnFinalizeResult {
     const slot = this.assertCommandAllowed(memberId, command);
     if (this.drafts.length === 0) {
@@ -279,7 +279,7 @@ export class DebateChatState {
   }
 
   /**
-   * 현재 차례가 제한 시간을 넘겼으면 그때까지 쓴 draft를 그대로 확정하고 **다음 차례로 넘긴다**(P2-4).
+   * 현재 차례가 제한 시간을 넘겼으면 그때까지 쓴 draft를 그대로 확정하고 **다음 차례로 넘긴다**.
    * 확정 버튼을 누르지 못했을 뿐 실제로 한 발언이므로 버리지 않으며, 한 글자도 없으면 빈 턴이 된다.
    * 아직 시간이 남았거나 이미 끝난 토론이면 null을 돌려주므로, 락 안에서 몇 번을 불러도 안전하다.
    */
@@ -368,7 +368,7 @@ export class DebateChatState {
     };
   }
 
-  // 현재 차례와 그 시작 시각. 규칙은 REST와 공유하는 deriveCurrentTurn 하나뿐이다(P2-8).
+  // 현재 차례와 그 시작 시각. 규칙은 REST와 공유하는 deriveCurrentTurn 하나뿐이다.
   private currentPosition(): CurrentTurnPosition | null {
     const lastTurn = this.turns[this.turns.length - 1];
     return deriveCurrentTurn({

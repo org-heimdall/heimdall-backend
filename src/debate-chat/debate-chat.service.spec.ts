@@ -100,7 +100,7 @@ describe('DebateChatService', () => {
       now: () => clock,
     });
     store = {
-      // 실제 저장소는 상태를 열면서 먼저 토론을 시작시킨다(P2-3). 그 계약을 그대로 흉내 낸다.
+      // 실제 저장소는 상태를 열면서 먼저 토론을 시작시킨다. 그 계약을 그대로 흉내 낸다.
       withState: jest
         .fn()
         .mockImplementation(
@@ -464,7 +464,7 @@ describe('DebateChatService', () => {
   });
 
   describe('forfeit', () => {
-    it('발언자가 기권하면 FAILED로 끝내고 타이머를 풀며 방에 알린다(R-3)', async () => {
+    it('발언자가 기권하면 FAILED로 끝내고 타이머를 풀며 방에 알린다', async () => {
       await service.forfeit(DEBATE_ID, HOST_ID);
 
       expect(state.currentStatus).toBe(DebateStatus.FAILED);

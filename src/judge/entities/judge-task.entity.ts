@@ -39,7 +39,7 @@ export class JudgeTask {
   })
   status: JudgeTaskStatus;
 
-  // 지금까지의 시도 횟수. 선점할 때마다 1씩 오르며 stage 이벤트의 attempt가 된다(J6).
+  // 지금까지의 시도 횟수. 선점할 때마다 1씩 오르며 stage 이벤트의 attempt가 된다.
   @Column({ type: 'int', default: 0 })
   attempt: number;
 
@@ -58,7 +58,7 @@ export class JudgeTask {
   createdAt: Date;
 
   /**
-   * 마지막 상태 전이 시각. Judge 재시도 쿨다운(J2)의 기준이다.
+   * 마지막 상태 전이 시각. Judge 재시도 쿨다운의 기준이다.
    *
    * 상태 전이는 전부 조건부 UPDATE(QueryBuilder)로 일어나므로 @UpdateDateColumn 대신
    * 일반 컬럼으로 두고 전이마다 now()를 직접 넣는다 — 갱신 시점을 SQL 한 곳에서 읽을 수 있다.

@@ -75,7 +75,7 @@ import { OpenAiJudgeLlm } from './llm/openai-judge-llm';
     ArgumentAnalyzerService,
     FactCheckerService,
     DebateJudgeService,
-    // LLM 구현체. 벤더는 단계마다 다르다(J1) — 사실 검증만 Gemini(Google Search grounding).
+    // LLM 구현체. 벤더는 단계마다 다르다 — 사실 검증만 Gemini(Google Search grounding).
     OpenAiJudgeLlm,
     { provide: ARGUMENT_ANALYZER, useExisting: OpenAiJudgeLlm },
     { provide: DEBATE_JUDGE, useExisting: OpenAiJudgeLlm },

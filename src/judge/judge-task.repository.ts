@@ -218,7 +218,7 @@ export class JudgeTaskRepository {
     });
   }
 
-  // 최종 실패한 작업. 재시도 쿨다운(J2)은 이들의 마지막 전이 시각을 기준으로 잰다.
+  // 최종 실패한 작업. 재시도 쿨다운은 이들의 마지막 전이 시각을 기준으로 잰다.
   async findFailed(
     debateId: string,
     kinds: JudgeTaskKind[],

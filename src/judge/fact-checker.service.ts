@@ -39,7 +39,7 @@ export class FactCheckSourceValidationError extends Error {
 /**
  * 컴포넌트 하나의 사실 검증. 대상(task.targetId)은 논증 컴포넌트다.
  *
- * 여기서 최종 실패(FAILED)해도 판정은 막히지 않는다(J5) — 검색이 안 됐다는 이유로 토론 전체가
+ * 여기서 최종 실패(FAILED)해도 판정은 막히지 않는다 — 검색이 안 됐다는 이유로 토론 전체가
  * 영영 판정 불가가 되면 안 되기 때문이다. 그 판단은 판정 조건 쪽에 있다.
  */
 @Injectable()
@@ -56,7 +56,7 @@ export class FactCheckerService implements JudgeTaskHandler {
     private readonly debates: DebatesService,
   ) {}
 
-  // 검증도 결국 어떤 턴의 발언에서 나온 것이므로 턴 번호를 남긴다(J6).
+  // 검증도 결국 어떤 턴의 발언에서 나온 것이므로 턴 번호를 남긴다.
   async describe(task: JudgeTask): Promise<string | null> {
     const component = await this.results.findComponentById(task.targetId);
     return component === null ? null : `turn #${component.turnSequence}`;

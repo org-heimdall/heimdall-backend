@@ -172,13 +172,13 @@ describe('JudgeService', () => {
   });
 
   describe('requestJudgment', () => {
-    it('분석 작업이 없는 확정 턴을 채우고 판정 조건을 다시 본다(J4)', async () => {
+    it('분석 작업이 없는 확정 턴을 채우고 판정 조건을 다시 본다', async () => {
       await expectCode(
         service.requestJudgment(DEBATE_ID, HOST_ID),
         JudgeErrorCode.IN_PROGRESS.code,
       );
 
-      // 빈 턴(2번)은 건너뛴다(J3).
+      // 빈 턴(2번)은 건너뛴다.
       expect(queue.schedule).toHaveBeenCalledTimes(1);
       expect(queue.schedule).toHaveBeenCalledWith(
         DEBATE_ID,
@@ -279,7 +279,7 @@ describe('JudgeService', () => {
       expect(results.restoreFinalized).toHaveBeenCalledWith(DEBATE_ID);
     });
 
-    it('마지막 실패로부터 쿨다운이 지나지 않았으면 거절한다(J2)', async () => {
+    it('마지막 실패로부터 쿨다운이 지나지 않았으면 거절한다', async () => {
       tasks.findFailed.mockResolvedValue([
         buildTask({ updatedAt: new Date(Date.now() - 10_000) }),
       ]);
@@ -398,7 +398,7 @@ describe('JudgeService', () => {
       expect(results.startJudging).toHaveBeenCalledWith(DEBATE_ID);
     });
 
-    it('검증이 최종 실패해도 판정을 막지 않는다(J5)', async () => {
+    it('검증이 최종 실패해도 판정을 막지 않는다', async () => {
       tasks.countByKind.mockResolvedValue(
         counts({
           analyzer: { total: 2, completed: 2 },
@@ -517,7 +517,7 @@ describe('JudgeService', () => {
       );
     });
 
-    it('빈 턴(시간 초과)은 작업을 만들지 않는다(J3)', async () => {
+    it('빈 턴(시간 초과)은 작업을 만들지 않는다', async () => {
       await service.onTurnFinalized(turn('   '));
 
       expect(queue.schedule).not.toHaveBeenCalled();

@@ -58,7 +58,7 @@ import * as Joi from 'joi';
         OPENAI_TIMEOUT_MS: Joi.number().default(60000),
         OPENAI_MAX_RETRIES: Joi.number().default(2),
 
-        // 토론 팩트체크용 Gemini 설정(J1). Google Search grounding을 쓰므로 OpenAI와 분리한다.
+        // 토론 팩트체크용 Gemini 설정. Google Search grounding을 쓰므로 OpenAI와 분리한다.
         // 키 규칙은 OPENAI_*와 같다(production에서만 필수).
         GEMINI_API_KEY: Joi.string().when('NODE_ENV', {
           is: 'production',
@@ -93,7 +93,7 @@ import * as Joi from 'joi';
           .integer()
           .min(1)
           .default(2),
-        // Judge가 최종 실패한 뒤 /judge/retry를 받아 줄 때까지의 대기 시간(J2).
+        // Judge가 최종 실패한 뒤 /judge/retry를 받아 줄 때까지의 대기 시간.
         DEBATE_JUDGE_RETRY_COOLDOWN_SECONDS: Joi.number()
           .integer()
           .min(0)

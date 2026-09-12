@@ -500,7 +500,7 @@ describe('DebateChatState', () => {
         debateStatus: DebateStatus.IN_PROGRESS,
         startedAt: clock,
         endedAt: null,
-        // 시작 시각 + 차례 수(4) × 제한 시간(R-6)
+        // 시작 시각 + 차례 수(4) × 제한 시간
         expiresAt: new Date(
           clock.getTime() + 4 * limits.maxDurationSeconds * 1000,
         ),
@@ -744,7 +744,7 @@ describe('DebateChatState', () => {
     });
   });
   describe('forfeit', () => {
-    it('발언자가 기권하면 FAILED로 끝나고 승자는 상대다(S18)', () => {
+    it('발언자가 기권하면 FAILED로 끝나고 승자는 상대다', () => {
       clock = new Date(NOW.getTime() + 10_000);
 
       state.forfeit(SIDE_A_ID);
