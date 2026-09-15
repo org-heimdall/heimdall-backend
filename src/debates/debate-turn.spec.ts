@@ -27,7 +27,7 @@ describe('debate-turn', () => {
   };
 
   describe('DebateTurnSchedule', () => {
-    it('OPENING → REBUTTAL_QUESTION N라운드 → CLOSING을 SIDE_A, SIDE_B 순서로 만든다(D6)', () => {
+    it('OPENING → REBUTTAL_QUESTION N라운드 → CLOSING을 SIDE_A, SIDE_B 순서로 만든다', () => {
       expect(schedule.toArray()).toEqual([
         { phase: DebatePhase.OPENING, round: 1, side: DebateSide.SIDE_A },
         { phase: DebatePhase.OPENING, round: 1, side: DebateSide.SIDE_B },
@@ -95,7 +95,7 @@ describe('debate-turn', () => {
     const buildDebate = (opponentId: string | null): Debate =>
       Object.assign(new Debate(), { hostId: HOST_ID, opponentId });
 
-    it('host는 SIDE_A, opponent는 SIDE_B다(D3)', () => {
+    it('host는 SIDE_A, opponent는 SIDE_B다', () => {
       expect(resolveSpeakers(buildDebate(OPPONENT_ID))).toEqual(speakers);
     });
 

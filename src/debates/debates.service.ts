@@ -92,7 +92,7 @@ export class DebatesService {
   }
 
   /**
-   * 토론을 만든다(계약 POST /debates). 주제·라운드 수는 요청 값을 토론이 직접 갖는다(R-1).
+   * 토론을 만든다(계약 POST /debates). 주제·라운드 수는 요청 값을 토론이 직접 갖는다.
    * 커뮤니티와 양쪽 발언자의 소속을 확인하고 READY 상태로 저장한다.
    */
   async create(request: CreateDebateDto, memberId: string): Promise<DebateDto> {
@@ -108,7 +108,7 @@ export class DebatesService {
         communityId: community.id,
         topic: request.topic,
         rebuttalQuestionRounds: request.rebuttalQuestionRounds,
-        // 컬럼 이름은 host/opponent 그대로 두고 계약의 SIDE_A/SIDE_B를 매핑한다(D3).
+        // 컬럼 이름은 host/opponent 그대로 두고 계약의 SIDE_A/SIDE_B를 매핑한다.
         hostId: sideA.id,
         hostNickname: sideA.nickname,
         opponentId: sideB.id,
@@ -122,7 +122,7 @@ export class DebatesService {
     return DebateDto.from(debate, NO_PROGRESS);
   }
 
-  // 토론 목록(계약 GET /debates). status 필터 외에는 좁히지 않는다(R-7).
+  // 토론 목록(계약 GET /debates). status 필터 외에는 좁히지 않는다.
   async findAll(status?: DebateStatus): Promise<DebateDto[]> {
     const debates = await this.debateRepository.find({
       where: {
@@ -281,7 +281,7 @@ export class DebatesService {
 
   /**
    * 토론별 확정 턴 수와 마지막 턴 시각을 한 번에 집계한다. 현재 차례(phase/round/side)는
-   * 저장하지 않고 이 두 값에서 파생하므로(P2-8), 목록도 토론마다 조회하지 않고 한 번에 읽는다.
+   * 저장하지 않고 이 두 값에서 파생하므로, 목록도 토론마다 조회하지 않고 한 번에 읽는다.
    */
   private async loadProgress(
     debateIds: string[],

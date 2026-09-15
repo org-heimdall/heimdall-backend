@@ -53,7 +53,7 @@ export class DebateChatController {
   @Get()
   async getSnapshot(
     @Param('debateId', ParseUUIDPipe) debateId: string,
-    // 관전자를 포함해 인증된 회원만 볼 수 있다는 선언(D9). 토큰이 없으면 이 데코레이터가 401을
+    // 관전자를 포함해 인증된 회원만 볼 수 있다는 선언. 토큰이 없으면 이 데코레이터가 401을
     // 던지므로, 값을 쓰지 않더라도 빼면 라우트가 조용히 공개된다.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     @CurrentMember() _memberId: string,

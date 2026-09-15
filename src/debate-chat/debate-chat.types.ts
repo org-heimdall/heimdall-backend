@@ -19,10 +19,10 @@ import { DebateStatus } from '../debates/entities/debate-status.enum';
 
 export { DebateStatus };
 
-// 토론이 끝난 이유. 시간 초과는 토론이 아니라 차례만 넘기므로(P2-4) 여기에 들어가지 않는다.
+// 토론이 끝난 이유. 시간 초과는 토론이 아니라 차례만 넘기므로 여기에 들어가지 않는다.
 export enum DebateEndReason {
   ALL_TURNS_FINALIZED = 'ALL_TURNS_FINALIZED',
-  // 발언자가 POST /debates/:id/forfeit으로 기권했다(R-3). 상태는 FAILED, 승자는 상대다.
+  // 발언자가 POST /debates/:id/forfeit으로 기권했다. 상태는 FAILED, 승자는 상대다.
   FORFEIT = 'FORFEIT',
 }
 

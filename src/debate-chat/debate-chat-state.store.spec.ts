@@ -49,7 +49,6 @@ describe('RedisDebateChatStateStore', () => {
       endedAt: null,
       expiresAt: null,
       winnerId: null,
-      solution: null,
       status: ResourceStatus.NORMAL,
       community: Object.assign(new Community(), {
         id: COMMUNITY_ID,

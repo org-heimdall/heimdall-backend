@@ -312,7 +312,7 @@ export class SeedService implements OnApplicationBootstrap {
         seed.opponentEmail,
       );
 
-      // 판정 전 상태로 넣는다(winnerId·solution은 debate-judge가 채운다).
+      // 판정 전 상태로 넣는다(winnerId와 판정 결과는 judge 모듈이 채운다).
       // 시드 대화는 이미 끝난 토론이므로 DEBATE_FINALIZED로 넣는다. 그래야 채팅이 시드 토론을
       // 이어서 진행하지 않고 NOT_IN_PROGRESS로 거절한다.
       // currentTurn은 종료된 대화에선 의미가 없어 기본값 HOST로 둔다.
@@ -320,7 +320,7 @@ export class SeedService implements OnApplicationBootstrap {
       const debate = await debateRepository.save(
         debateRepository.create({
           communityId: community.id,
-          // 주제·라운드 수는 토론이 소유하므로 생성 시점의 커뮤니티 값을 복사한다(R-1).
+          // 주제·라운드 수는 토론이 소유하므로 생성 시점의 커뮤니티 값을 복사한다.
           topic: community.topic,
           rebuttalQuestionRounds: community.debateRoundCount,
           hostId: host.id,
