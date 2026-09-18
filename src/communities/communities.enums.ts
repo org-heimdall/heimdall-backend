@@ -1,0 +1,12 @@
+export enum CommunitySort {
+  MEMBER_ASC = 'MEMBER_ASC',
+  MEMBER_DESC = 'MEMBER_DESC',
+  CREATED_AT_ASC = 'CREATED_AT_ASC',
+  CREATED_AT_DESC = 'CREATED_AT_DESC',
+}
+
+export enum CommunityMemberType {
+  KEYNOTE_MEMBER = 'KEYNOTE_MEMBER',
+  NORMAL_MEMBER = 'NORMAL_MEMBER',
+  HOST = 'HOST',
+}

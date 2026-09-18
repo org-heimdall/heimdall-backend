@@ -1,14 +1,156 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { CommunitiesModule } from './communities/communities.module';
 import { MemberCommunitiesModule } from './member-communities/member-communities.module';
 import { MembersModule } from './members/members.module';
 import { DebatesModule } from './debates/debates.module';
+import { DebateInvitationsModule } from './debate-invitations/debate-invitations.module';
+import { SeedModule } from './seed/seed.module';
+import { DebateChatModule } from './debate-chat/debate-chat.module';
+import { CommunityChatModule } from './community-chat/community-chat.module';
+import { JudgeModule } from './judge/judge.module';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { buildTypeOrmOptions } from './common/database/typeorm-options';
+import * as Joi from 'joi';
 
 @Module({
-  imports: [CommunitiesModule, MemberCommunitiesModule, MembersModule, DebatesModule],
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      validationSchema: Joi.object({
+        NODE_ENV: Joi.string()
+          .valid('local', 'development', 'production', 'test')
+          .default('development'),
+
+        PG_HOST: Joi.string().required(),
+        PG_PORT: Joi.number().default(5432),
+        PG_USER: Joi.string().required(),
+        PG_PASSWORD: Joi.string().required(),
+        PG_DATABASE: Joi.string().required(),
+
+        // access/refresh secret은 분리한다(혼용 토큰 원천 차단). 값이 같으면 부팅을 막는다.
+        JWT_ACCESS_SECRET: Joi.string().min(32).required(),
+        JWT_ACCESS_EXPIRES_IN: Joi.string().default('30m'),
+        JWT_REFRESH_SECRET: Joi.string()
+          .min(32)
+          .required()
+          .disallow(Joi.ref('JWT_ACCESS_SECRET')),
+        JWT_REFRESH_EXPIRES_IN: Joi.string().default('14d'),
+
+        GOOGLE_CLIENT_ID: Joi.string().required(),
+
+        // 토론 채팅 draft·중복 방지·락 저장소. 배포는 compose 서비스명(redis).
+        REDIS_HOST: Joi.string().default('localhost'),
+        REDIS_PORT: Joi.number().integer().min(1).default(6379),
+        REDIS_PASSWORD: Joi.string().allow('').optional(),
+
+        // 토론 판정용 OpenAI 설정. 키를 무조건 required로 두면 키가 없는 팀원의
+        // 로컬 부팅이 전부 깨지므로 production에서만 필수로 둔다.
+        OPENAI_API_KEY: Joi.string().when('NODE_ENV', {
+          is: 'production',
+          then: Joi.required(),
+          otherwise: Joi.string().allow('').optional(),
+        }),
+        OPENAI_MODEL: Joi.string().default('gpt-5.6-luna'),
+        OPENAI_TIMEOUT_MS: Joi.number().default(60000),
+        OPENAI_MAX_RETRIES: Joi.number().default(2),
+
+        // 토론 팩트체크용 Gemini 설정. Google Search grounding을 쓰므로 OpenAI와 분리한다.
+        // 키 규칙은 OPENAI_*와 같다(production에서만 필수).
+        GEMINI_API_KEY: Joi.string().when('NODE_ENV', {
+          is: 'production',
+          then: Joi.required(),
+          otherwise: Joi.string().allow('').optional(),
+        }),
+        // structured output + Google Search grounding 조합은 Gemini 3 계열에서만 된다.
+        GEMINI_MODEL: Joi.string().default('gemini-3.8-flash'),
+        GEMINI_TIMEOUT_MS: Joi.number().default(60000),
+
+        // 토론 판정 파이프라인(Phase 3) 운영값.
+        DEBATE_PIPELINE_WORKER_CONCURRENCY: Joi.number()
+          .integer()
+          .min(1)
+          .default(2),
+        // 한 작업(LLM 호출 포함)이 이 시간을 넘기면 실패로 보고 재시도한다.
+        DEBATE_PIPELINE_JOB_TIMEOUT_MS: Joi.number()
+          .integer()
+          .min(1)
+          .default(120000),
+        // 지수 backoff의 기준 간격.
+        DEBATE_PIPELINE_BACKOFF_MS: Joi.number().integer().min(1).default(5000),
+        DEBATE_PIPELINE_ANALYZER_MAX_ATTEMPTS: Joi.number()
+          .integer()
+          .min(1)
+          .default(3),
+        DEBATE_PIPELINE_FACT_CHECK_MAX_ATTEMPTS: Joi.number()
+          .integer()
+          .min(1)
+          .default(3),
+        DEBATE_PIPELINE_JUDGE_MAX_ATTEMPTS: Joi.number()
+          .integer()
+          .min(1)
+          .default(2),
+        // Judge가 최종 실패한 뒤 /judge/retry를 받아 줄 때까지의 대기 시간.
+        DEBATE_JUDGE_RETRY_COOLDOWN_SECONDS: Joi.number()
+          .integer()
+          .min(0)
+          .default(300),
+
+        // 비공개 대화 시드 파일 경로(저장소 밖). 없으면 대화 시딩만 건너뛰므로 optional이다.
+        SEED_DEBATE_DATA_PATH: Joi.string().optional(),
+
+        // 토론 채팅 WebSocket. 계약상 HTTP와 별도 포트를 쓴다.
+        DEBATE_CHAT_WS_PORT: Joi.number().integer().min(1).default(8080),
+        // 턴 제한값. 글자 수와 시간 초과(Phase 2)를 서버가 강제한다.
+        DEBATE_TURN_MAX_CONTENT_LENGTH: Joi.number()
+          .integer()
+          .min(1)
+          .default(500),
+        DEBATE_TURN_MAX_TOTAL_CHARACTERS: Joi.number()
+          .integer()
+          .min(1)
+          .default(1500),
+        DEBATE_TURN_MAX_DURATION_SECONDS: Joi.number()
+          .integer()
+          .min(1)
+          .default(180),
+
+        // 토론 초대 응답 제한 시간. 프론트의 5초 대기 화면과 같은 값이어야 한다.
+        DEBATE_INVITATION_TTL_SECONDS: Joi.number().integer().min(1).default(5),
+      }),
+    }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) =>
+        buildTypeOrmOptions({
+          host: config.getOrThrow<string>('PG_HOST'),
+          port: config.getOrThrow<number>('PG_PORT'),
+          username: config.getOrThrow<string>('PG_USER'),
+          password: config.getOrThrow<string>('PG_PASSWORD'),
+          database: config.getOrThrow<string>('PG_DATABASE'),
+        }),
+    }),
+    AuthModule,
+    CommunitiesModule,
+    MemberCommunitiesModule,
+    MembersModule,
+    DebatesModule,
+    DebateInvitationsModule,
+    SeedModule,
+    DebateChatModule,
+    CommunityChatModule,
+    JudgeModule,
+  ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // DI 컨테이너 안에서 전역 필터 등록 (추후 알림 서비스 등 주입 가능)
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
+  ],
 })
 export class AppModule {}
