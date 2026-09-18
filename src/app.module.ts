@@ -121,7 +121,7 @@ import * as Joi from 'joi';
           .default(180),
 
         // 토론 초대 응답 제한 시간. 프론트의 5초 대기 화면과 같은 값이어야 한다.
-        DEBATE_INVITATION_TTL_SECONDS: Joi.number().integer().min(1).default(10),
+        DEBATE_INVITATION_TTL_SECONDS: Joi.number().integer().min(1).default(5),
       }),
     }),
     TypeOrmModule.forRootAsync({
