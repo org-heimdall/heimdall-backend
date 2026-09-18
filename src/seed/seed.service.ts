@@ -8,7 +8,10 @@ import {
   Community,
   CommunityState,
 } from '../communities/entities/community.entity';
-import { MemberCommunity } from '../member-communities/entities/member-community.entity';
+import {
+  CommunityDebateIntent,
+  MemberCommunity,
+} from '../member-communities/entities/member-community.entity';
 import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate, DebateTurn } from '../debates/entities/debate.entity';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
@@ -153,13 +156,15 @@ export class SeedService implements OnApplicationBootstrap {
     const memberCommunityRepository = manager.getRepository(MemberCommunity);
 
     const [messi, ronaldo, mbappe, yamal, haaland] = members;
-    const [politics, economy] = themes;
+    const [politics, economy, society] = themes;
 
     // opinion !== null → KEYNOTE_MEMBER, null → NORMAL_MEMBER 로 분류된다.
     // 호스트는 실제 커뮤니티 생성 흐름과 동일하게 자신의 기조 발언과 함께 참여자로 포함한다.
     const communitySeeds = [
       {
         topic: '기본소득 도입에 찬성하는가',
+        // 참여자 전원의 토론 의사. OPEN_TO_DEBATE여야 방장이 토론에 초대할 수 있다.
+        debateIntent: CommunityDebateIntent.PREPARING,
         state: CommunityState.ACTIVE,
         host: messi, // user1
         hostKeynote: {
@@ -189,6 +194,8 @@ export class SeedService implements OnApplicationBootstrap {
       },
       {
         topic: '선거운동 가능 연령을 16세로 하향하여야 하는가',
+        // 참여자 전원의 토론 의사. OPEN_TO_DEBATE여야 방장이 토론에 초대할 수 있다.
+        debateIntent: CommunityDebateIntent.PREPARING,
         state: CommunityState.WAITING,
         host: ronaldo, // user2
         hostKeynote: {
@@ -205,8 +212,32 @@ export class SeedService implements OnApplicationBootstrap {
           },
         ],
       },
+      // 토론 초대 흐름(방장이 참여자를 부르는 5초 대기 화면)을 바로 시험할 수 있는 커뮤니티.
+      // 아직 토론이 없고 상대가 될 참여자만 있는 WAITING 상태다.
+      {
+        topic: '주 4일제를 전면 도입하여야 하는가',
+        // 참여자 전원의 토론 의사. OPEN_TO_DEBATE여야 방장이 토론에 초대할 수 있다.
+        debateIntent: CommunityDebateIntent.OPEN_TO_DEBATE,
+        state: CommunityState.WAITING,
+        host: messi, // user1
+        hostKeynote: {
+          opinion: '찬성',
+          reasons: ['생산성 향상', '삶의 질 개선'],
+        },
+        theme: society,
+        debateRoundCount: 3,
+        others: [
+          {
+            member: ronaldo, // user2
+            opinion: '반대',
+            reasons: ['인건비 부담'],
+          },
+        ],
+      },
       {
         topic: '국민연금 의무가입을 폐지하여야 한다',
+        // 참여자 전원의 토론 의사. OPEN_TO_DEBATE여야 방장이 토론에 초대할 수 있다.
+        debateIntent: CommunityDebateIntent.PREPARING,
         state: CommunityState.WAITING,
         host: ronaldo, // user2
         hostKeynote: {
@@ -260,6 +291,7 @@ export class SeedService implements OnApplicationBootstrap {
           memberCommunityRepository.create({
             memberId: participant.member.id,
             communityId: community.id,
+            debateIntent: seed.debateIntent,
             opinion: participant.opinion,
             reasons: participant.reasons,
           }),
