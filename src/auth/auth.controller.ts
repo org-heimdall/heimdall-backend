@@ -1,5 +1,6 @@
 import { Body, Controller, HttpCode, Post } from '@nestjs/common';
 import {
+  ApiCreatedResponse,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
@@ -7,6 +8,8 @@ import {
 import { ApiAuthRequired } from '../common/decorators/api-auth-required.decorator';
 import { CurrentMember } from '../common/decorators/current-member.decorator';
 import { ApiErrorResponses } from '../common/exceptions/api-error-responses.decorator';
+import { CreateMemberDto } from '../members/dto/create-member.dto';
+import { LoginMemberDto } from '../members/dto/login-member.dto';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { OAuthProviderType } from '../members/members.enums';
 import { AuthService } from './auth.service';
@@ -15,9 +18,36 @@ import { GoogleLoginDto } from './dto/google-login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthErrorCode } from './exceptions/auth-error-code';
 
-@Controller('api/auth')
+@Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @ApiOperation({
+    summary: '회원가입',
+    description:
+      '이메일과 비밀번호로 회원을 만들고 곧바로 액세스/리프레시 토큰을 발급한다. ' +
+      '가입 직후 별도 로그인 호출이 필요 없다.',
+  })
+  @ApiCreatedResponse({ description: '회원가입 성공', type: AuthTokenDto })
+  @ApiErrorResponses(MemberErrorCode.EMAIL_ALREADY_EXISTS)
+  @Post('/signup')
+  async signUp(@Body() request: CreateMemberDto): Promise<AuthTokenDto> {
+    return this.authService.signUp(request);
+  }
+
+  @ApiOperation({
+    summary: '로그인',
+    description:
+      '이메일과 비밀번호를 검증하고 액세스/리프레시 토큰을 발급한다. ' +
+      '소셜 전용 계정(비밀번호 없음)은 이 경로로 로그인할 수 없다.',
+  })
+  @ApiOkResponse({ description: '로그인 성공', type: AuthTokenDto })
+  @ApiErrorResponses(MemberErrorCode.INVALID_CREDENTIALS)
+  @Post('/login')
+  @HttpCode(200)
+  async login(@Body() request: LoginMemberDto): Promise<AuthTokenDto> {
+    return this.authService.login(request);
+  }
 
   @ApiOperation({
     summary: '구글 로그인',

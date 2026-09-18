@@ -19,14 +19,16 @@ describe('AuthSessionService', () => {
   };
 
   const member: MemberDto = {
-    memberId: 'member-uuid',
+    id: 'member-uuid',
     email: 'heimdall@example.com',
-    nickname: '헤임달',
+    displayName: '헤임달',
     gender: null,
     age: null,
     profileImageUrl: null,
     socialCredit: 0,
-    rating: 0,
+    score: 0,
+    createdAt: '2026-09-07T11:59:00.000Z',
+    updatedAt: '2026-09-07T11:59:00.000Z',
   };
 
   const access: IssuedToken = {
@@ -67,7 +69,7 @@ describe('AuthSessionService', () => {
       const result = await service.start(member);
 
       expect(refreshTokenService.persist).toHaveBeenCalledWith(
-        member.memberId,
+        member.id,
         refresh,
       );
       expect(result.accessToken).toBe(access.token);
@@ -100,7 +102,7 @@ describe('AuthSessionService', () => {
       const result = await service.rotate(member, 'presented-token');
 
       expect(refreshTokenService.rotate).toHaveBeenCalledWith(
-        member.memberId,
+        member.id,
         'presented-token',
         refresh,
       );
@@ -122,10 +124,10 @@ describe('AuthSessionService', () => {
 
   describe('end', () => {
     it('제출된 리프레시 토큰을 폐기한다', async () => {
-      await service.end(member.memberId, 'refresh-token');
+      await service.end(member.id, 'refresh-token');
 
       expect(refreshTokenService.revoke).toHaveBeenCalledWith(
-        member.memberId,
+        member.id,
         'refresh-token',
       );
     });

@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { GeneralException } from '../common/exceptions/general.exception';
+import { CreateMemberDto } from '../members/dto/create-member.dto';
+import { LoginMemberDto } from '../members/dto/login-member.dto';
 import { MemberDto } from '../members/dto/member.dto';
 import { Member } from '../members/entities/member.entity';
 import { MembersService } from '../members/members.service';
@@ -19,6 +21,20 @@ export class AuthService {
     private readonly tokenService: TokenService,
     private readonly authSessionService: AuthSessionService,
   ) {}
+
+  /**
+   * 이메일·비밀번호로 가입하고 곧바로 세션을 발급한다(계약: POST /auth/signup → AuthTokenResponse).
+   * 회원 생성 자체는 회원 도메인이 소유하고, 여기서는 그 결과에 세션만 붙인다.
+   */
+  async signUp(request: CreateMemberDto): Promise<AuthTokenDto> {
+    const member = await this.membersService.signUp(request);
+    return this.authSessionService.start(member);
+  }
+
+  // 이메일·비밀번호 로그인. 자격증명 대조는 회원 도메인이 소유한다.
+  async login(request: LoginMemberDto): Promise<AuthTokenDto> {
+    return this.membersService.login(request);
+  }
 
   // 소셜 자격증명을 검증해 회원을 해결(연동/가입)하고 자체 토큰을 발급한다.
   async loginWithOAuth(

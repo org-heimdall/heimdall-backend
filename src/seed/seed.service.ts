@@ -28,10 +28,11 @@ const DEBATE_MESSAGE_INSERT_CHUNK = 500;
 const SEED_PASSWORD = 'password1234';
 
 // email/nickname은 seedMembers에서 멱등 판별 키(email)로 쓰인다.
-const MEMBER_SEEDS: Pick<
+// 엔티티의 email은 nullable이지만(프로필만 있는 회원) 시드 계정은 로그인까지 되어야 해 항상 채운다.
+const MEMBER_SEEDS: (Pick<
   Member,
-  'email' | 'nickname' | 'gender' | 'age' | 'profileImageUrl'
->[] = [
+  'nickname' | 'gender' | 'age' | 'profileImageUrl'
+> & { email: string })[] = [
   {
     email: 'user1@example.com',
     nickname: '메시',
@@ -162,7 +163,9 @@ export class SeedService implements OnApplicationBootstrap {
     // 호스트는 실제 커뮤니티 생성 흐름과 동일하게 자신의 기조 발언과 함께 참여자로 포함한다.
     const communitySeeds = [
       {
+        title: '기본소득, 지금 시작할 때인가',
         topic: '기본소득 도입에 찬성하는가',
+        isPublic: true,
         // 참여자 전원의 토론 의사. OPEN_TO_DEBATE여야 방장이 토론에 초대할 수 있다.
         debateIntent: CommunityDebateIntent.PREPARING,
         state: CommunityState.ACTIVE,
@@ -193,7 +196,9 @@ export class SeedService implements OnApplicationBootstrap {
         ],
       },
       {
+        title: '청소년 참정권 확대 토론방',
         topic: '선거운동 가능 연령을 16세로 하향하여야 하는가',
+        isPublic: true,
         // 참여자 전원의 토론 의사. OPEN_TO_DEBATE여야 방장이 토론에 초대할 수 있다.
         debateIntent: CommunityDebateIntent.PREPARING,
         state: CommunityState.WAITING,
@@ -215,7 +220,9 @@ export class SeedService implements OnApplicationBootstrap {
       // 토론 초대 흐름(방장이 참여자를 부르는 5초 대기 화면)을 바로 시험할 수 있는 커뮤니티.
       // 아직 토론이 없고 상대가 될 참여자만 있는 WAITING 상태다.
       {
+        title: '주 4일제 끝장 토론',
         topic: '주 4일제를 전면 도입하여야 하는가',
+        isPublic: true,
         // 참여자 전원의 토론 의사. OPEN_TO_DEBATE여야 방장이 토론에 초대할 수 있다.
         debateIntent: CommunityDebateIntent.OPEN_TO_DEBATE,
         state: CommunityState.WAITING,
@@ -235,7 +242,9 @@ export class SeedService implements OnApplicationBootstrap {
         ],
       },
       {
+        title: '국민연금, 의무여야 하는가',
         topic: '국민연금 의무가입을 폐지하여야 한다',
+        isPublic: false,
         // 참여자 전원의 토론 의사. OPEN_TO_DEBATE여야 방장이 토론에 초대할 수 있다.
         debateIntent: CommunityDebateIntent.PREPARING,
         state: CommunityState.WAITING,
@@ -280,7 +289,9 @@ export class SeedService implements OnApplicationBootstrap {
           hostId: seed.host.id,
           themeId: seed.theme.id,
           memberCount: participants.length,
+          title: seed.title,
           topic: seed.topic,
+          isPublic: seed.isPublic,
           debateRoundCount: seed.debateRoundCount,
           communityLink: null,
         }),
@@ -314,8 +325,11 @@ export class SeedService implements OnApplicationBootstrap {
     const communityRepository = manager.getRepository(Community);
     const debateRepository = manager.getRepository(Debate);
     const messageRepository = manager.getRepository(DebateMessage);
+    // 시드 계정은 모두 이메일이 있지만, 엔티티 타입상 null이 가능하므로 여기서 걸러 낸다.
     const memberByEmail = new Map(
-      members.map((member) => [member.email, member]),
+      members
+        .filter((member) => member.email !== null)
+        .map((member) => [member.email as string, member]),
     );
 
     for (const seed of seeds) {

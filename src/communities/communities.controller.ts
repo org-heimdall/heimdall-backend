@@ -23,7 +23,7 @@ import {
 import { ApiErrorResponses } from '../common/exceptions/api-error-responses.decorator';
 import { CommunitiesService } from './communities.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
-import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
+import { CommunityDto } from './dto/community.dto';
 import { ThemeDto } from './dto/theme.dto';
 import { CommunityMemberDto } from './dto/community-member.dto';
 import { UpdateDebateIntentDto } from './dto/update-debate-intent.dto';
@@ -37,7 +37,7 @@ import { CommunityChatPublisher } from '../community-chat/community-chat.publish
 
 export { CommunityMemberType, CommunitySort };
 
-@Controller('api/communities')
+@Controller('communities')
 export class CommunitiesController {
   constructor(
     private readonly communitiesService: CommunitiesService,
@@ -55,10 +55,13 @@ export class CommunitiesController {
   }
 
   @ApiOperation({
-    summary: '커뮤니티 목록 페이지 조회',
-    description: 'hasNext 무한 스크롤 방식',
+    summary: '커뮤니티 목록 조회',
+    description:
+      '정렬·페이지·테마 필터는 모두 선택이며, 쿼리 없이 부르면 최신순 첫 페이지를 돌려준다. ' +
+      'isOwnedByCurrentUser/isJoined는 액세스 토큰의 회원 기준이다.',
   })
-  @ApiOkResponse({ type: CommunitySliceDto })
+  @ApiOkResponse({ type: [CommunityDto] })
+  @ApiAuthRequired()
   @Get()
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'size', required: false, type: Number, example: 10 })
@@ -77,19 +80,26 @@ export class CommunitiesController {
     description: '테마 필터',
   })
   async findAll(
+    @CurrentMember() memberId: string,
     @Query('page', new DefaultValuePipe(1), ParsePositiveIntPipe) page: number,
     @Query('size', new DefaultValuePipe(10), ParsePositiveIntPipe) size: number,
     @Query('sort') sort?: CommunitySort,
     @Query('themeId', new ParseUUIDPipe({ optional: true })) themeId?: string,
-  ): Promise<CommunitySliceDto> {
-    return this.communitiesService.findAll(page, size, sort, themeId);
+  ): Promise<CommunityDto[]> {
+    return this.communitiesService.findAll(memberId, page, size, sort, themeId);
   }
 
   @ApiOperation({
     summary: '커뮤니티 생성',
+    description:
+      'category는 GET /communities/themes가 돌려주는 테마 이름 중 하나여야 한다. ' +
+      'hostClaim/hostReasons는 방장의 기조 발언으로 함께 저장된다.',
   })
   @ApiCreatedResponse({ type: CommunityDto })
-  @ApiErrorResponses(MemberErrorCode.NOT_FOUND)
+  @ApiErrorResponses(
+    MemberErrorCode.NOT_FOUND,
+    CommunityErrorCode.THEME_NOT_FOUND,
+  )
   @ApiAuthRequired()
   @Post()
   async create(
@@ -97,6 +107,22 @@ export class CommunitiesController {
     @Body() request: CreateCommunityDto,
   ): Promise<CommunityDto> {
     return this.communitiesService.create(request, memberId);
+  }
+
+  @ApiOperation({
+    summary: '커뮤니티 단건 조회',
+    description: 'isOwnedByCurrentUser/isJoined는 액세스 토큰의 회원 기준이다.',
+  })
+  @ApiParam({ name: 'communityId', format: 'uuid' })
+  @ApiOkResponse({ type: CommunityDto })
+  @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
+  @ApiAuthRequired()
+  @Get('/:communityId')
+  async findOne(
+    @Param('communityId', ParseUUIDPipe) communityId: string,
+    @CurrentMember() memberId: string,
+  ): Promise<CommunityDto> {
+    return this.communitiesService.findOne(communityId, memberId);
   }
 
   @ApiOperation({

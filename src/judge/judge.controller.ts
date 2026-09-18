@@ -17,7 +17,7 @@ import { DebateResultDto, JudgmentResultDto } from './dto/debate-result.dto';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
 
 // 계약의 판정 API 3개. 실제 처리는 큐의 worker가 하고, 여기서는 밀어 주고 결과를 읽기만 한다.
-@Controller('api/debates/:debateId')
+@Controller('debates/:debateId')
 export class JudgeController {
   constructor(private readonly service: JudgeService) {}
 

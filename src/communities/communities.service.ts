@@ -2,12 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunityErrorCode } from './exceptions/community-error-code';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
 import { CommunityFavorite } from './entities/community-favorite.entity';
 import { ThemeDto } from './dto/theme.dto';
-import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
+import { CommunityDto, MAX_PARTICIPANT_PREVIEWS } from './dto/community.dto';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
@@ -48,13 +48,14 @@ export class CommunitiesService {
     return themes.map((theme) => ThemeDto.from(theme));
   }
 
-  // 커뮤니티 목록 페이지 조회 (size+1개를 읽어 hasNext 판정)
+  // 커뮤니티 목록 조회. 정렬·페이지·테마 필터는 프론트가 쓰지 않아도 되는 선택 쿼리다.
   async findAll(
+    currentMemberId: string,
     page: number,
     size: number,
     sort?: CommunitySort,
     themeId?: string,
-  ): Promise<CommunitySliceDto> {
+  ): Promise<CommunityDto[]> {
     const { column, direction } = this.resolveSort(sort);
 
     const query = this.communityRepository
@@ -62,26 +63,23 @@ export class CommunitiesService {
       .where('community.status = :status', { status: ResourceStatus.NORMAL })
       .orderBy(column, direction)
       .skip((page - 1) * size)
-      .take(size + 1);
+      .take(size);
 
     if (themeId) {
       query.andWhere('community.themeId = :themeId', { themeId });
     }
 
-    const rows = await query.getMany();
-    const hasNext = rows.length > size;
-    const communities = hasNext ? rows.slice(0, size) : rows;
+    return this.toCommunityDtos(await query.getMany(), currentMemberId);
+  }
 
-    const totalCommunityCount = await query.getCount();
-    const hostMap = await this.loadMemberMap(communities.map((c) => c.hostId));
-
-    return {
-      totalCommunityCount,
-      communityPreviews: communities.map((community) =>
-        CommunityDto.from(community, hostMap.get(community.hostId)),
-      ),
-      pageInfo: { hasNext, page, size },
-    };
+  // 커뮤니티 1건 조회. 목록과 같은 스키마를 돌려주므로 조립 경로도 같이 쓴다.
+  async findOne(
+    communityId: string,
+    currentMemberId: string,
+  ): Promise<CommunityDto> {
+    const community = await this.findOneOrThrow(communityId);
+    const [dto] = await this.toCommunityDtos([community], currentMemberId);
+    return dto;
   }
 
   // 커뮤니티 생성: community + 호스트 member_community(기조발언)를 한 트랜잭션으로 저장
@@ -89,25 +87,31 @@ export class CommunitiesService {
     createCommunityDto: CreateCommunityDto,
     hostId: string,
   ): Promise<CommunityDto> {
-    const host = await this.membersService.findOneOrThrow(hostId);
+    await this.membersService.findOneOrThrow(hostId);
+    const theme = await this.findThemeByNameOrThrow(
+      createCommunityDto.category,
+    );
 
     const community = await this.dataSource.transaction(async (manager) => {
       const communityRepository = manager.getRepository(Community);
 
       const saved = await communityRepository.save(
-        Community.open(
+        Community.open({
           hostId,
-          createCommunityDto.themeId,
-          createCommunityDto.topic,
-          createCommunityDto.roundCount,
-        ),
+          themeId: theme.id,
+          title: createCommunityDto.title,
+          topic: createCommunityDto.topic,
+          debateRoundCount: createCommunityDto.rounds,
+          isPublic: createCommunityDto.isPublic,
+        }),
       );
 
+      // 방장의 기조 발언은 참여 행에 실린다(계약의 hostClaim/hostReasons가 여기서 나온다).
       await this.memberCommunitiesService.create(
         hostId,
         saved.id,
-        createCommunityDto.keynoteDto.opinion,
-        createCommunityDto.keynoteDto.reasons,
+        createCommunityDto.hostClaim,
+        createCommunityDto.hostReasons,
         manager,
       );
 
@@ -115,7 +119,8 @@ export class CommunitiesService {
       return saved;
     });
 
-    return CommunityDto.from(community, host);
+    const [dto] = await this.toCommunityDtos([community], hostId);
+    return dto;
   }
 
   // 커뮤니티 삭제: host만 가능. 커뮤니티 엔티티만 soft-delete(상태 전환)하고
@@ -343,6 +348,83 @@ export class CommunitiesService {
     return participant.opinion !== null
       ? CommunityMemberType.KEYNOTE_MEMBER
       : CommunityMemberType.NORMAL_MEMBER;
+  }
+
+  /**
+   * 커뮤니티들을 계약의 Community로 조립한다. 테마·참여 행·회원은 커뮤니티마다 읽지 않고
+   * id 목록으로 한 번에 읽어 목록 조회가 N+1이 되지 않게 한다.
+   */
+  private async toCommunityDtos(
+    communities: Community[],
+    currentMemberId: string,
+  ): Promise<CommunityDto[]> {
+    if (communities.length === 0) {
+      return [];
+    }
+
+    const [participations, themeMap] = await Promise.all([
+      this.memberCommunitiesService.findParticipantsByCommunities(
+        communities.map((community) => community.id),
+      ),
+      this.loadThemeMap(communities.map((community) => community.themeId)),
+    ]);
+
+    const participationsByCommunity = new Map<string, MemberCommunity[]>();
+    for (const participation of participations) {
+      const rows =
+        participationsByCommunity.get(participation.communityId) ?? [];
+      rows.push(participation);
+      participationsByCommunity.set(participation.communityId, rows);
+    }
+
+    // 미리보기에 실릴 참여자와 방장만 모아 한 번에 읽는다(참여자 전원을 읽을 필요는 없다).
+    const previewRows = communities.flatMap((community) =>
+      this.toPreviewRows(participationsByCommunity.get(community.id)),
+    );
+    const memberMap = await this.loadMemberMap([
+      ...communities.map((community) => community.hostId),
+      ...previewRows.map((row) => row.memberId),
+    ]);
+
+    return communities.map((community) => {
+      const rows = participationsByCommunity.get(community.id) ?? [];
+      return CommunityDto.from({
+        community,
+        category: themeMap.get(community.themeId)?.name ?? '',
+        host: memberMap.get(community.hostId) ?? null,
+        hostKeynote:
+          rows.find((row) => row.memberId === community.hostId) ?? null,
+        participants: this.toPreviewRows(rows)
+          .map((row) => memberMap.get(row.memberId))
+          // 탈퇴한 참여자는 회원 조회에서 빠지므로 미리보기에서도 제외한다.
+          .filter((member): member is Member => member !== undefined),
+        currentMemberId,
+        isJoined: rows.some((row) => row.memberId === currentMemberId),
+      });
+    });
+  }
+
+  // 참여 행을 미리보기 정원만큼 자른다(참여 순 정렬은 조회 시점에 이미 적용돼 있다).
+  private toPreviewRows(rows: MemberCommunity[] = []): MemberCommunity[] {
+    return rows.slice(0, MAX_PARTICIPANT_PREVIEWS);
+  }
+
+  // 계약의 category는 테마 이름이다. 고정 테마 목록에 없는 값은 새로 만들지 않고 거절한다.
+  private async findThemeByNameOrThrow(name: string): Promise<Theme> {
+    const theme = await this.themeRepository.findOneBy({ name });
+    if (!theme) {
+      throw new GeneralException(CommunityErrorCode.THEME_NOT_FOUND);
+    }
+    return theme;
+  }
+
+  // id 목록으로 테마를 배치 조회해 id→Theme 맵으로 반환(카테고리 이름 조립용)
+  private async loadThemeMap(ids: string[]): Promise<Map<string, Theme>> {
+    if (ids.length === 0) {
+      return new Map();
+    }
+    const themes = await this.themeRepository.findBy({ id: In(ids) });
+    return new Map(themes.map((theme) => [theme.id, theme]));
   }
 
   // id 목록으로 회원을 배치 조회해 id→Member 맵으로 반환

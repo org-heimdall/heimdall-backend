@@ -30,7 +30,7 @@ import { DebateChatErrorCode } from './exceptions/debate-chat-error-code';
  * 소켓을 아는 것은 게이트웨이뿐이므로, 방 전체에 알려야 하는 created 이벤트만 여기서 publisher로 보낸다
  * (HTTP에는 제외할 송신 소켓이 없다).
  */
-@Controller('api/debates/:debateId/chat')
+@Controller('debates/:debateId/chat')
 export class DebateChatController {
   constructor(
     private readonly service: DebateChatService,

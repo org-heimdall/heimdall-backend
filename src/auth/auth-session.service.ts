@@ -13,9 +13,9 @@ export class AuthSessionService {
 
   // 새 세션을 시작한다(로그인 성공 직후).
   async start(member: MemberDto): Promise<AuthTokenDto> {
-    const access = this.tokenService.issueAccessToken(member.memberId);
-    const refresh = this.tokenService.issueRefreshToken(member.memberId);
-    await this.refreshTokenService.persist(member.memberId, refresh);
+    const access = this.tokenService.issueAccessToken(member.id);
+    const refresh = this.tokenService.issueRefreshToken(member.id);
+    await this.refreshTokenService.persist(member.id, refresh);
 
     return AuthTokenDto.of(access, refresh, member);
   }
@@ -25,12 +25,12 @@ export class AuthSessionService {
     member: MemberDto,
     presentedRefreshToken: string,
   ): Promise<AuthTokenDto> {
-    const access = this.tokenService.issueAccessToken(member.memberId);
-    const refresh = this.tokenService.issueRefreshToken(member.memberId);
+    const access = this.tokenService.issueAccessToken(member.id);
+    const refresh = this.tokenService.issueRefreshToken(member.id);
 
     // 회전이 거부되면(재사용 감지 등) 방금 서명한 토큰은 저장되지 않은 채 버려진다.
     await this.refreshTokenService.rotate(
-      member.memberId,
+      member.id,
       presentedRefreshToken,
       refresh,
     );

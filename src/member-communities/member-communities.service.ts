@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, IsNull, Not, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Not, Repository } from 'typeorm';
 import {
   CommunityDebateIntent,
   MemberCommunity,
@@ -22,7 +22,23 @@ export class MemberCommunitiesService {
 
   // 커뮤니티 참여자(member_community 행) 전체 조회
   async findParticipants(communityId: string): Promise<MemberCommunity[]> {
-    return this.repo().findBy({ communityId });
+    return this.findParticipantsByCommunities([communityId]);
+  }
+
+  /**
+   * 여러 커뮤니티의 참여 행을 참여 순(createdAt)으로 한 번에 조회한다.
+   * 커뮤니티 목록을 조립할 때 방마다 조회하면 N+1이 되므로 여기서 한 번에 읽는다.
+   */
+  async findParticipantsByCommunities(
+    communityIds: string[],
+  ): Promise<MemberCommunity[]> {
+    if (communityIds.length === 0) {
+      return [];
+    }
+    return this.repo().find({
+      where: { communityId: In(communityIds) },
+      order: { createdAt: 'ASC' },
+    });
   }
 
   // 특정 회원의 커뮤니티 참여/기조발언 행 조회 (없으면 null)

@@ -58,6 +58,8 @@ describe('AuthService', () => {
       socialCredit: 0,
       rating: 0,
       status: ResourceStatus.NORMAL,
+      createdAt: new Date('2026-09-07T11:59:00.000Z'),
+      updatedAt: new Date('2026-09-07T11:59:00.000Z'),
     });
 
   beforeEach(async () => {
@@ -115,7 +117,7 @@ describe('AuthService', () => {
       expect(membersService.linkOAuthAccount).not.toHaveBeenCalled();
       expect(membersService.createWithOAuth).not.toHaveBeenCalled();
       expect(authSessionService.start).toHaveBeenCalledWith(
-        expect.objectContaining({ memberId: 'linked-uuid' }),
+        expect.objectContaining({ id: 'linked-uuid' }),
       );
       expect(result).toBe(authToken);
     });
@@ -137,7 +139,7 @@ describe('AuthService', () => {
         profileImageUrl: profile.profileImageUrl,
       });
       expect(authSessionService.start).toHaveBeenCalledWith(
-        expect.objectContaining({ memberId: 'new-uuid' }),
+        expect.objectContaining({ id: 'new-uuid' }),
       );
       expect(result).toBe(authToken);
     });
@@ -158,7 +160,7 @@ describe('AuthService', () => {
       );
       expect(membersService.createWithOAuth).not.toHaveBeenCalled();
       expect(authSessionService.start).toHaveBeenCalledWith(
-        expect.objectContaining({ memberId: 'existing-uuid' }),
+        expect.objectContaining({ id: 'existing-uuid' }),
       );
     });
 
@@ -231,7 +233,7 @@ describe('AuthService', () => {
 
       expect(membersService.findOneOrThrow).toHaveBeenCalledWith('member-uuid');
       expect(authSessionService.rotate).toHaveBeenCalledWith(
-        expect.objectContaining({ memberId: 'member-uuid' }),
+        expect.objectContaining({ id: 'member-uuid' }),
         'refresh-token',
       );
       expect(result).toBe(authToken);
