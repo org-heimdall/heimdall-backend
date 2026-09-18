@@ -9,14 +9,14 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * 테마를 추가·변경할 때는 THEME_SEEDS와 함께 새 마이그레이션을 쓴다(docs/migration.md).
  */
 const THEME_NAMES = [
-  '정치',
-  '경제',
-  '사회',
-  '문화',
-  '스포츠',
-  '일상',
-  '코미디',
-  '기타',
+  'POLITICS',
+  'ECONOMY',
+  'SOCIETY',
+  'CULTURE',
+  'SPORTS',
+  'DAILY',
+  'COMEDY',
+  'ETC',
 ];
 
 export class SeedThemes1789735588824 implements MigrationInterface {
