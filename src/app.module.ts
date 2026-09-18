@@ -15,7 +15,7 @@ import { CommunityChatModule } from './community-chat/community-chat.module';
 import { JudgeModule } from './judge/judge.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SnakeNamingStrategy } from './common/naming/snake-naming.strategy';
+import { buildTypeOrmOptions } from './common/database/typeorm-options';
 import * as Joi from 'joi';
 
 @Module({
@@ -126,17 +126,14 @@ import * as Joi from 'joi';
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('PG_HOST'),
-        port: config.get<number>('PG_PORT'),
-        username: config.get<string>('PG_USER'),
-        password: config.get<string>('PG_PASSWORD'),
-        database: config.get<string>('PG_DATABASE'),
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: config.get<string>('NODE_ENV') === 'development',
-        namingStrategy: new SnakeNamingStrategy(),
-      }),
+      useFactory: (config: ConfigService) =>
+        buildTypeOrmOptions({
+          host: config.getOrThrow<string>('PG_HOST'),
+          port: config.getOrThrow<number>('PG_PORT'),
+          username: config.getOrThrow<string>('PG_USER'),
+          password: config.getOrThrow<string>('PG_PASSWORD'),
+          database: config.getOrThrow<string>('PG_DATABASE'),
+        }),
     }),
     AuthModule,
     CommunitiesModule,
