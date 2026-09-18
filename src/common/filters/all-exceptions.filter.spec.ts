@@ -51,7 +51,7 @@ describe('AllExceptionsFilter', () => {
 
     filter.catch(exception, host);
 
-    const body = json.mock.calls[0][0] as Record<string, unknown>;
+    const [[body]] = json.mock.calls as [[Record<string, unknown>]];
     expect(body).toHaveProperty('additionalInfo', { field: 'bad' });
     expect(body).not.toHaveProperty('cause');
     expect(JSON.stringify(body)).not.toContain('internal driver detail');
