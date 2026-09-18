@@ -35,7 +35,7 @@ import { CommunityChatErrorCode } from './exceptions/community-chat-error-code';
  * 소켓을 아는 것은 게이트웨이뿐이므로, 방 전체에 알려야 하는 이벤트만 여기서 publisher로 보낸다
  * (HTTP에는 제외할 송신 소켓이 없다).
  */
-@Controller('api/communities/:communityId')
+@Controller('communities/:communityId')
 export class CommunityChatController {
   constructor(
     private readonly service: CommunityChatService,

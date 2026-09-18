@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { IsNull, Not } from 'typeorm';
+import { In, IsNull, Not } from 'typeorm';
 import { MemberCommunitiesService } from './member-communities.service';
 import {
   CommunityDebateIntent,
@@ -20,6 +20,7 @@ describe('MemberCommunitiesService', () => {
     create: jest.Mock;
     save: jest.Mock;
     upsert: jest.Mock;
+    find: jest.Mock;
     findBy: jest.Mock;
     findOneBy: jest.Mock;
     findOneByOrFail: jest.Mock;
@@ -50,6 +51,7 @@ describe('MemberCommunitiesService', () => {
       create: jest.fn((entity: Partial<MemberCommunity>) => entity),
       save: jest.fn((entity: MemberCommunity) => Promise.resolve(entity)),
       upsert: jest.fn().mockResolvedValue({ identifiers: [] }),
+      find: jest.fn(),
       findBy: jest.fn(),
       findOneBy: jest.fn(),
       findOneByOrFail: jest.fn(),
@@ -74,16 +76,40 @@ describe('MemberCommunitiesService', () => {
   });
 
   describe('findParticipants', () => {
-    it('communityId로 참여자 행을 조회한다', async () => {
+    it('communityId로 참여자 행을 참여 순으로 조회한다', async () => {
       const rows = [buildRow()];
-      repository.findBy.mockResolvedValue(rows);
+      repository.find.mockResolvedValue(rows);
 
       const result = await service.findParticipants('community-uuid');
 
       expect(result).toBe(rows);
-      expect(repository.findBy).toHaveBeenCalledWith({
-        communityId: 'community-uuid',
+      expect(repository.find).toHaveBeenCalledWith({
+        where: { communityId: In(['community-uuid']) },
+        order: { createdAt: 'ASC' },
       });
+    });
+  });
+
+  describe('findParticipantsByCommunities', () => {
+    it('여러 커뮤니티의 참여 행을 한 번에 조회한다', async () => {
+      const rows = [buildRow()];
+      repository.find.mockResolvedValue(rows);
+
+      const result = await service.findParticipantsByCommunities(['c1', 'c2']);
+
+      expect(result).toBe(rows);
+      expect(repository.find).toHaveBeenCalledWith({
+        where: { communityId: In(['c1', 'c2']) },
+        order: { createdAt: 'ASC' },
+      });
+    });
+
+    it('빈 목록이면 레포지토리를 조회하지 않는다', async () => {
+      await expect(service.findParticipantsByCommunities([])).resolves.toEqual(
+        [],
+      );
+
+      expect(repository.find).not.toHaveBeenCalled();
     });
   });
 

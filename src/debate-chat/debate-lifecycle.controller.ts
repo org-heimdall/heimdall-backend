@@ -24,7 +24,7 @@ import { DebateChatErrorCode } from './exceptions/debate-chat-error-code';
  * 턴 타이머·방 이벤트를 거쳐야 하므로, 그것들을 소유한 debate-chat 모듈에 둔다
  * (debates 모듈에 두면 debate-chat과 순환 의존이 된다).
  */
-@Controller('api/debates/:debateId')
+@Controller('debates/:debateId')
 export class DebateLifecycleController {
   constructor(private readonly service: DebateChatService) {}
 

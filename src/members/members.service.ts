@@ -3,11 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { AppError } from '../common/exceptions/app-error.interface';
+import { ErrorCode } from '../common/exceptions/error-code';
 import { AuthSessionService } from '../auth/auth-session.service';
 import { AuthTokenDto } from '../auth/dto/auth-token.dto';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { getUniqueViolationConstraint } from '../common/exceptions/unique-violation.util';
 import { CreateMemberDto } from './dto/create-member.dto';
+import { CreateMemberProfileDto } from './dto/create-member-profile.dto';
 import { LoginMemberDto } from './dto/login-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
@@ -60,7 +62,7 @@ export class MembersService {
     const member = Member.register({
       email: createMemberDto.email,
       password,
-      nickname: createMemberDto.nickname,
+      nickname: createMemberDto.displayName,
       gender: createMemberDto.gender,
       age: createMemberDto.age,
       profileImageUrl: createMemberDto.profileImageUrl,
@@ -76,6 +78,35 @@ export class MembersService {
       }
       throw error;
     }
+  }
+
+  /**
+   * 자격증명 없이 표시 이름·프로필 사진만으로 회원을 만든다(POST /members).
+   * 이메일이 없어 unique 위반이 날 수 없으므로 가입 경로와 달리 위반 분류가 필요 없다.
+   */
+  async create(
+    createMemberProfileDto: CreateMemberProfileDto,
+  ): Promise<MemberDto> {
+    const member = Member.registerProfileOnly({
+      nickname: createMemberProfileDto.displayName,
+      profileImageUrl: createMemberProfileDto.profileImageUrl,
+    });
+
+    const saved = await this.memberRepository.save(member);
+    return MemberDto.from(saved);
+  }
+
+  // 회원 목록 조회. soft-delete된 회원은 status=NORMAL 필터로 제외한다.
+  async findAll(): Promise<MemberDto[]> {
+    const members = await this.memberRepository.findBy({
+      status: ResourceStatus.NORMAL,
+    });
+    return members.map((member) => MemberDto.from(member));
+  }
+
+  // 회원 1건 조회(계약의 GET /members/:memberId).
+  async findOne(memberId: string): Promise<MemberDto> {
+    return MemberDto.from(await this.findOneOrThrow(memberId));
   }
 
   async login(loginMemberDto: LoginMemberDto): Promise<AuthTokenDto> {
@@ -99,12 +130,15 @@ export class MembersService {
     return this.authSessionService.start(MemberDto.from(member));
   }
 
-  // 회원 정보 수정. 대상은 호출자 자신으로 고정이며, memberId는 액세스 토큰에서만 온다.
+  // 회원 정보 수정. 계약상 대상은 호출자 자신뿐이라, 경로의 회원과 토큰의 회원이 다르면 거절한다.
   async update(
-    memberId: string,
+    currentMemberId: string,
+    targetMemberId: string,
     updateMemberDto: UpdateMemberDto,
   ): Promise<MemberDto> {
-    const member = await this.findOneOrThrow(memberId);
+    this.assertSelf(currentMemberId, targetMemberId);
+
+    const member = await this.findOneOrThrow(targetMemberId);
 
     const { currentPassword, newPassword } = updateMemberDto;
 
@@ -126,7 +160,7 @@ export class MembersService {
     // 전달되지 않은 필드는 기존 값을 유지한다(부분 수정).
     // DTO를 통째로 넘기지 않고 필드를 명시해, 향후 DTO에 필드가 추가돼도 엔티티에 흘러들지 않게 한다.
     member.updateProfile({
-      nickname: updateMemberDto.nickname,
+      nickname: updateMemberDto.displayName,
       gender: updateMemberDto.gender,
       age: updateMemberDto.age,
       profileImageUrl: updateMemberDto.profileImageUrl,
@@ -134,6 +168,15 @@ export class MembersService {
 
     const saved = await this.memberRepository.save(member);
     return MemberDto.from(saved);
+  }
+
+  // 회원 탈퇴(본인만). 물리 삭제 대신 상태만 전환한다 — 토론·커뮤니티가 memberId로 이 행을 참조한다.
+  async remove(currentMemberId: string, targetMemberId: string): Promise<void> {
+    this.assertSelf(currentMemberId, targetMemberId);
+
+    const member = await this.findOneOrThrow(targetMemberId);
+    member.softDelete();
+    await this.memberRepository.save(member);
   }
 
   // 연동 이력으로 회원을 찾는다. 연동 행만 남고 회원이 탈퇴한 경우도 미연동으로 취급한다.
@@ -264,6 +307,13 @@ export class MembersService {
       id: In(ids),
       status: ResourceStatus.NORMAL,
     });
+  }
+
+  // 남의 회원 정보를 고치거나 지우려는 요청을 막는다(계약: 토큰의 사용자와 memberId가 같아야 한다).
+  private assertSelf(currentMemberId: string, targetMemberId: string): void {
+    if (currentMemberId !== targetMemberId) {
+      throw new GeneralException(ErrorCode.FORBIDDEN);
+    }
   }
 
   // 위반된 제약 이름으로 unique 위반을 도메인 에러로 분류한다.

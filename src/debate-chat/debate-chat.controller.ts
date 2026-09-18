@@ -30,7 +30,7 @@ import { DebateChatErrorCode } from './exceptions/debate-chat-error-code';
  * 소켓을 아는 것은 게이트웨이뿐이므로, 방 전체에 알려야 하는 created 이벤트만 여기서 publisher로 보낸다
  * (HTTP에는 제외할 송신 소켓이 없다).
  */
-@Controller('api/debates/:debateId/chat')
+@Controller('debates/:debateId/chat')
 export class DebateChatController {
   constructor(
     private readonly service: DebateChatService,
@@ -55,7 +55,7 @@ export class DebateChatController {
     @Param('debateId', ParseUUIDPipe) debateId: string,
     // 관전자를 포함해 인증된 회원만 볼 수 있다는 선언. 토큰이 없으면 이 데코레이터가 401을
     // 던지므로, 값을 쓰지 않더라도 빼면 라우트가 조용히 공개된다.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     @CurrentMember() _memberId: string,
   ): Promise<DebateChatSnapshotDto> {
     return this.service.restore(debateId);

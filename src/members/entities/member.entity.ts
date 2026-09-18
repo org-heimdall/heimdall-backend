@@ -1,4 +1,11 @@
-import { Column, Entity, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  Unique,
+  UpdateDateColumn,
+} from 'typeorm';
 import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 
 /**
@@ -14,8 +21,12 @@ export class Member extends SoftDeletableEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar' })
-  email: string;
+  /**
+   * 프로필만 가진 회원(POST /members)은 이메일이 없다(null).
+   * Postgres의 unique 제약은 NULL을 중복으로 보지 않으므로 여러 행이 공존할 수 있다.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  email: string | null;
 
   // 소셜 전용 계정은 비밀번호가 없다(null). 비밀번호를 쓰는 흐름은 null을 먼저 걸러야 한다.
   @Column({ type: 'varchar', nullable: true })
@@ -39,8 +50,15 @@ export class Member extends SoftDeletableEntity {
   @Column({ type: 'double precision', default: 0 })
   rating: number;
 
+  // 계약의 Member.createdAt/updatedAt.
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt: Date;
+
   static register(params: {
-    email: string;
+    email: string | null;
     password: string | null;
     nickname: string;
     gender?: string | null;
@@ -67,6 +85,22 @@ export class Member extends SoftDeletableEntity {
   }): Member {
     return Member.register({
       email: params.email,
+      password: null,
+      nickname: params.nickname,
+      profileImageUrl: params.profileImageUrl,
+    });
+  }
+
+  /**
+   * 표시 이름·프로필 사진만 가진 회원을 만든다(POST /members).
+   * 자격증명(이메일·비밀번호)이 없으므로 로그인 경로로는 들어올 수 없는 계정이다.
+   */
+  static registerProfileOnly(params: {
+    nickname: string;
+    profileImageUrl?: string | null;
+  }): Member {
+    return Member.register({
+      email: null,
       password: null,
       nickname: params.nickname,
       profileImageUrl: params.profileImageUrl,

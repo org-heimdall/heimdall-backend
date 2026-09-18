@@ -15,6 +15,7 @@ import { OAuthProviderType } from './members.enums';
 import { AuthSessionService } from '../auth/auth-session.service';
 import { AuthTokenDto } from '../auth/dto/auth-token.dto';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
+import { ErrorCode } from '../common/exceptions/error-code';
 
 describe('MembersService', () => {
   let service: MembersService;
@@ -39,8 +40,11 @@ describe('MembersService', () => {
   const signUpDto = {
     email: 'heimdall@example.com',
     password: 'password1234',
-    nickname: '헤임달',
+    displayName: '헤임달',
   };
+
+  /** DB가 채우는 생성/수정 시각. DTO가 ISO 문자열로 내보내는지 확인하는 데 쓴다. */
+  const SEEDED_AT = new Date('2026-09-07T11:59:00.000Z');
 
   /** pg 드라이버가 던지는 에러 모양(code=SQLSTATE, unique 위반이면 constraint=제약 이름) */
   const pgDriverError = (code: string, constraint?: string): Error =>
@@ -52,13 +56,15 @@ describe('MembersService', () => {
       id: 'member-uuid',
       email: signUpDto.email,
       password: await bcrypt.hash(signUpDto.password, 10),
-      nickname: signUpDto.nickname,
+      nickname: signUpDto.displayName,
       gender: null, // 바꾸지 않은 (전달되지 않은) 값들은 수정하지 않음을 테스트
       age: null,
       profileImageUrl: null,
       socialCredit: 0,
       rating: 0,
       status: ResourceStatus.NORMAL,
+      createdAt: SEEDED_AT,
+      updatedAt: SEEDED_AT,
     });
 
   beforeEach(async () => {
@@ -115,6 +121,8 @@ describe('MembersService', () => {
           id: 'member-uuid',
           socialCredit: 0,
           rating: 0,
+          createdAt: SEEDED_AT,
+          updatedAt: SEEDED_AT,
         });
       });
 
@@ -130,14 +138,16 @@ describe('MembersService', () => {
       expect(savedMember?.isDeleted()).toBe(false);
 
       expect(result).toEqual({
-        memberId: 'member-uuid',
+        id: 'member-uuid',
         email: signUpDto.email,
-        nickname: signUpDto.nickname,
+        displayName: signUpDto.displayName,
         gender: null,
         age: null,
         profileImageUrl: null,
         socialCredit: 0,
-        rating: 0,
+        score: 0,
+        createdAt: SEEDED_AT.toISOString(),
+        updatedAt: SEEDED_AT.toISOString(),
       });
       expect(result).not.toHaveProperty('password');
     });
@@ -193,7 +203,7 @@ describe('MembersService', () => {
       });
 
       expect(authSessionService.start).toHaveBeenCalledWith(
-        expect.objectContaining({ memberId: 'member-uuid' }),
+        expect.objectContaining({ id: 'member-uuid' }),
       );
       expect(result).toBe(authToken);
       expect(result).not.toHaveProperty('password');
@@ -257,12 +267,12 @@ describe('MembersService', () => {
     it('전달된 필드만 수정하고 나머지는 유지한다', async () => {
       repository.findOneBy.mockResolvedValue(await buildMember());
 
-      const result = await service.update('member-uuid', {
-        nickname: '새닉네임',
+      const result = await service.update('member-uuid', 'member-uuid', {
+        displayName: '새닉네임',
         age: 30,
       });
 
-      expect(result.nickname).toBe('새닉네임');
+      expect(result.displayName).toBe('새닉네임');
       expect(result.age).toBe(30);
       expect(result.email).toBe(signUpDto.email); // 건드리지 않은 필드는 그대로
       expect(result.gender).toBeNull();
@@ -272,7 +282,7 @@ describe('MembersService', () => {
       repository.findOneBy.mockResolvedValue(null);
 
       await expect(
-        service.update('없는-uuid', { nickname: '새닉네임' }),
+        service.update('없는-uuid', '없는-uuid', { displayName: '새닉네임' }),
       ).rejects.toMatchObject({ appError: MemberErrorCode.NOT_FOUND });
       expect(repository.save).not.toHaveBeenCalled();
     });
@@ -280,7 +290,7 @@ describe('MembersService', () => {
     it('currentPassword가 맞으면 newPassword를 해싱해 저장한다', async () => {
       repository.findOneBy.mockResolvedValue(await buildMember());
 
-      await service.update('member-uuid', {
+      await service.update('member-uuid', 'member-uuid', {
         currentPassword: signUpDto.password,
         newPassword: 'brandNewPassword',
       });
@@ -296,7 +306,7 @@ describe('MembersService', () => {
       repository.findOneBy.mockResolvedValue(await buildMember());
 
       await expect(
-        service.update('member-uuid', {
+        service.update('member-uuid', 'member-uuid', {
           currentPassword: 'wrongpassword',
           newPassword: 'brandNewPassword',
         }),
@@ -311,8 +321,8 @@ describe('MembersService', () => {
       const originalHash = original.password;
       repository.findOneBy.mockResolvedValue(original);
 
-      await service.update('member-uuid', {
-        nickname: '새닉네임',
+      await service.update('member-uuid', 'member-uuid', {
+        displayName: '새닉네임',
       });
 
       const saved = (await repository.save.mock.results[0].value) as Member;
@@ -325,8 +335,8 @@ describe('MembersService', () => {
       repository.findOneBy.mockResolvedValue(original);
 
       // DTO를 우회해 null이 들어와도 서비스가 방어적으로 미변경 처리하는지 검증한다.
-      await service.update('member-uuid', {
-        nickname: '새닉네임',
+      await service.update('member-uuid', 'member-uuid', {
+        displayName: '새닉네임',
         newPassword: null,
       } as unknown as UpdateMemberDto);
 
@@ -340,7 +350,7 @@ describe('MembersService', () => {
       repository.findOneBy.mockResolvedValue(socialOnly);
 
       await expect(
-        service.update('member-uuid', {
+        service.update('member-uuid', 'member-uuid', {
           currentPassword: 'whatever12',
           newPassword: 'brandNewPassword',
         }),
@@ -355,21 +365,30 @@ describe('MembersService', () => {
       socialOnly.password = null;
       repository.findOneBy.mockResolvedValue(socialOnly);
 
-      const result = await service.update('member-uuid', {
-        nickname: '새닉네임',
+      const result = await service.update('member-uuid', 'member-uuid', {
+        displayName: '새닉네임',
       });
 
-      expect(result.nickname).toBe('새닉네임');
+      expect(result.displayName).toBe('새닉네임');
     });
 
     it('응답에 password를 포함하지 않는다', async () => {
       repository.findOneBy.mockResolvedValue(await buildMember());
 
-      const result = await service.update('member-uuid', {
-        nickname: '새닉네임',
+      const result = await service.update('member-uuid', 'member-uuid', {
+        displayName: '새닉네임',
       });
 
       expect(result).not.toHaveProperty('password');
+    });
+
+    it('남의 회원을 수정하려 하면 FORBIDDEN으로 거절하고 조회조차 하지 않는다', async () => {
+      await expect(
+        service.update('member-uuid', '남의-uuid', { displayName: '새닉네임' }),
+      ).rejects.toMatchObject({ appError: ErrorCode.FORBIDDEN });
+
+      expect(repository.findOneBy).not.toHaveBeenCalled();
+      expect(repository.save).not.toHaveBeenCalled();
     });
   });
 
@@ -607,12 +626,133 @@ describe('MembersService', () => {
     });
   });
 
+  describe('create', () => {
+    it('이메일·비밀번호 없는 회원을 만들고 표시 이름과 프로필 사진만 채운다', async () => {
+      repository.save.mockImplementation((member: Member) =>
+        Promise.resolve(
+          Object.assign(member, {
+            id: 'member-uuid',
+            createdAt: SEEDED_AT,
+            updatedAt: SEEDED_AT,
+          }),
+        ),
+      );
+
+      const result = await service.create({
+        displayName: '프로필회원',
+        profileImageUrl: 'https://cdn.example.com/profile/1.png',
+      });
+
+      const [[saved]] = repository.save.mock.calls as [[Member]];
+      expect(saved.email).toBeNull();
+      expect(saved.password).toBeNull();
+      expect(saved.hasPassword()).toBe(false);
+      // 저장 전 in-memory 엔티티도 NORMAL이어야 isDeleted()가 오판하지 않는다
+      expect(saved.status).toBe(ResourceStatus.NORMAL);
+
+      expect(result).toMatchObject({
+        id: 'member-uuid',
+        email: null,
+        displayName: '프로필회원',
+        profileImageUrl: 'https://cdn.example.com/profile/1.png',
+      });
+      expect(result).not.toHaveProperty('password');
+    });
+
+    it('프로필 사진을 보내지 않으면 null로 저장한다', async () => {
+      repository.save.mockImplementation((member: Member) =>
+        Promise.resolve(
+          Object.assign(member, {
+            id: 'member-uuid',
+            createdAt: SEEDED_AT,
+            updatedAt: SEEDED_AT,
+          }),
+        ),
+      );
+
+      const result = await service.create({ displayName: '프로필회원' });
+
+      expect(result.profileImageUrl).toBeNull();
+    });
+  });
+
+  describe('findAll', () => {
+    it('status=NORMAL 조건으로만 조회해 탈퇴 회원을 제외한다', async () => {
+      repository.findBy.mockResolvedValue([await buildMember()]);
+
+      const result = await service.findAll();
+
+      expect(repository.findBy).toHaveBeenCalledWith({
+        status: ResourceStatus.NORMAL,
+      });
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        id: 'member-uuid',
+        displayName: signUpDto.displayName,
+      });
+    });
+  });
+
+  describe('findOne', () => {
+    it('존재하는 회원을 계약 스키마로 돌려준다', async () => {
+      repository.findOneBy.mockResolvedValue(await buildMember());
+
+      await expect(service.findOne('member-uuid')).resolves.toMatchObject({
+        id: 'member-uuid',
+        displayName: signUpDto.displayName,
+        score: 0,
+      });
+    });
+
+    it('존재하지 않는 회원이면 NOT_FOUND 에러를 던진다', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(service.findOne('없는-uuid')).rejects.toMatchObject({
+        appError: MemberErrorCode.NOT_FOUND,
+      });
+    });
+  });
+
+  describe('remove', () => {
+    it('물리 삭제 대신 상태만 DELETED로 바꿔 저장한다', async () => {
+      const member = await buildMember();
+      repository.findOneBy.mockResolvedValue(member);
+      repository.save.mockImplementation((entity: Member) =>
+        Promise.resolve(entity),
+      );
+
+      await service.remove('member-uuid', 'member-uuid');
+
+      expect(member.isDeleted()).toBe(true);
+      expect(member.status).toBe(ResourceStatus.DELETED);
+      expect(repository.save).toHaveBeenCalledWith(member);
+    });
+
+    it('남의 회원을 지우려 하면 FORBIDDEN으로 거절하고 조회조차 하지 않는다', async () => {
+      await expect(
+        service.remove('member-uuid', '남의-uuid'),
+      ).rejects.toMatchObject({ appError: ErrorCode.FORBIDDEN });
+
+      expect(repository.findOneBy).not.toHaveBeenCalled();
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    it('존재하지 않는 회원이면 NOT_FOUND 에러를 던진다', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.remove('member-uuid', 'member-uuid'),
+      ).rejects.toMatchObject({ appError: MemberErrorCode.NOT_FOUND });
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('register', () => {
     it('가입한 회원의 신뢰도는 만점에서 시작한다', () => {
       const member = Member.register({
         email: signUpDto.email,
         password: 'hash',
-        nickname: signUpDto.nickname,
+        nickname: signUpDto.displayName,
       });
 
       expect(member.socialCredit).toBe(INITIAL_SOCIAL_CREDIT);

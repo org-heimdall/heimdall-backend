@@ -27,7 +27,7 @@ import { DebateDetailDto, DebateDto } from './dto/debate.dto';
 import { DebateStatus } from './entities/debate-status.enum';
 import { DebateErrorCode } from './exceptions/debate-error-code';
 
-@Controller('api/debates')
+@Controller('debates')
 export class DebatesController {
   constructor(private readonly debatesService: DebatesService) {}
 

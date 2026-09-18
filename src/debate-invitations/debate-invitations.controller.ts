@@ -31,7 +31,7 @@ import { DebateInvitationErrorCode } from './exceptions/debate-invitation-error-
  * 커뮤니티 토론 초대의 HTTP 경로. 대기 화면(5초)은 별도 endpoint가 아니라
  * 이 네 개의 호출과 커뮤니티 WS 이벤트(debate.requested / rejected / expired / started)의 조합이다.
  */
-@Controller('api/communities/:communityId/debates')
+@Controller('communities/:communityId/debates')
 export class DebateInvitationsController {
   constructor(private readonly service: DebateInvitationsService) {}
 

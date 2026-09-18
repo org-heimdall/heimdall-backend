@@ -10,6 +10,12 @@ export const CommunityErrorCode = {
     title: 'Community Not Found',
     detail: '커뮤니티를 찾을 수 없습니다.',
   },
+  THEME_NOT_FOUND: {
+    httpStatus: HttpStatus.NOT_FOUND,
+    code: 'COMMUNITY.THEME_NOT_FOUND',
+    title: 'Theme Not Found',
+    detail: '존재하지 않는 카테고리입니다.',
+  },
   DELETE_FORBIDDEN: {
     httpStatus: HttpStatus.FORBIDDEN,
     code: 'COMMUNITY.DELETE_FORBIDDEN',
