@@ -21,8 +21,9 @@ import {
 export class CommunityChatPublisher {
   private readonly rooms = new WsRooms();
 
-  join(communityId: string, socket: WebSocket): void {
-    this.rooms.join(communityId, socket);
+  // memberId는 회원 단위 전송(초대 이벤트)에 쓴다. 관전자도 방에는 들어오므로 방 전체 전송과는 별개다.
+  join(communityId: string, socket: WebSocket, memberId?: string): void {
+    this.rooms.join(communityId, socket, memberId);
   }
 
   leave(socket: WebSocket): void {
@@ -74,11 +75,7 @@ export class CommunityChatPublisher {
     });
   }
 
-  /**
-   * 아래는 아직 호출처가 없다. 초대 API(POST …/debates/start·accept·reject)와
-   * debate-intent API가 들어오면서 발행처가 붙는다(전송 계층만 먼저 맞춰 둔다).
-   */
-
+  // 토론 의사 변경은 방 전체가 본다(참여자 목록이 바로 갱신돼야 한다).
   memberDebateIntentChanged(payload: MemberDebateIntentChangedPayload): void {
     this.rooms.broadcast(payload.communityId, {
       type: CommunityChatEvent.MEMBER_DEBATE_INTENT_CHANGED,
@@ -86,27 +83,43 @@ export class CommunityChatPublisher {
     });
   }
 
+  // 초대받은 사람에게만. 방장은 REST 응답(DebateInvitation)으로 같은 내용을 받는다.
   debateRequested(payload: DebateRequestedPayload): void {
-    this.rooms.broadcast(payload.communityId, {
-      type: CommunityChatEvent.DEBATE_REQUESTED,
-      payload,
-    });
+    this.rooms.sendToMember(
+      payload.communityId,
+      payload.invitation.opponentMemberId,
+      { type: CommunityChatEvent.DEBATE_REQUESTED, payload },
+    );
   }
 
-  debateRequestRejected(payload: DebateRequestRejectedPayload): void {
-    this.rooms.broadcast(payload.communityId, {
+  // 거절은 방장에게만. 거절한 본인은 REST 204로 결과를 안다.
+  debateRequestRejected(
+    payload: DebateRequestRejectedPayload,
+    hostMemberId: string,
+  ): void {
+    this.rooms.sendToMember(payload.communityId, hostMemberId, {
       type: CommunityChatEvent.DEBATE_REQUEST_REJECTED,
       payload,
     });
   }
 
-  debateRequestExpired(payload: DebateRequestExpiredPayload): void {
-    this.rooms.broadcast(payload.communityId, {
+  // 만료는 대기 화면을 띄우고 있는 양쪽 모두에게 간다.
+  debateRequestExpired(
+    payload: DebateRequestExpiredPayload,
+    hostMemberId: string,
+    opponentMemberId: string,
+  ): void {
+    const event = {
       type: CommunityChatEvent.DEBATE_REQUEST_EXPIRED,
       payload,
-    });
+    };
+    for (const memberId of new Set([hostMemberId, opponentMemberId])) {
+      this.rooms.sendToMember(payload.communityId, memberId, event);
+    }
   }
 
+  // 토론 시작은 방 전체가 본다 — 관전자도 토론 화면으로 따라 들어가야 하므로
+  // 계약의 "양쪽"보다 넓게 보낸다(debate.ended가 방 전체인 것과 대칭).
   debateStarted(payload: DebateStartedPayload): void {
     this.rooms.broadcast(payload.communityId, {
       type: CommunityChatEvent.DEBATE_STARTED,

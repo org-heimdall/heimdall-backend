@@ -25,19 +25,25 @@ import { CommunitiesService } from './communities.service';
 import { CreateCommunityDto } from './dto/create-community.dto';
 import { CommunityDto, CommunitySliceDto } from './dto/community.dto';
 import { ThemeDto } from './dto/theme.dto';
-import { MemberPreviewDto } from '../members/dto/member.dto';
+import { CommunityMemberDto } from './dto/community-member.dto';
+import { UpdateDebateIntentDto } from './dto/update-debate-intent.dto';
 import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { CommunityErrorCode } from './exceptions/community-error-code';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { ApiAuthRequired } from '../common/decorators/api-auth-required.decorator';
 import { CurrentMember } from '../common/decorators/current-member.decorator';
+import { CommunityChatPublisher } from '../community-chat/community-chat.publisher';
 
 export { CommunityMemberType, CommunitySort };
 
 @Controller('api/communities')
 export class CommunitiesController {
-  constructor(private readonly communitiesService: CommunitiesService) {}
+  constructor(
+    private readonly communitiesService: CommunitiesService,
+    // 토론 의사 변경은 응답이 204라, 결과를 방 전체에 알리는 것은 WS 이벤트뿐이다.
+    private readonly publisher: CommunityChatPublisher,
+  ) {}
 
   @ApiOperation({
     summary: '테마 목록 전체 조회',
@@ -153,9 +159,11 @@ export class CommunitiesController {
 
   @ApiOperation({
     summary: '커뮤니티 참여자 목록 조회',
+    description:
+      'memberType은 응답에 실리지 않는 분류 기준으로, 기조 발언 작성자만 보기 등 필터링에만 쓴다.',
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })
-  @ApiOkResponse({ type: [MemberPreviewDto] })
+  @ApiOkResponse({ type: [CommunityMemberDto] })
   @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
   @Get(':communityId/members')
   @ApiQuery({
@@ -169,11 +177,41 @@ export class CommunitiesController {
   async findCommunityMembers(
     @Param('communityId', ParseUUIDPipe) communityId: string,
     @Query('memberType') memberType?: CommunityMemberType,
-  ): Promise<MemberPreviewDto[]> {
+  ): Promise<CommunityMemberDto[]> {
     return this.communitiesService.findCommunityMembers(
       communityId,
       memberType,
     );
+  }
+
+  @ApiOperation({
+    summary: '나의 토론 의사 변경',
+    description:
+      '방장은 OPEN_TO_DEBATE인 참여자만 토론에 초대할 수 있다. 결과는 커뮤니티 WS의 ' +
+      'community.member.debate-intent.changed로 방 전체에 전달된다(응답 본문 없음).',
+  })
+  @ApiParam({ name: 'communityId', format: 'uuid' })
+  @ApiNoContentResponse({ description: '토론 의사 변경 성공' })
+  @ApiErrorResponses(
+    CommunityErrorCode.NOT_FOUND,
+    CommunityErrorCode.PARTICIPANT_NOT_FOUND,
+    MemberErrorCode.NOT_FOUND,
+  )
+  @ApiAuthRequired()
+  @Put(':communityId/members/me/debate-intent')
+  @HttpCode(204)
+  async updateMyDebateIntent(
+    @Param('communityId', ParseUUIDPipe) communityId: string,
+    @CurrentMember() memberId: string,
+    @Body() request: UpdateDebateIntentDto,
+  ): Promise<void> {
+    const member = await this.communitiesService.updateMyDebateIntent(
+      communityId,
+      memberId,
+      request.debateIntent,
+    );
+
+    this.publisher.memberDebateIntentChanged({ communityId, member });
   }
 
   @ApiOperation({

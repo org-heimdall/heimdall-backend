@@ -77,7 +77,7 @@ export class CommunityChatGateway
       ).sub;
       await this.service.assertJoinable(communityId);
       client.communityId = communityId;
-      this.publisher.join(communityId, client);
+      this.publisher.join(communityId, client, client.memberId);
 
       await this.replay(client, communityId);
       this.logger.log(

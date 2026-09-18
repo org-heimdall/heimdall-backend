@@ -2,7 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { IsNull, Not } from 'typeorm';
 import { MemberCommunitiesService } from './member-communities.service';
-import { MemberCommunity } from './entities/member-community.entity';
+import {
+  CommunityDebateIntent,
+  MemberCommunity,
+} from './entities/member-community.entity';
 
 describe('MemberCommunitiesService', () => {
   let service: MemberCommunitiesService;
@@ -240,6 +243,40 @@ describe('MemberCommunitiesService', () => {
       await expect(
         service.deleteOne('member-uuid', 'community-uuid'),
       ).resolves.toBe(false);
+    });
+  });
+  describe('updateDebateIntent', () => {
+    it('참여 행이 없으면 null을 돌려준다(호출자가 도메인 에러로 옮긴다)', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.updateDebateIntent(
+          'member-uuid',
+          'community-uuid',
+          CommunityDebateIntent.OPEN_TO_DEBATE,
+        ),
+      ).resolves.toBeNull();
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    it('참여 행의 토론 의사를 바꿔 저장한다(updatedAt 갱신을 위해 save 경로)', async () => {
+      repository.findOneBy.mockResolvedValue(
+        buildRow({ debateIntent: CommunityDebateIntent.PREPARING }),
+      );
+
+      const result = await service.updateDebateIntent(
+        'member-uuid',
+        'community-uuid',
+        CommunityDebateIntent.OPEN_TO_DEBATE,
+      );
+
+      expect(result?.debateIntent).toBe(CommunityDebateIntent.OPEN_TO_DEBATE);
+      expect(repository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          memberId: 'member-uuid',
+          debateIntent: CommunityDebateIntent.OPEN_TO_DEBATE,
+        }),
+      );
     });
   });
 });

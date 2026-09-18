@@ -1,6 +1,7 @@
-// 계약(frontend-api-contract.md) 이벤트·payload와 1:1. 값을 바꾸면 프론트 mapper가 깨진다.
+// 계약 이벤트·payload와 1:1. 값을 바꾸면 프론트 mapper가 깨진다.
 
 import { WsErrorPayload } from '../common/ws/ws-exception.filter';
+import { CommunityMemberDto } from '../communities/dto/community-member.dto';
 import { CommunityMessageDto } from '../communities/dto/community-message.dto';
 import { CommunityOpinionDto } from '../communities/dto/community-opinion.dto';
 // 토론 종료 이벤트는 토론 채팅이 발행하고 커뮤니티 방에도 간다. payload 정의는 소유 도메인(debate-chat) 것을 그대로 쓴다.
@@ -15,7 +16,6 @@ export const CommunityChatCommand = {
 } as const;
 
 // 서버 → 클라이언트 이벤트 이름.
-// debate.* 와 debate-intent.changed는 초대 API·debate-intent API 이슈에서 발행된다(지금은 전송 계층만).
 export const CommunityChatEvent = {
   MESSAGE_CREATED: 'message.created',
   MESSAGE_ACK: 'community.message.ack',
@@ -65,24 +65,12 @@ export interface CommunityChatErrorPayload extends WsErrorPayload {
   communityId?: string;
 }
 
-/**
- * 아래는 아직 트리거가 없는 이벤트의 payload다(범위: 전송 계층만).
- * 초대 API와 debate-intent API가 들어오면서 발행처가 붙는다.
- */
-
-// 계약의 CommunityMember. role·debateIntent enum은 debate-intent API 이슈에서 도메인과 함께 들어온다.
-export interface CommunityMemberPayload {
-  id: string;
-  displayName: string;
-  profileImageUrl: string | null;
-  role: string;
-  debateIntent: string;
-  joinedAt: string;
-}
+// 아래는 커뮤니티 토론 초대 API(debate-invitations)가 발행하는 이벤트의 payload다.
 
 export interface MemberDebateIntentChangedPayload {
   communityId: string;
-  member: CommunityMemberPayload;
+  // 계약의 CommunityMember. REST 응답과 같은 DTO를 그대로 싣는다(모양이 갈라지지 않게).
+  member: CommunityMemberDto;
 }
 
 // 계약의 DebateInvitation.

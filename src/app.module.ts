@@ -8,6 +8,7 @@ import { CommunitiesModule } from './communities/communities.module';
 import { MemberCommunitiesModule } from './member-communities/member-communities.module';
 import { MembersModule } from './members/members.module';
 import { DebatesModule } from './debates/debates.module';
+import { DebateInvitationsModule } from './debate-invitations/debate-invitations.module';
 import { SeedModule } from './seed/seed.module';
 import { DebateChatModule } from './debate-chat/debate-chat.module';
 import { CommunityChatModule } from './community-chat/community-chat.module';
@@ -118,6 +119,9 @@ import * as Joi from 'joi';
           .integer()
           .min(1)
           .default(180),
+
+        // 토론 초대 응답 제한 시간. 프론트의 5초 대기 화면과 같은 값이어야 한다.
+        DEBATE_INVITATION_TTL_SECONDS: Joi.number().integer().min(1).default(10),
       }),
     }),
     TypeOrmModule.forRootAsync({
@@ -139,6 +143,7 @@ import * as Joi from 'joi';
     MemberCommunitiesModule,
     MembersModule,
     DebatesModule,
+    DebateInvitationsModule,
     SeedModule,
     DebateChatModule,
     CommunityChatModule,

@@ -9,6 +9,7 @@ import { CommunityFavorite } from './entities/community-favorite.entity';
 import { CommunityMessage } from './entities/community-message.entity';
 import { MembersModule } from '../members/members.module';
 import { MemberCommunitiesModule } from '../member-communities/member-communities.module';
+import { CommunityChatPublisherModule } from '../community-chat/community-chat-publisher.module';
 
 @Module({
   imports: [
@@ -20,6 +21,9 @@ import { MemberCommunitiesModule } from '../member-communities/member-communitie
     ]),
     MembersModule,
     MemberCommunitiesModule,
+    // 토론 의사 변경을 커뮤니티 방에 알린다. 발행자만 담은 leaf 모듈이라 순환이 생기지 않는다
+    // (커뮤니티 채팅 컨트롤러가 REST에서 발행하는 것과 같은 방식).
+    CommunityChatPublisherModule,
   ],
   controllers: [CommunitiesController],
   providers: [CommunitiesService, CommunityMessagesService],

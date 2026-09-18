@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, IsNull, Not, Repository } from 'typeorm';
-import { MemberCommunity } from './entities/member-community.entity';
+import {
+  CommunityDebateIntent,
+  MemberCommunity,
+} from './entities/member-community.entity';
 
 @Injectable()
 export class MemberCommunitiesService {
@@ -79,6 +82,24 @@ export class MemberCommunitiesService {
     row.opinion = opinion;
     row.reasons = reasons;
     return { row: await this.repo().save(row), created };
+  }
+
+  /**
+   * 토론 의사 변경(본인). 참여 행이 없으면 null을 돌려주고, 호출자가 도메인 에러로 옮긴다.
+   * upsert가 아니라 읽고-저장하는 이유는 updateKeynote와 같다 — @UpdateDateColumn을 갱신해야 한다.
+   */
+  async updateDebateIntent(
+    memberId: string,
+    communityId: string,
+    debateIntent: CommunityDebateIntent,
+  ): Promise<MemberCommunity | null> {
+    const row = await this.findOne(memberId, communityId);
+    if (!row) {
+      return null;
+    }
+
+    row.debateIntent = debateIntent;
+    return this.repo().save(row);
   }
 
   // 기조 발언을 작성한 참여 행만 조회한다(커뮤니티 의견 목록·접속 replay).
