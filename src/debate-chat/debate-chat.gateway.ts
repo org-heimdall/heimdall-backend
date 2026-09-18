@@ -1,4 +1,4 @@
-import { Logger, UseFilters, UsePipes, ValidationPipe } from '@nestjs/common';
+import { Logger, UseFilters, UsePipes } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -7,14 +7,19 @@ import {
   SubscribeMessage,
   WebSocketGateway,
 } from '@nestjs/websockets';
-import { isUUID } from 'class-validator';
 import { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
 import { AuthErrorCode } from '../auth/exceptions/auth-error-code';
 import { TokenService } from '../auth/token.service';
-import { ErrorCode } from '../common/exceptions/error-code';
 import { GeneralException } from '../common/exceptions/general.exception';
-import { validationExceptionFactory } from '../common/exceptions/validation-exception.factory';
+import { createValidationPipe } from '../common/pipes/validation-pipe.factory';
+import {
+  CLOSE_POLICY_VIOLATION,
+  sendEvent,
+  WsServerEvent,
+} from '../common/ws/ws-event';
+import { parseBearerToken, parseRoomId } from '../common/ws/ws-handshake';
+import { DEBATE_CHAT_WS_PATH } from '../common/ws/ws.config';
 import { DEBATE_CHAT_WS_PORT } from './debate-chat.config';
 import {
   DebateTurnFinalizeCommandDto,
@@ -24,13 +29,12 @@ import {
   DebateChatExceptionFilter,
   toAppError,
 } from './debate-chat.exception-filter';
-import { DebateChatPublisher, sendEvent } from './debate-chat.publisher';
+import { DebateChatPublisher } from './debate-chat.publisher';
 import { DebateChatService } from './debate-chat.service';
 import {
   DebateChatCommand,
   DebateChatEvent,
   TurnMessageAckPayload,
-  WsServerEvent,
 } from './debate-chat.types';
 
 // 인증·경로 검증이 끝난 뒤 소켓에 붙여 두는 접속 컨텍스트.
@@ -38,9 +42,6 @@ export interface DebateChatSocket extends WebSocket {
   debateId?: string;
   memberId?: string;
 }
-
-// 접속 후 거절(인증 실패·토론 없음 등)에 쓰는 close code. RFC 6455의 1008(Policy Violation).
-const CLOSE_POLICY_VIOLATION = 1008;
 
 // 계약 경로: /debates/:debateId/chat
 const PATH_PATTERN = /^\/debates\/([^/]+)\/chat\/?$/;
@@ -50,16 +51,9 @@ const PATH_PATTERN = /^\/debates\/([^/]+)\/chat\/?$/;
  * 명령은 CommandEnvelopeWsAdapter가 type으로 찾아 봉투 전체를 넘기고, payload는 HTTP와 같은 ValidationPipe로 검증한다.
  * 요청 소켓 대상 응답(restored/ack/error)은 여기서, 방 전체 이벤트는 서비스/파이프라인이 publisher로 보낸다.
  */
-@WebSocketGateway(DEBATE_CHAT_WS_PORT)
+@WebSocketGateway(DEBATE_CHAT_WS_PORT, { path: DEBATE_CHAT_WS_PATH })
 @UseFilters(DebateChatExceptionFilter)
-@UsePipes(
-  new ValidationPipe({
-    whitelist: true,
-    forbidNonWhitelisted: true,
-    transform: true,
-    exceptionFactory: validationExceptionFactory,
-  }),
-)
+@UsePipes(createValidationPipe())
 export class DebateChatGateway
   implements OnGatewayConnection, OnGatewayDisconnect
 {
@@ -78,8 +72,10 @@ export class DebateChatGateway
     request: IncomingMessage,
   ): Promise<void> {
     try {
-      const debateId = this.parseDebateId(request.url);
-      client.memberId = this.authenticate(request);
+      const debateId = parseRoomId(request.url, PATH_PATTERN);
+      client.memberId = this.tokenService.verifyAccessToken(
+        parseBearerToken(request),
+      ).sub;
       client.debateId = debateId;
       this.publisher.join(debateId, client);
 
@@ -167,32 +163,6 @@ export class DebateChatGateway
         message: result.message,
       },
     };
-  }
-
-  private parseDebateId(url: string | undefined): string {
-    const pathname = new URL(url ?? '/', 'ws://placeholder').pathname;
-    const matched = PATH_PATTERN.exec(pathname);
-    if (!matched) {
-      throw new GeneralException(ErrorCode.NOT_FOUND);
-    }
-    const debateId = decodeURIComponent(matched[1]);
-    if (!isUUID(debateId)) {
-      throw new GeneralException(ErrorCode.INVALID_INPUT);
-    }
-    return debateId;
-  }
-
-  // 계약: handshake의 Authorization: Bearer <accessToken> 헤더.
-  private authenticate(request: IncomingMessage): string {
-    const header = request.headers.authorization;
-    if (!header) {
-      throw new GeneralException(AuthErrorCode.UNAUTHORIZED);
-    }
-    const [scheme, token] = header.split(' ');
-    if (scheme !== 'Bearer' || !token) {
-      throw new GeneralException(AuthErrorCode.INVALID_TOKEN);
-    }
-    return this.tokenService.verifyAccessToken(token).sub;
   }
 
   // handleConnection이 끝난 소켓만 명령을 보낼 수 있으므로 컨텍스트는 항상 있다.

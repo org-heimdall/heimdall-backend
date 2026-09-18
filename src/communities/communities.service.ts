@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunityErrorCode } from './exceptions/community-error-code';
-import { DataSource, Repository } from 'typeorm';
-import { Community } from './entities/community.entity';
+import { DataSource, EntityManager, Repository } from 'typeorm';
+import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
 import { CommunityFavorite } from './entities/community-favorite.entity';
 import { ThemeDto } from './dto/theme.dto';
@@ -14,8 +14,11 @@ import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { MembersService } from '../members/members.service';
 import { Member } from '../members/entities/member.entity';
 import { MemberCommunitiesService } from '../member-communities/member-communities.service';
-import { MemberCommunity } from '../member-communities/entities/member-community.entity';
-import { MemberPreviewDto } from '../members/dto/member.dto';
+import {
+  CommunityDebateIntent,
+  MemberCommunity,
+} from '../member-communities/entities/member-community.entity';
+import { CommunityMemberDto } from './dto/community-member.dto';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 
 @Injectable()
@@ -31,6 +34,13 @@ export class CommunitiesService {
     private readonly memberCommunitiesService: MemberCommunitiesService,
     private readonly membersService: MembersService,
   ) {}
+
+  // 트랜잭션 참여용: manager가 있으면 그 안의 레포지토리를, 없으면 기본 레포지토리를 사용한다.
+  private repo(manager?: EntityManager): Repository<Community> {
+    return manager
+      ? manager.getRepository(Community)
+      : this.communityRepository;
+  }
 
   // 테마 목록 전체 조회
   async findAllThemes(): Promise<ThemeDto[]> {
@@ -120,11 +130,12 @@ export class CommunitiesService {
     await this.communityRepository.save(community);
   }
 
-  // 커뮤니티 참여자 목록 조회 (memberType 분류 후 선택적 필터)
+  // 커뮤니티 참여자 목록 조회(계약 CommunityMember[]). memberType은 응답에 실리지 않는
+  // 분류 기준이라 필터링에만 쓴다(기조 발언 작성자만 보기 등).
   async findCommunityMembers(
     communityId: string,
     memberType?: CommunityMemberType,
-  ): Promise<MemberPreviewDto[]> {
+  ): Promise<CommunityMemberDto[]> {
     const community = await this.findOneOrThrow(communityId);
 
     const participants =
@@ -133,23 +144,59 @@ export class CommunitiesService {
       participants.map((p) => p.memberId),
     );
 
-    const previews = participants
+    return participants
+      .filter(
+        (participant) =>
+          memberType === undefined ||
+          this.classifyMemberType(community, participant) === memberType,
+      )
       .map((participant) => {
         const member = memberMap.get(participant.memberId);
         // 회원이 삭제된 경우 등 방어적으로 제외
-        if (!member) {
-          return null;
-        }
-        return MemberPreviewDto.from(
-          member,
-          this.classifyMemberType(community, participant),
-        );
+        return member
+          ? CommunityMemberDto.from(member, participant, community.hostId)
+          : null;
       })
-      .filter((preview): preview is MemberPreviewDto => preview !== null);
+      .filter((dto): dto is CommunityMemberDto => dto !== null);
+  }
 
-    return memberType
-      ? previews.filter((preview) => preview.memberType === memberType)
-      : previews;
+  /**
+   * 토론 의사 변경(본인). 응답은 204지만 방 전체가 갱신된 참여자를 알아야 하므로
+   * 컨트롤러가 이 DTO를 그대로 WS 이벤트로 발행한다.
+   */
+  async updateMyDebateIntent(
+    communityId: string,
+    memberId: string,
+    debateIntent: CommunityDebateIntent,
+  ): Promise<CommunityMemberDto> {
+    const community = await this.findOneOrThrow(communityId);
+
+    const participation =
+      await this.memberCommunitiesService.updateDebateIntent(
+        memberId,
+        communityId,
+        debateIntent,
+      );
+    if (participation === null) {
+      throw new GeneralException(CommunityErrorCode.PARTICIPANT_NOT_FOUND);
+    }
+
+    const member = await this.membersService.findOneOrThrow(memberId);
+    return CommunityMemberDto.from(member, participation, community.hostId);
+  }
+
+  /**
+   * 토론이 시작되면 커뮤니티를 진행 중으로 옮긴다(WAITING → ACTIVE).
+   * 이미 ACTIVE면 결과가 같으므로 조건 없이 갱신한다. 초대 수락 트랜잭션에 manager로 참여한다.
+   */
+  async markActive(
+    communityId: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    await this.repo(manager).update(
+      { id: communityId, status: ResourceStatus.NORMAL },
+      { state: CommunityState.ACTIVE },
+    );
   }
 
   // 특정 참여자의 기조 발언 조회 (미작성이면 404)

@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { EntityManager, In } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunitiesService } from '../communities/communities.service';
@@ -10,7 +11,7 @@ import { MemberCommunitiesService } from '../member-communities/member-communiti
 import { Member } from '../members/entities/member.entity';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
 import { MembersService } from '../members/members.service';
-import { DebatesService } from './debates.service';
+import { ACTIVE_DEBATE_STATUSES, DebatesService } from './debates.service';
 import { DebatePhase, DebateSide } from './debate-turn';
 import { CreateDebateDto } from './dto/create-debate.dto';
 import { DebateMessageLike } from './entities/debate-message-like.entity';
@@ -244,6 +245,39 @@ describe('DebatesService', () => {
     });
   });
 
+  describe('findActiveByCommunity', () => {
+    it('끝나지 않은 토론만 삭제되지 않은 커뮤니티에서 최근 순으로 1건 읽는다', async () => {
+      const debate = buildDebate();
+      debateRepository.findOne.mockResolvedValue(debate);
+
+      await expect(service.findActiveByCommunity(COMMUNITY_ID)).resolves.toBe(
+        debate,
+      );
+      expect(debateRepository.findOne).toHaveBeenCalledWith({
+        where: {
+          communityId: COMMUNITY_ID,
+          status: ResourceStatus.NORMAL,
+          community: { status: ResourceStatus.NORMAL },
+          debateStatus: In([...ACTIVE_DEBATE_STATUSES]),
+        },
+        order: { createdAt: 'DESC' },
+      });
+    });
+
+    it('활성 목록에 COMPLETED·FAILED는 없다(끝난 토론은 새 토론을 막지 않는다)', () => {
+      expect(ACTIVE_DEBATE_STATUSES).not.toContain(DebateStatus.COMPLETED);
+      expect(ACTIVE_DEBATE_STATUSES).not.toContain(DebateStatus.FAILED);
+    });
+
+    it('soft-delete된 토론·커뮤니티는 조회에서 빠져 null이 된다', async () => {
+      debateRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.findActiveByCommunity(COMMUNITY_ID),
+      ).resolves.toBeNull();
+    });
+  });
+
   describe('findAll', () => {
     it('삭제되지 않은 토론과 커뮤니티만 최근 생성 순으로 읽는다', async () => {
       debateRepository.find.mockResolvedValue([buildDebate()]);
@@ -422,6 +456,30 @@ describe('DebatesService', () => {
         currentPhase: null,
         startedAt: null,
       });
+    });
+
+    it('manager를 받으면 그 트랜잭션의 레포지토리로 저장한다(초대 수락)', async () => {
+      const txRepository = {
+        create: jest.fn((entity: object) => entity),
+        save: jest.fn((entity: object) =>
+          Promise.resolve(
+            Object.assign(new Debate(), entity, {
+              id: DEBATE_ID,
+              createdAt: NOW,
+            }),
+          ),
+        ),
+      };
+      const manager = {
+        getRepository: jest.fn(() => txRepository),
+      } as unknown as EntityManager;
+
+      const created = await service.create(validRequest(), HOST_ID, manager);
+
+      expect(created.id).toBe(DEBATE_ID);
+      expect(txRepository.save).toHaveBeenCalled();
+      // 트랜잭션 밖 레포지토리로는 저장하지 않는다.
+      expect(debateRepository.save).not.toHaveBeenCalled();
     });
 
     it('없는 커뮤니티면 COMMUNITY.NOT_FOUND를 던진다', async () => {

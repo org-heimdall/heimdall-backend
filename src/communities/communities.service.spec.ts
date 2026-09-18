@@ -13,6 +13,11 @@ import { MemberCommunitiesService } from '../member-communities/member-communiti
 import { Member } from '../members/entities/member.entity';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { CommunityErrorCode } from './exceptions/community-error-code';
+import {
+  CommunityDebateIntent,
+  MemberCommunity,
+} from '../member-communities/entities/member-community.entity';
+import { CommunityMemberRole } from './dto/community-member.dto';
 
 describe('CommunitiesService', () => {
   let service: CommunitiesService;
@@ -20,6 +25,7 @@ describe('CommunitiesService', () => {
     createQueryBuilder: jest.Mock;
     findOneBy: jest.Mock;
     save: jest.Mock;
+    update: jest.Mock;
   };
   let themeRepository: { find: jest.Mock };
   let communityFavoriteRepository: {
@@ -33,6 +39,7 @@ describe('CommunitiesService', () => {
     deleteByCommunity: jest.Mock;
     findParticipants: jest.Mock;
     findOne: jest.Mock;
+    updateDebateIntent: jest.Mock;
     upsertKeynote: jest.Mock;
     insertIfAbsent: jest.Mock;
     deleteOne: jest.Mock;
@@ -86,6 +93,7 @@ describe('CommunitiesService', () => {
       createQueryBuilder: jest.fn(() => queryBuilder),
       findOneBy: jest.fn(),
       save: jest.fn((e) => Promise.resolve(e)),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
     themeRepository = { find: jest.fn() };
     communityFavoriteRepository = {
@@ -122,6 +130,7 @@ describe('CommunitiesService', () => {
       deleteByCommunity: jest.fn(),
       findParticipants: jest.fn(),
       findOne: jest.fn(),
+      updateDebateIntent: jest.fn(),
       upsertKeynote: jest.fn(),
       insertIfAbsent: jest.fn().mockResolvedValue(true),
       deleteOne: jest.fn().mockResolvedValue(true),
@@ -326,16 +335,36 @@ describe('CommunitiesService', () => {
     });
   });
 
-  describe('findCommunityMembers (memberType 분류)', () => {
+  describe('findCommunityMembers', () => {
+    const JOINED_AT = new Date('2026-09-07T11:59:00.000Z');
+
+    const buildParticipant = (
+      memberId: string,
+      opinion: string | null,
+      debateIntent = CommunityDebateIntent.PREPARING,
+    ): MemberCommunity =>
+      Object.assign(new MemberCommunity(), {
+        memberId,
+        communityId: 'community-uuid',
+        opinion,
+        reasons: null,
+        debateIntent,
+        createdAt: JOINED_AT,
+      });
+
     beforeEach(() => {
       communityRepository.findOneBy.mockResolvedValue({
         id: 'community-uuid',
         hostId: 'host-uuid',
       });
       memberCommunitiesService.findParticipants.mockResolvedValue([
-        { memberId: 'host-uuid', opinion: null },
-        { memberId: 'keynote-uuid', opinion: '있음' },
-        { memberId: 'normal-uuid', opinion: null },
+        buildParticipant(
+          'host-uuid',
+          null,
+          CommunityDebateIntent.OPEN_TO_DEBATE,
+        ),
+        buildParticipant('keynote-uuid', '있음'),
+        buildParticipant('normal-uuid', null),
       ]);
       membersService.findByIds.mockResolvedValue([
         buildMember({ id: 'host-uuid' }),
@@ -344,25 +373,105 @@ describe('CommunitiesService', () => {
       ]);
     });
 
-    it('host/기조발언 여부로 memberType을 분류한다', async () => {
+    it('계약 모양(role·debateIntent·joinedAt)으로 참여자를 돌려준다', async () => {
       const result = await service.findCommunityMembers('community-uuid');
 
-      const byId = Object.fromEntries(
-        result.map((r) => [r.memberId, r.memberType]),
+      const byId = Object.fromEntries(result.map((r) => [r.id, r]));
+      expect(byId['host-uuid'].role).toBe(CommunityMemberRole.HOST);
+      expect(byId['host-uuid'].debateIntent).toBe(
+        CommunityDebateIntent.OPEN_TO_DEBATE,
       );
-      expect(byId['host-uuid']).toBe(CommunityMemberType.HOST);
-      expect(byId['keynote-uuid']).toBe(CommunityMemberType.KEYNOTE_MEMBER);
-      expect(byId['normal-uuid']).toBe(CommunityMemberType.NORMAL_MEMBER);
+      expect(byId['host-uuid'].joinedAt).toBe(JOINED_AT.toISOString());
+      expect(byId['keynote-uuid'].role).toBe(CommunityMemberRole.MEMBER);
+      expect(byId['normal-uuid'].debateIntent).toBe(
+        CommunityDebateIntent.PREPARING,
+      );
     });
 
-    it('memberType 필터를 적용한다', async () => {
+    it('memberType 필터(host/기조발언 여부 분류)를 적용한다', async () => {
       const result = await service.findCommunityMembers(
         'community-uuid',
         CommunityMemberType.KEYNOTE_MEMBER,
       );
 
       expect(result).toHaveLength(1);
-      expect(result[0].memberId).toBe('keynote-uuid');
+      expect(result[0].id).toBe('keynote-uuid');
+    });
+
+    it('회원이 삭제돼 조회되지 않는 참여 행은 목록에서 빠진다', async () => {
+      membersService.findByIds.mockResolvedValue([
+        buildMember({ id: 'host-uuid' }),
+      ]);
+
+      const result = await service.findCommunityMembers('community-uuid');
+
+      expect(result.map((r) => r.id)).toEqual(['host-uuid']);
+    });
+  });
+
+  describe('updateMyDebateIntent', () => {
+    beforeEach(() => {
+      communityRepository.findOneBy.mockResolvedValue({
+        id: 'community-uuid',
+        hostId: 'host-uuid',
+      });
+    });
+
+    it('참여 중이 아니면 PARTICIPANT_NOT_FOUND를 던진다', async () => {
+      memberCommunitiesService.updateDebateIntent.mockResolvedValue(null);
+
+      await expect(
+        service.updateMyDebateIntent(
+          'community-uuid',
+          'member-uuid',
+          CommunityDebateIntent.OPEN_TO_DEBATE,
+        ),
+      ).rejects.toMatchObject({
+        appError: CommunityErrorCode.PARTICIPANT_NOT_FOUND,
+      });
+    });
+
+    it('갱신된 참여 행으로 계약 모양의 참여자를 만든다(방장이면 role=HOST)', async () => {
+      memberCommunitiesService.updateDebateIntent.mockResolvedValue(
+        Object.assign(new MemberCommunity(), {
+          memberId: 'host-uuid',
+          communityId: 'community-uuid',
+          debateIntent: CommunityDebateIntent.OPEN_TO_DEBATE,
+          createdAt: new Date('2026-09-07T11:59:00.000Z'),
+        }),
+      );
+      membersService.findOneOrThrow.mockResolvedValue(
+        buildMember({ id: 'host-uuid' }),
+      );
+
+      const result = await service.updateMyDebateIntent(
+        'community-uuid',
+        'host-uuid',
+        CommunityDebateIntent.OPEN_TO_DEBATE,
+      );
+
+      expect(memberCommunitiesService.updateDebateIntent).toHaveBeenCalledWith(
+        'host-uuid',
+        'community-uuid',
+        CommunityDebateIntent.OPEN_TO_DEBATE,
+      );
+      expect(result).toMatchObject({
+        id: 'host-uuid',
+        role: CommunityMemberRole.HOST,
+        debateIntent: CommunityDebateIntent.OPEN_TO_DEBATE,
+        joinedAt: '2026-09-07T11:59:00.000Z',
+      });
+    });
+  });
+
+  describe('markActive', () => {
+    it('토론이 시작되면 삭제되지 않은 커뮤니티를 ACTIVE로 옮긴다', async () => {
+      await service.markActive('community-uuid');
+
+      expect(communityRepository.update).toHaveBeenCalledWith(
+        { id: 'community-uuid', status: ResourceStatus.NORMAL },
+        { state: CommunityState.ACTIVE },
+      );
     });
   });
 

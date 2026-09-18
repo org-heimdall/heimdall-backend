@@ -11,6 +11,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { WsCommandDto } from '../common/ws/ws-command.dto';
 import { DebatePhase, DebateSide } from './debate-chat.types';
 
 // debate.turn.finalize 의 payload.
@@ -37,15 +38,8 @@ export class DebateTurnMessageSendDto extends DebateTurnFinalizeDto {
   content: string;
 }
 
-// 명령 봉투 공통 필드. 어댑터가 봉투 전체를 핸들러에 넘기므로 봉투째 검증한다.
-export class DebateChatCommandDto {
-  @IsString()
-  @IsNotEmpty()
-  id: string;
-
-  @IsString()
-  type: string;
-
+// 토론 채팅 명령 봉투. 공통 필드(id, type)는 WsCommandDto가 갖고, 토론 계약의 선택 필드만 더한다.
+export class DebateChatCommandDto extends WsCommandDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()

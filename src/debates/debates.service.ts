@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Not, Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunitiesService } from '../communities/communities.service';
@@ -34,6 +34,18 @@ import { DebateStatus } from './entities/debate-status.enum';
 import { Debate, DebateTurn } from './entities/debate.entity';
 import { DebateErrorCode } from './exceptions/debate-error-code';
 
+/**
+ * 커뮤니티에 "진행 중인 토론이 있다"고 볼 단계. 판정 중(JUDGING)까지 포함해 새 토론 시작을 막고,
+ * 끝난 토론(COMPLETED/FAILED)만 제외한다.
+ * 아직 시작되지 않은 시드 행은 debateStatus가 null이라 이 목록(IN)에 걸리지 않는다.
+ */
+export const ACTIVE_DEBATE_STATUSES = [
+  DebateStatus.READY,
+  DebateStatus.IN_PROGRESS,
+  DebateStatus.DEBATE_FINALIZED,
+  DebateStatus.JUDGING,
+] as const;
+
 // 확정 턴 수와 마지막 턴 시각의 원시 집계 결과(현재 차례 파생의 입력).
 interface RawProgress {
   debateId: string;
@@ -60,6 +72,11 @@ export class DebatesService {
     private readonly memberCommunitiesService: MemberCommunitiesService,
     private readonly membersService: MembersService,
   ) {}
+
+  // 트랜잭션 참여용: manager가 있으면 그 안의 레포지토리를, 없으면 기본 레포지토리를 사용한다.
+  private repo(manager?: EntityManager): Repository<Debate> {
+    return manager ? manager.getRepository(Debate) : this.debateRepository;
+  }
 
   // 토론 1건을 커뮤니티와 함께 조회한다.
   // 토론과 커뮤니티 모두 soft-delete되지 않은 것만 대상이며, 없으면 NOT_FOUND.
@@ -94,8 +111,15 @@ export class DebatesService {
   /**
    * 토론을 만든다(계약 POST /debates). 주제·라운드 수는 요청 값을 토론이 직접 갖는다.
    * 커뮤니티와 양쪽 발언자의 소속을 확인하고 READY 상태로 저장한다.
+   *
+   * manager를 받으면 호출자의 트랜잭션에 참여한다 — 초대 수락은 "초대를 ACCEPTED로 옮기는 것"과
+   * "토론을 만드는 것"이 함께 성공해야 하기 때문이다.
    */
-  async create(request: CreateDebateDto, memberId: string): Promise<DebateDto> {
+  async create(
+    request: CreateDebateDto,
+    memberId: string,
+    manager?: EntityManager,
+  ): Promise<DebateDto> {
     const community = await this.communitiesService.findOneOrThrow(
       request.communityId,
     );
@@ -103,8 +127,9 @@ export class DebatesService {
 
     const [sideA, sideB] = await this.loadSpeakers(request, community);
 
-    const debate = await this.debateRepository.save(
-      this.debateRepository.create({
+    const repository = this.repo(manager);
+    const debate = await repository.save(
+      repository.create({
         communityId: community.id,
         topic: request.topic,
         rebuttalQuestionRounds: request.rebuttalQuestionRounds,
@@ -120,6 +145,23 @@ export class DebatesService {
 
     // 아직 확정된 턴이 없으므로 진행 정도를 따로 읽지 않는다.
     return DebateDto.from(debate, NO_PROGRESS);
+  }
+
+  /**
+   * 커뮤니티에서 지금 진행 중인 토론 1건(없으면 null). 초대 수락 전 중복 시작을 막고,
+   * GET …/debates/active가 화면 복귀에 쓴다. 같은 커뮤니티에 활성 토론이 둘일 수는 없지만,
+   * 과거 데이터를 대비해 최근 것을 돌려준다.
+   */
+  async findActiveByCommunity(communityId: string): Promise<Debate | null> {
+    return this.debateRepository.findOne({
+      where: {
+        communityId,
+        status: ResourceStatus.NORMAL,
+        community: { status: ResourceStatus.NORMAL },
+        debateStatus: In([...ACTIVE_DEBATE_STATUSES]),
+      },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   // 토론 목록(계약 GET /debates). status 필터 외에는 좁히지 않는다.
