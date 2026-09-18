@@ -10,6 +10,7 @@ import { MembersModule } from './members/members.module';
 import { DebatesModule } from './debates/debates.module';
 import { SeedModule } from './seed/seed.module';
 import { DebateChatModule } from './debate-chat/debate-chat.module';
+import { CommunityChatModule } from './community-chat/community-chat.module';
 import { JudgeModule } from './judge/judge.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -140,6 +141,7 @@ import * as Joi from 'joi';
     DebatesModule,
     SeedModule,
     DebateChatModule,
+    CommunityChatModule,
     JudgeModule,
   ],
   controllers: [AppController],

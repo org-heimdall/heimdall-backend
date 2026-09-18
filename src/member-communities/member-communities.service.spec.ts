@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { IsNull, Not } from 'typeorm';
 import { MemberCommunitiesService } from './member-communities.service';
 import { MemberCommunity } from './entities/member-community.entity';
 
@@ -108,6 +109,67 @@ describe('MemberCommunitiesService', () => {
       expect(repository.save).not.toHaveBeenCalled();
       expect(result.opinion).toBe('수정된 의견');
       expect(result.reasons).toEqual(['새이유']);
+    });
+  });
+
+  describe('updateKeynote', () => {
+    it('참여 행이 없으면 null을 돌려준다(호출자가 권한 에러로 옮긴다)', async () => {
+      repository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.updateKeynote('member-uuid', 'community-uuid', '의견', []),
+      ).resolves.toBeNull();
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    it('의견이 없던 행이면 created=true로 저장한다', async () => {
+      repository.findOneBy.mockResolvedValue(buildRow({ opinion: null }));
+
+      const result = await service.updateKeynote(
+        'member-uuid',
+        'community-uuid',
+        '첫 의견',
+        ['이유'],
+      );
+
+      expect(result).toMatchObject({ created: true });
+      expect(result?.row.opinion).toBe('첫 의견');
+      expect(result?.row.reasons).toEqual(['이유']);
+      expect(repository.save).toHaveBeenCalledWith(result?.row);
+    });
+
+    it('이미 의견이 있던 행이면 created=false로 갱신한다', async () => {
+      repository.findOneBy.mockResolvedValue(
+        buildRow({ opinion: '기존 의견', reasons: ['기존 이유'] }),
+      );
+
+      const result = await service.updateKeynote(
+        'member-uuid',
+        'community-uuid',
+        '수정된 의견',
+        ['새 이유'],
+      );
+
+      expect(result).toMatchObject({ created: false });
+      expect(result?.row.opinion).toBe('수정된 의견');
+      // updatedAt 갱신을 위해 upsert가 아니라 save(UPDATE) 경로를 탄다.
+      expect(repository.upsert).not.toHaveBeenCalled();
+      expect(repository.save).toHaveBeenCalled();
+    });
+  });
+
+  describe('findOpinions', () => {
+    it('기조 발언을 작성한 행만 조회한다', async () => {
+      const rows = [buildRow({ opinion: '의견' })];
+      repository.findBy.mockResolvedValue(rows);
+
+      await expect(service.findOpinions('community-uuid')).resolves.toBe(rows);
+
+      // TypeORM 1.0의 where는 null을 그대로 받으면 throw하므로 IsNull()/Not()을 쓴다.
+      expect(repository.findBy).toHaveBeenCalledWith({
+        communityId: 'community-uuid',
+        opinion: Not(IsNull()),
+      });
     });
   });
 

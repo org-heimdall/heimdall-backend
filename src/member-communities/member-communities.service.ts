@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, IsNull, Not, Repository } from 'typeorm';
 import { MemberCommunity } from './entities/member-community.entity';
 
 @Injectable()
@@ -57,6 +57,34 @@ export class MemberCommunitiesService {
     ]);
     // 재조회 없이 방금 저장한 값을 그대로 반환해, 동시 요청이 응답을 덮어쓰는 창을 제거한다.
     return this.repo().create({ memberId, communityId, opinion, reasons });
+  }
+
+  /**
+   * 기조 발언 작성/수정(참여자 전용). 참여 행이 없으면 null을 돌려주고, 호출자가 권한 에러로 옮긴다.
+   * upsert가 아니라 읽고-저장하는 이유는 두 가지다 — INSERT … ON CONFLICT는 @UpdateDateColumn을
+   * 갱신하지 않아 계약의 updatedAt이 멈추고, 신규 작성/수정(action) 구분도 할 수 없다.
+   */
+  async updateKeynote(
+    memberId: string,
+    communityId: string,
+    opinion: string,
+    reasons: string[],
+  ): Promise<{ row: MemberCommunity; created: boolean } | null> {
+    const row = await this.findOne(memberId, communityId);
+    if (!row) {
+      return null;
+    }
+
+    const created = row.opinion === null;
+    row.opinion = opinion;
+    row.reasons = reasons;
+    return { row: await this.repo().save(row), created };
+  }
+
+  // 기조 발언을 작성한 참여 행만 조회한다(커뮤니티 의견 목록·접속 replay).
+  // TypeORM 1.0의 where는 null을 그대로 받으면 throw하므로 IsNull()/Not()을 쓴다.
+  async findOpinions(communityId: string): Promise<MemberCommunity[]> {
+    return this.repo().findBy({ communityId, opinion: Not(IsNull()) });
   }
 
   /**

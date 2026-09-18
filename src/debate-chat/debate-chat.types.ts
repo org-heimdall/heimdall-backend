@@ -1,5 +1,10 @@
 // 계약(frontend-api-contract.md) 열거형·이벤트·payload와 1:1. 값을 바꾸면 프론트 mapper가 깨진다.
 
+// 이벤트 봉투는 두 채팅 게이트웨이가 공유하므로 common/ws에 있다.
+import { WsServerEvent } from '../common/ws/ws-event';
+
+export type { WsServerEvent };
+
 // 턴 모양(phase/side/turn)은 debate_message를 소유한 debates 도메인에 있고, 채팅은 그대로 쓴다.
 // REST(Debate DTO)와 채팅이 같은 정의를 쓰게 하는 것이 목적이다.
 import {
@@ -56,11 +61,6 @@ export const DebateChatEvent = {
   DEBATE_ENDED: 'debate.ended',
   ERROR: 'error',
 } as const;
-
-export interface WsServerEvent<TPayload = unknown> {
-  type: string;
-  payload: TPayload;
-}
 
 export interface CurrentTurn {
   phase: DebatePhase;
