@@ -9,7 +9,6 @@ import {
   HttpCode,
   Put,
   ParseUUIDPipe,
-  DefaultValuePipe,
 } from '@nestjs/common';
 import { ParsePositiveIntPipe } from '../common/pipes/parse-positive-int.pipe';
 import {
@@ -57,14 +56,27 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티 목록 조회',
     description:
-      '정렬·페이지·테마 필터는 모두 선택이며, 쿼리 없이 부르면 최신순 첫 페이지를 돌려준다. ' +
+      '정렬·페이지·테마 필터는 모두 선택이며, 쿼리 없이 부르면 최신순 전체 목록을 돌려준다. ' +
+      'size를 주면 그 크기로 잘라 page번째 묶음만 돌려준다. ' +
       'isOwnedByCurrentUser/isJoined는 액세스 토큰의 회원 기준이다.',
   })
   @ApiOkResponse({ type: [CommunityDto] })
   @ApiAuthRequired()
   @Get()
-  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-  @ApiQuery({ name: 'size', required: false, type: Number, example: 10 })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    description: 'size와 함께 줄 때만 의미가 있다(기본 1).',
+  })
+  @ApiQuery({
+    name: 'size',
+    required: false,
+    type: Number,
+    example: 10,
+    description: '생략하면 자르지 않고 전체를 돌려준다.',
+  })
   @ApiQuery({
     name: 'sort',
     required: false,
@@ -81,8 +93,8 @@ export class CommunitiesController {
   })
   async findAll(
     @CurrentMember() memberId: string,
-    @Query('page', new DefaultValuePipe(1), ParsePositiveIntPipe) page: number,
-    @Query('size', new DefaultValuePipe(10), ParsePositiveIntPipe) size: number,
+    @Query('page', new ParsePositiveIntPipe({ optional: true })) page?: number,
+    @Query('size', new ParsePositiveIntPipe({ optional: true })) size?: number,
     @Query('sort') sort?: CommunitySort,
     @Query('themeId', new ParseUUIDPipe({ optional: true })) themeId?: string,
   ): Promise<CommunityDto[]> {

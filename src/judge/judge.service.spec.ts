@@ -171,6 +171,61 @@ describe('JudgeService', () => {
     );
   });
 
+  describe('startJudging', () => {
+    it('판정 작업을 만들고 지금의 토론 상태를 돌려준다', async () => {
+      tasks.countByKind.mockResolvedValue(
+        counts({ analyzer: { total: 1, completed: 1 } }),
+      );
+
+      await expect(service.startJudging(DEBATE_ID, HOST_ID)).resolves.toEqual({
+        id: DEBATE_ID,
+      });
+
+      expect(queue.schedule).toHaveBeenCalledWith(
+        DEBATE_ID,
+        JudgeTaskKind.JUDGE,
+        DEBATE_ID,
+      );
+      expect(results.startJudging).toHaveBeenCalledWith(DEBATE_ID);
+    });
+
+    it('앞 단계가 아직 돌고 있어도 409가 아니라 상태를 돌려준다', async () => {
+      await expect(service.startJudging(DEBATE_ID, HOST_ID)).resolves.toEqual({
+        id: DEBATE_ID,
+      });
+
+      expect(queue.schedule).not.toHaveBeenCalledWith(
+        DEBATE_ID,
+        JudgeTaskKind.JUDGE,
+        DEBATE_ID,
+      );
+    });
+
+    it('이미 판정이 끝난 토론에 다시 불러도 상태를 돌려준다(멱등)', async () => {
+      setDebateStatus(DebateStatus.COMPLETED);
+
+      await expect(service.startJudging(DEBATE_ID, HOST_ID)).resolves.toEqual({
+        id: DEBATE_ID,
+      });
+    });
+
+    it('아직 끝나지 않은 토론이면 거절한다', async () => {
+      setDebateStatus(DebateStatus.IN_PROGRESS);
+
+      await expectCode(
+        service.startJudging(DEBATE_ID, HOST_ID),
+        JudgeErrorCode.NOT_FINALIZED.code,
+      );
+    });
+
+    it('당사자가 아니면 거절한다', async () => {
+      await expectCode(
+        service.startJudging(DEBATE_ID, 'stranger-uuid'),
+        'COMMON.FORBIDDEN',
+      );
+    });
+  });
+
   describe('requestJudgment', () => {
     it('분석 작업이 없는 확정 턴을 채우고 판정 조건을 다시 본다', async () => {
       await expectCode(

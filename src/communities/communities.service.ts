@@ -48,11 +48,14 @@ export class CommunitiesService {
     return themes.map((theme) => ThemeDto.from(theme));
   }
 
-  // 커뮤니티 목록 조회. 정렬·페이지·테마 필터는 프론트가 쓰지 않아도 되는 선택 쿼리다.
+  /**
+   * 커뮤니티 목록 조회. 정렬·페이지·테마 필터는 프론트가 쓰지 않아도 되는 선택 쿼리다.
+   * 계약상 쿼리 없이 부른 결과가 곧 전체 목록이므로, size를 주지 않으면 자르지 않는다.
+   */
   async findAll(
     currentMemberId: string,
-    page: number,
-    size: number,
+    page?: number,
+    size?: number,
     sort?: CommunitySort,
     themeId?: string,
   ): Promise<CommunityDto[]> {
@@ -61,9 +64,11 @@ export class CommunitiesService {
     const query = this.communityRepository
       .createQueryBuilder('community')
       .where('community.status = :status', { status: ResourceStatus.NORMAL })
-      .orderBy(column, direction)
-      .skip((page - 1) * size)
-      .take(size);
+      .orderBy(column, direction);
+
+    if (size !== undefined) {
+      query.skip(((page ?? 1) - 1) * size).take(size);
+    }
 
     if (themeId) {
       query.andWhere('community.themeId = :themeId', { themeId });

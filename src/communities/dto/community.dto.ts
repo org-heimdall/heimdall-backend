@@ -12,6 +12,12 @@ export class CommunityHostDto {
 
   @ApiProperty({ example: '헤임달' })
   displayName: string;
+
+  @ApiProperty({
+    example: 'https://cdn.example.com/profile/1.png',
+    nullable: true,
+  })
+  profileImageUrl: string | null;
 }
 
 export class ParticipantPreviewDto {
@@ -63,7 +69,7 @@ export class CommunityDto {
   @ApiProperty({ example: 'AI 규제, 필요한가?' })
   topic: string;
 
-  @ApiProperty({ example: '정치' })
+  @ApiProperty({ example: 'POLITICS' })
   category: string;
 
   @ApiProperty({ enum: CommunityState, example: CommunityState.WAITING })
@@ -116,6 +122,7 @@ export class CommunityDto {
         id: community.hostId,
         // 방장이 탈퇴하면 회원 조회에서 빠진다. 커뮤니티 자체는 계속 보여야 하므로 이름만 비운다.
         displayName: host?.nickname ?? '',
+        profileImageUrl: host?.profileImageUrl ?? null,
       },
       participantPreviews: assembly.participants.map((participant) =>
         ParticipantPreviewDto.from(participant),

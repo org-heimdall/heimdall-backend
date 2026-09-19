@@ -218,7 +218,7 @@ describe('CommunitiesService', () => {
     it('조회한 커뮤니티를 계약 스키마의 배열로 돌려준다', async () => {
       queryBuilder.getMany.mockResolvedValue([buildCommunity()]);
       themeRepository.findBy.mockResolvedValue([
-        { id: 'theme-uuid', name: '정치' },
+        { id: 'theme-uuid', name: 'POLITICS' },
       ]);
       memberCommunitiesService.findParticipantsByCommunities.mockResolvedValue([
         buildParticipation({ opinion: '찬성', reasons: ['이유1'] }),
@@ -236,13 +236,17 @@ describe('CommunitiesService', () => {
         id: 'community-uuid',
         title: 'AI 규제 토론방',
         topic: 'AI 규제, 필요한가?',
-        category: '정치',
+        category: 'POLITICS',
         status: CommunityState.WAITING,
         rounds: 3,
         isPublic: true,
         hostClaim: '찬성',
         hostReasons: ['이유1'],
-        host: { id: 'host-uuid', displayName: '호스트' },
+        host: {
+          id: 'host-uuid',
+          displayName: '호스트',
+          profileImageUrl: null,
+        },
         memberCount: 2,
         createdAt: '2026-09-07T11:59:00.000Z',
         // 요청자는 방장이 아니지만 참여 중이다
@@ -253,6 +257,44 @@ describe('CommunitiesService', () => {
         { id: 'host-uuid', displayName: '호스트', profileImageUrl: null },
         { id: 'member-uuid', displayName: '참여자', profileImageUrl: null },
       ]);
+    });
+
+    it('방장의 프로필 이미지를 host에 함께 싣는다', async () => {
+      queryBuilder.getMany.mockResolvedValue([buildCommunity()]);
+      memberCommunitiesService.findParticipantsByCommunities.mockResolvedValue([
+        buildParticipation(),
+      ]);
+      membersService.findByIds.mockResolvedValue([
+        buildMember({
+          id: 'host-uuid',
+          nickname: '호스트',
+          profileImageUrl: 'https://cdn.example.com/profile/1.png',
+        }),
+      ]);
+
+      const result = await service.findAll('member-uuid', 1, 10);
+
+      expect(result[0].host).toEqual({
+        id: 'host-uuid',
+        displayName: '호스트',
+        profileImageUrl: 'https://cdn.example.com/profile/1.png',
+      });
+    });
+
+    it('방장이 탈퇴해 회원 조회에서 빠지면 이름과 이미지를 비운다', async () => {
+      queryBuilder.getMany.mockResolvedValue([buildCommunity()]);
+      memberCommunitiesService.findParticipantsByCommunities.mockResolvedValue(
+        [],
+      );
+      membersService.findByIds.mockResolvedValue([]);
+
+      const result = await service.findAll('member-uuid', 1, 10);
+
+      expect(result[0].host).toEqual({
+        id: 'host-uuid',
+        displayName: '',
+        profileImageUrl: null,
+      });
     });
 
     it('참여자 미리보기는 최대 5명까지만 싣는다', async () => {
@@ -351,6 +393,33 @@ describe('CommunitiesService', () => {
         { status: ResourceStatus.NORMAL },
       );
     });
+
+    it('size가 없으면 자르지 않고 전체를 돌려준다', async () => {
+      queryBuilder.getMany.mockResolvedValue([]);
+
+      await service.findAll('member-uuid');
+
+      expect(queryBuilder.skip).not.toHaveBeenCalled();
+      expect(queryBuilder.take).not.toHaveBeenCalled();
+    });
+
+    it('size만 주면 첫 페이지로 잘라 준다', async () => {
+      queryBuilder.getMany.mockResolvedValue([]);
+
+      await service.findAll('member-uuid', undefined, 10);
+
+      expect(queryBuilder.skip).toHaveBeenCalledWith(0);
+      expect(queryBuilder.take).toHaveBeenCalledWith(10);
+    });
+
+    it('page와 size를 함께 주면 그 묶음만 잘라 준다', async () => {
+      queryBuilder.getMany.mockResolvedValue([]);
+
+      await service.findAll('member-uuid', 3, 10);
+
+      expect(queryBuilder.skip).toHaveBeenCalledWith(20);
+      expect(queryBuilder.take).toHaveBeenCalledWith(10);
+    });
   });
 
   describe('findOne', () => {
@@ -387,7 +456,7 @@ describe('CommunitiesService', () => {
     const dto = {
       title: 'AI 규제 토론방',
       topic: 'AI 규제',
-      category: '정치',
+      category: 'POLITICS',
       rounds: 3,
       isPublic: true,
       hostClaim: '찬성',
@@ -397,7 +466,7 @@ describe('CommunitiesService', () => {
     beforeEach(() => {
       themeRepository.findOneBy.mockResolvedValue({
         id: 'theme-uuid',
-        name: '정치',
+        name: 'POLITICS',
       });
       communityRepository.findOneBy.mockResolvedValue(
         buildCommunity({ id: 'new-community' }),

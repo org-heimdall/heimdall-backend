@@ -44,7 +44,7 @@ export class WsRooms {
   }
 
   // 방 전체에 보낸다. except를 주면 그 소켓만 건너뛴다(송신자 제외 브로드캐스트).
-  broadcast<T>(
+  broadcast<T extends object>(
     roomId: string,
     event: WsServerEvent<T>,
     except?: WebSocket,
@@ -61,7 +61,7 @@ export class WsRooms {
    * 접속해 있지 않으면 아무 일도 일어나지 않는다 — 방이 프로세스 로컬이라 "접속 중인가"를
    * 이 레지스트리로 판정할 수 없으므로, 보내는 쪽도 도달을 전제하지 않는다.
    */
-  sendToMember<T>(
+  sendToMember<T extends object>(
     roomId: string,
     memberId: string,
     event: WsServerEvent<T>,

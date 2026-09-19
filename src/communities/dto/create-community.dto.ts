@@ -40,9 +40,9 @@ export class CreateCommunityDto {
   topic: string;
 
   @ApiProperty({
-    example: '정치',
+    example: 'POLITICS',
     maxLength: COMMUNITY_CATEGORY_MAX_LENGTH,
-    description: 'GET /communities/themes가 돌려주는 테마 이름 중 하나',
+    description: 'GET /communities/themes가 돌려주는 테마 코드 중 하나',
   })
   @IsString()
   @MinLength(1)

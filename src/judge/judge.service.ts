@@ -7,6 +7,7 @@ import { GeneralException } from '../common/exceptions/general.exception';
 import { DebateChatTurn } from '../debate-chat/debate-chat.types';
 import { resolveSide, resolveSpeakers } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
+import { DebateDto } from '../debates/dto/debate.dto';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate } from '../debates/entities/debate.entity';
@@ -140,6 +141,25 @@ export class JudgeService implements JudgeTaskListener {
   }
 
   // ---------------------------------------------------------------- REST
+
+  /**
+   * 판정 단계로 넘기기(계약 POST /debates/:id/judging). 끝난 토론을 JUDGING으로 옮기고
+   * 지금의 토론 상태를 돌려준다.
+   *
+   * /judge와 나뉘어 있는 이유는 답하는 것이 다르기 때문이다 — 이쪽은 "토론이 지금 어느 단계인가"를
+   * Debate로 알려 주고(그래서 아직 판정 전이어도 200이다), /judge는 완성된 판정 결과를 달라는
+   * 요청이라 준비되지 않았으면 409로 답한다. 화면 전환은 이 경로만 있으면 된다.
+   */
+  async startJudging(debateId: string, memberId: string): Promise<DebateDto> {
+    const debate = await this.debates.findOneOrThrow(debateId);
+    this.assertParticipant(debate, memberId);
+
+    // 아직 끝나지 않은 토론만 거절한다. 나머지(진행 중·이미 완료·분석 실패)는 상태로 드러난다.
+    if ((await this.tryStartJudge(debateId)) === 'NOT_FINALIZED') {
+      throw new GeneralException(JudgeErrorCode.NOT_FINALIZED);
+    }
+    return this.debates.findOneDto(debateId);
+  }
 
   /**
    * 판정 요청(계약 POST /debates/:id/judge). 이미 끝났으면 저장된 결과를 그대로 돌려주고,
