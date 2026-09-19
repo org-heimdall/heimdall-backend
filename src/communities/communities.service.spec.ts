@@ -46,7 +46,6 @@ describe('CommunitiesService', () => {
     findParticipantsByCommunities: jest.Mock;
     findOne: jest.Mock;
     updateDebateIntent: jest.Mock;
-    upsertKeynote: jest.Mock;
     insertIfAbsent: jest.Mock;
     deleteOne: jest.Mock;
   };
@@ -146,7 +145,6 @@ describe('CommunitiesService', () => {
       findParticipantsByCommunities: jest.fn().mockResolvedValue([]),
       findOne: jest.fn(),
       updateDebateIntent: jest.fn(),
-      upsertKeynote: jest.fn(),
       insertIfAbsent: jest.fn().mockResolvedValue(true),
       deleteOne: jest.fn().mockResolvedValue(true),
     };
@@ -723,45 +721,6 @@ describe('CommunitiesService', () => {
         { id: 'community-uuid', status: ResourceStatus.NORMAL },
         { state: CommunityState.ACTIVE },
       );
-    });
-  });
-
-  describe('getMemberKeynote', () => {
-    it('행이 없으면 PARTICIPANT_NOT_FOUND 에러를 던진다', async () => {
-      memberCommunitiesService.findOne.mockResolvedValue(null);
-
-      await expect(
-        service.getMemberKeynote('community-uuid', 'member-uuid'),
-      ).rejects.toMatchObject({
-        appError: CommunityErrorCode.PARTICIPANT_NOT_FOUND,
-      });
-    });
-
-    it('기조발언 미작성(opinion=null)이면 KEYNOTE_NOT_FOUND 에러를 던진다', async () => {
-      memberCommunitiesService.findOne.mockResolvedValue({
-        opinion: null,
-        reasons: null,
-      });
-
-      await expect(
-        service.getMemberKeynote('community-uuid', 'member-uuid'),
-      ).rejects.toMatchObject({
-        appError: CommunityErrorCode.KEYNOTE_NOT_FOUND,
-      });
-    });
-
-    it('작성된 기조발언을 KeynoteDto로 반환한다', async () => {
-      memberCommunitiesService.findOne.mockResolvedValue({
-        opinion: '찬성',
-        reasons: ['이유1'],
-      });
-
-      const result = await service.getMemberKeynote(
-        'community-uuid',
-        'member-uuid',
-      );
-
-      expect(result).toEqual({ opinion: '찬성', reasons: ['이유1'] });
     });
   });
 

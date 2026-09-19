@@ -62,22 +62,6 @@ export class MemberCommunitiesService {
     return repo.save(row);
   }
 
-  // 기조발언 작성/수정: (memberId, communityId) 유니크 제약 기반 upsert로 원자적 처리한다.
-  // 충돌 시 opinion/reasons만 갱신, 없으면 참여+작성 행을 생성한다.
-  async upsertKeynote(
-    memberId: string,
-    communityId: string,
-    opinion: string,
-    reasons: string[],
-  ): Promise<MemberCommunity> {
-    await this.repo().upsert({ memberId, communityId, opinion, reasons }, [
-      'memberId',
-      'communityId',
-    ]);
-    // 재조회 없이 방금 저장한 값을 그대로 반환해, 동시 요청이 응답을 덮어쓰는 창을 제거한다.
-    return this.repo().create({ memberId, communityId, opinion, reasons });
-  }
-
   /**
    * 기조 발언 작성/수정(참여자 전용). 참여 행이 없으면 null을 돌려주고, 호출자가 권한 에러로 옮긴다.
    * upsert가 아니라 읽고-저장하는 이유는 두 가지다 — INSERT … ON CONFLICT는 @UpdateDateColumn을

@@ -26,7 +26,6 @@ import { CommunityDto } from './dto/community.dto';
 import { ThemeDto } from './dto/theme.dto';
 import { CommunityMemberDto } from './dto/community-member.dto';
 import { UpdateDebateIntentDto } from './dto/update-debate-intent.dto';
-import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { CommunityErrorCode } from './exceptions/community-error-code';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
@@ -250,44 +249,6 @@ export class CommunitiesController {
     );
 
     this.publisher.memberDebateIntentChanged({ communityId, member });
-  }
-
-  @ApiOperation({
-    summary: '커뮤니티 참여자의 기조 발언 조회',
-  })
-  @ApiParam({ name: 'communityId', format: 'uuid' })
-  @ApiParam({ name: 'memberId', format: 'uuid' })
-  @ApiOkResponse({ type: KeynoteDto })
-  @ApiErrorResponses(
-    CommunityErrorCode.PARTICIPANT_NOT_FOUND,
-    CommunityErrorCode.KEYNOTE_NOT_FOUND,
-  )
-  @Get(':communityId/keynotes/:memberId')
-  async getMemberKeynote(
-    @Param('communityId', ParseUUIDPipe) communityId: string,
-    @Param('memberId', ParseUUIDPipe) memberId: string,
-  ): Promise<KeynoteDto> {
-    return this.communitiesService.getMemberKeynote(communityId, memberId);
-  }
-
-  @ApiOperation({
-    summary: '커뮤니티에 대한 나의 기조 발언 작성/수정',
-  })
-  @ApiParam({ name: 'communityId', format: 'uuid' })
-  @ApiOkResponse({ type: KeynoteDto })
-  @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
-  @ApiAuthRequired()
-  @Put(':communityId/keynotes/me')
-  async upsertMyKeynote(
-    @Param('communityId', ParseUUIDPipe) communityId: string,
-    @CurrentMember() memberId: string,
-    @Body() request: KeynoteDto,
-  ): Promise<KeynoteDto> {
-    return this.communitiesService.upsertMyKeynote(
-      communityId,
-      memberId,
-      request,
-    );
   }
 
   @ApiOperation({

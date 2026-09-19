@@ -9,7 +9,6 @@ import { CommunityFavorite } from './entities/community-favorite.entity';
 import { ThemeDto } from './dto/theme.dto';
 import { CommunityDto, MAX_PARTICIPANT_PREVIEWS } from './dto/community.dto';
 import { CreateCommunityDto } from './dto/create-community.dto';
-import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { MembersService } from '../members/members.service';
 import { Member } from '../members/entities/member.entity';
@@ -207,50 +206,6 @@ export class CommunitiesService {
       { id: communityId, status: ResourceStatus.NORMAL },
       { state: CommunityState.ACTIVE },
     );
-  }
-
-  // 특정 참여자의 기조 발언 조회 (미작성이면 404)
-  async getMemberKeynote(
-    communityId: string,
-    memberId: string,
-  ): Promise<KeynoteDto> {
-    const participant = await this.memberCommunitiesService.findOne(
-      memberId,
-      communityId,
-    );
-    if (!participant) {
-      throw new GeneralException(CommunityErrorCode.PARTICIPANT_NOT_FOUND);
-    }
-
-    if (participant.opinion === null) {
-      throw new GeneralException(CommunityErrorCode.KEYNOTE_NOT_FOUND);
-    }
-
-    return {
-      opinion: participant.opinion,
-      reasons: participant.reasons ?? [],
-    };
-  }
-
-  // 나의 기조 발언 작성/수정 (없으면 참여+작성)
-  async upsertMyKeynote(
-    communityId: string,
-    memberId: string,
-    keynoteDto: KeynoteDto,
-  ): Promise<KeynoteDto> {
-    await this.findOneOrThrow(communityId);
-
-    const saved = await this.memberCommunitiesService.upsertKeynote(
-      memberId,
-      communityId,
-      keynoteDto.opinion,
-      keynoteDto.reasons,
-    );
-
-    return {
-      opinion: saved.opinion!,
-      reasons: saved.reasons ?? [],
-    };
   }
 
   /**

@@ -34,10 +34,4 @@ export const CommunityErrorCode = {
     title: 'Participant Not Found',
     detail: '참여자를 찾을 수 없습니다.',
   },
-  KEYNOTE_NOT_FOUND: {
-    httpStatus: HttpStatus.NOT_FOUND,
-    code: 'COMMUNITY.KEYNOTE_NOT_FOUND',
-    title: 'Keynote Not Found',
-    detail: '기조 발언을 찾을 수 없습니다.',
-  },
 } as const satisfies Record<string, AppError>;
