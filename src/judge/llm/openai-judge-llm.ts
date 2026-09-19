@@ -162,7 +162,7 @@ const SYSTEM_PROMPT_ANALYZER = [
   '관계 종류: SUPPORT(뒷받침), ATTACK(반박·부정), QUESTION(질의).',
   '관계의 출발점(from_ref)은 반드시 이번 발언에서 새로 만든 컴포넌트여야 한다.',
   '앞서 제시된 컴포넌트(p로 시작하는 ref)는 도착점(to_ref)으로만 쓸 수 있다.',
-  'needs_fact_check는 검색으로 확인 가능한 사실 주장에만 true로 둔다. 비용이 드는 검증이므로 남발하지 않는다.',
+  'needs_fact_check는 검색으로 확인 가능한 사실 주장에만 true로 둔다. 조금이라도 주관적 해석, 가치판단성 문장이 있다면 전부 false로 둔다.',
   '모든 문장은 한국어로 쓴다.',
 ].join('\n');
 
