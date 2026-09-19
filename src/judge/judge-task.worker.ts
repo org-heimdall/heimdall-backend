@@ -16,6 +16,10 @@ import {
   DebateProcessingStageStatus,
 } from '../debate-chat/debate-chat.types';
 import { JudgeConfig } from './judge.config';
+import {
+  REPORT_ALL_STAGES,
+  StageReportingPolicy,
+} from './judge-stage-reporting';
 import { JudgeTaskRepository } from './judge-task.repository';
 import { JudgeTaskKind, JudgeTaskStatus } from './judge.types';
 import { JudgeTask } from './entities/judge-task.entity';
@@ -36,6 +40,12 @@ export type TaskOutcome = 'COMPLETED' | 'FAILED';
  */
 export interface JudgeTaskHandler {
   readonly kind: JudgeTaskKind;
+
+  /**
+   * 이 종류의 전이 중 무엇을 프론트에 알릴지. 생략하면 전부 알린다.
+   * 로그에는 규칙과 무관하게 모든 전이가 남는다.
+   */
+  readonly stageReporting?: StageReportingPolicy;
 
   /**
    * stage 메시지 앞에 붙는 표시. 턴 단위 작업은 `turn #3`처럼 돌려주고,
@@ -397,19 +407,26 @@ export class JudgeTaskWorker
     const message =
       prefix === null ? `${stage} ${summary}` : `${prefix} ${stage} ${summary}`;
 
-    this.publisher.processingStage({
-      debateId: task.debateId,
-      stage,
-      status,
-      attempt: task.attempt,
-      message,
-      occurredAt: new Date().toISOString(),
-    });
+    // 무엇을 내보낼지는 작업 종류의 규칙이 정한다(처리기가 없는 종류는 기본값).
+    if (this.reportingOf(task.kind).allows(status, task)) {
+      this.publisher.processingStage({
+        debateId: task.debateId,
+        stage,
+        status,
+        attempt: task.attempt,
+        message,
+        occurredAt: new Date().toISOString(),
+      });
+    }
 
-    // 같은 전이를 로그로도 남긴다. 소켓에 붙지 않고 돌려 볼 때 진행을 볼 곳이 여기뿐이다.
+    // 같은 전이를 로그로도 남긴다. 발행하지 않은 전이도 여기에는 남아야 추적할 수 있다.
     this.logger.debug(
       `[${status}] debateId=${task.debateId}, ${message}, attempt=${task.attempt}/${task.maxAttempts}`,
     );
+  }
+
+  private reportingOf(kind: JudgeTaskKind): StageReportingPolicy {
+    return this.handlers.get(kind)?.stageReporting ?? REPORT_ALL_STAGES;
   }
 }
 

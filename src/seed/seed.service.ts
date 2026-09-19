@@ -70,16 +70,17 @@ const MEMBER_SEEDS: (Pick<
   },
 ];
 
-// name이 seedThemes의 멱등 판별 키다.
+// name이 seedThemes의 멱등 판별 키다. 계약상 category로 그대로 나가는 값이라
+// 운영 기준 데이터(SeedThemes·NormalizeThemeNamesToCodes 마이그레이션)와 반드시 같아야 한다.
 const THEME_SEEDS: string[] = [
-  '정치',
-  '경제',
-  '사회',
-  '문화',
-  '스포츠',
-  '일상',
-  '코미디',
-  '기타',
+  'POLITICS',
+  'ECONOMY',
+  'SOCIETY',
+  'CULTURE',
+  'SPORTS',
+  'DAILY',
+  'COMEDY',
+  'ETC',
 ];
 
 @Injectable()

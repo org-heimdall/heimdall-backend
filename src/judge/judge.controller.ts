@@ -11,15 +11,41 @@ import { ApiAuthRequired } from '../common/decorators/api-auth-required.decorato
 import { CurrentMember } from '../common/decorators/current-member.decorator';
 import { ApiErrorResponses } from '../common/exceptions/api-error-responses.decorator';
 import { ErrorCode } from '../common/exceptions/error-code';
+import { DebateDto } from '../debates/dto/debate.dto';
 import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
 import { JudgeService } from './judge.service';
 import { DebateResultDto, JudgmentResultDto } from './dto/debate-result.dto';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
 
-// 계약의 판정 API 3개. 실제 처리는 큐의 worker가 하고, 여기서는 밀어 주고 결과를 읽기만 한다.
+// 계약의 판정 API. 실제 처리는 큐의 worker가 하고, 여기서는 밀어 주고 결과를 읽기만 한다.
 @Controller('debates/:debateId')
 export class JudgeController {
   constructor(private readonly service: JudgeService) {}
+
+  @ApiOperation({
+    summary: '판정 단계로 전환',
+    description:
+      '끝난 토론을 판정 단계(JUDGING)로 옮기고 지금의 토론 상태를 돌려준다. ' +
+      '판정 자체는 비동기라 이 응답은 결과가 아니라 상태다 — 진행 상황은 ' +
+      'debate.processing.stage 이벤트로 오고, 완성된 결과는 GET /debates/:id/result로 읽는다. ' +
+      '이미 판정 중이거나 끝난 토론에 다시 불러도 그대로 200이다.',
+  })
+  @ApiParam({ name: 'debateId', format: 'uuid' })
+  @ApiOkResponse({ type: DebateDto })
+  @ApiErrorResponses(
+    DebateErrorCode.NOT_FOUND,
+    ErrorCode.FORBIDDEN,
+    JudgeErrorCode.NOT_FINALIZED,
+  )
+  @ApiAuthRequired()
+  @Post('judging')
+  @HttpCode(200)
+  async startJudging(
+    @Param('debateId', ParseUUIDPipe) debateId: string,
+    @CurrentMember() memberId: string,
+  ): Promise<DebateDto> {
+    return this.service.startJudging(debateId, memberId);
+  }
 
   @ApiOperation({
     summary: '판정 요청',

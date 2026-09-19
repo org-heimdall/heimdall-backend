@@ -9,7 +9,6 @@ import { CommunityFavorite } from './entities/community-favorite.entity';
 import { ThemeDto } from './dto/theme.dto';
 import { CommunityDto, MAX_PARTICIPANT_PREVIEWS } from './dto/community.dto';
 import { CreateCommunityDto } from './dto/create-community.dto';
-import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { MembersService } from '../members/members.service';
 import { Member } from '../members/entities/member.entity';
@@ -48,11 +47,14 @@ export class CommunitiesService {
     return themes.map((theme) => ThemeDto.from(theme));
   }
 
-  // 커뮤니티 목록 조회. 정렬·페이지·테마 필터는 프론트가 쓰지 않아도 되는 선택 쿼리다.
+  /**
+   * 커뮤니티 목록 조회. 정렬·페이지·테마 필터는 프론트가 쓰지 않아도 되는 선택 쿼리다.
+   * 계약상 쿼리 없이 부른 결과가 곧 전체 목록이므로, size를 주지 않으면 자르지 않는다.
+   */
   async findAll(
     currentMemberId: string,
-    page: number,
-    size: number,
+    page?: number,
+    size?: number,
     sort?: CommunitySort,
     themeId?: string,
   ): Promise<CommunityDto[]> {
@@ -61,9 +63,11 @@ export class CommunitiesService {
     const query = this.communityRepository
       .createQueryBuilder('community')
       .where('community.status = :status', { status: ResourceStatus.NORMAL })
-      .orderBy(column, direction)
-      .skip((page - 1) * size)
-      .take(size);
+      .orderBy(column, direction);
+
+    if (size !== undefined) {
+      query.skip(((page ?? 1) - 1) * size).take(size);
+    }
 
     if (themeId) {
       query.andWhere('community.themeId = :themeId', { themeId });
@@ -202,50 +206,6 @@ export class CommunitiesService {
       { id: communityId, status: ResourceStatus.NORMAL },
       { state: CommunityState.ACTIVE },
     );
-  }
-
-  // 특정 참여자의 기조 발언 조회 (미작성이면 404)
-  async getMemberKeynote(
-    communityId: string,
-    memberId: string,
-  ): Promise<KeynoteDto> {
-    const participant = await this.memberCommunitiesService.findOne(
-      memberId,
-      communityId,
-    );
-    if (!participant) {
-      throw new GeneralException(CommunityErrorCode.PARTICIPANT_NOT_FOUND);
-    }
-
-    if (participant.opinion === null) {
-      throw new GeneralException(CommunityErrorCode.KEYNOTE_NOT_FOUND);
-    }
-
-    return {
-      opinion: participant.opinion,
-      reasons: participant.reasons ?? [],
-    };
-  }
-
-  // 나의 기조 발언 작성/수정 (없으면 참여+작성)
-  async upsertMyKeynote(
-    communityId: string,
-    memberId: string,
-    keynoteDto: KeynoteDto,
-  ): Promise<KeynoteDto> {
-    await this.findOneOrThrow(communityId);
-
-    const saved = await this.memberCommunitiesService.upsertKeynote(
-      memberId,
-      communityId,
-      keynoteDto.opinion,
-      keynoteDto.reasons,
-    );
-
-    return {
-      opinion: saved.opinion!,
-      reasons: saved.reasons ?? [],
-    };
   }
 
   /**

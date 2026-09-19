@@ -6,6 +6,10 @@ import {
   DebateProcessingStageStatus,
 } from '../debate-chat/debate-chat.types';
 import { JudgeConfig } from './judge.config';
+import {
+  REPORT_FIRST_ATTEMPT_START_ONLY,
+  StageReportingPolicy,
+} from './judge-stage-reporting';
 import { JudgeTaskRepository } from './judge-task.repository';
 import {
   JudgeTaskQueue,
@@ -21,6 +25,7 @@ describe('JudgeTaskWorker', () => {
 
   let handler: {
     kind: JudgeTaskKind;
+    stageReporting?: StageReportingPolicy;
     describe: jest.Mock;
     handle: jest.Mock;
   };
@@ -220,5 +225,47 @@ describe('JudgeTaskWorker', () => {
     await worker.process(job);
 
     expect(tasks.acquire).not.toHaveBeenCalled();
+  });
+
+  describe('stage 공개 규칙', () => {
+    // 사실 검증처럼 실패가 사용자에게 의미 없는 작업의 규칙.
+    beforeEach(() => {
+      handler.stageReporting = REPORT_FIRST_ATTEMPT_START_ONLY;
+    });
+
+    it('첫 시도의 STARTED만 발행하고 완료는 발행하지 않는다', async () => {
+      await worker.process(job);
+
+      expect(tasks.complete).toHaveBeenCalled();
+      expect(stages()).toEqual([
+        [DebateProcessingStageStatus.STARTED, 1, 'turn #2 ANALYZER 시작'],
+      ]);
+    });
+
+    it('재시도·최종 실패는 발행하지 않는다', async () => {
+      handler.handle.mockRejectedValue(new Error('rate limit'));
+
+      await expect(worker.process(job)).rejects.toThrow('rate limit');
+
+      expect(tasks.release).toHaveBeenCalled();
+      expect(
+        stages().map(([status]: [DebateProcessingStageStatus]) => status),
+      ).not.toContain(DebateProcessingStageStatus.RETRYING);
+    });
+
+    it('두 번째 시도의 STARTED는 발행하지 않는다', async () => {
+      tasks.acquire.mockResolvedValue(
+        buildTask({
+          status: JudgeTaskStatus.PROCESSING,
+          attempt: 2,
+          requestId: 'request-uuid',
+        }),
+      );
+
+      await worker.process(job);
+
+      expect(handler.handle).toHaveBeenCalledTimes(1);
+      expect(publisher.processingStage).not.toHaveBeenCalled();
+    });
   });
 });

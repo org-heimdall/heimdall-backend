@@ -1,5 +1,4 @@
 import { CommunityMemberType } from '../../communities/communities.enums';
-import { KeynoteDto } from '../../communities/dto/keynote.dto';
 import { Member } from '../entities/member.entity';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -89,9 +88,4 @@ export class MemberPreviewDto {
       memberType,
     };
   }
-}
-
-export class MemberProfileDto {
-  memberPreviewDto: MemberPreviewDto;
-  keynoteDto: KeynoteDto;
 }

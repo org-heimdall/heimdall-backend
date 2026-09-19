@@ -14,9 +14,17 @@ import { TokenService } from '../auth/token.service';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { createValidationPipe } from '../common/pipes/validation-pipe.factory';
 import {
+  ClosableSocket,
+  describeClose,
+  describePeer,
+  describeUptime,
+  openSession,
+} from '../common/ws/ws-close';
+import {
   CLOSE_POLICY_VIOLATION,
   sendEvent,
   WsServerEvent,
+  wsEvent,
 } from '../common/ws/ws-event';
 import { parseBearerToken, parseRoomId } from '../common/ws/ws-handshake';
 import { DEBATE_CHAT_WS_PATH } from '../common/ws/ws.config';
@@ -38,7 +46,7 @@ import {
 } from './debate-chat.types';
 
 // 인증·경로 검증이 끝난 뒤 소켓에 붙여 두는 접속 컨텍스트.
-export interface DebateChatSocket extends WebSocket {
+export interface DebateChatSocket extends ClosableSocket {
   debateId?: string;
   memberId?: string;
 }
@@ -71,6 +79,7 @@ export class DebateChatGateway
     client: DebateChatSocket,
     request: IncomingMessage,
   ): Promise<void> {
+    openSession(client, request);
     try {
       const debateId = parseRoomId(request.url, PATH_PATTERN);
       client.memberId = this.tokenService.verifyAccessToken(
@@ -80,23 +89,21 @@ export class DebateChatGateway
       this.publisher.join(debateId, client);
 
       const snapshot = await this.service.restore(debateId);
-      this.send(client, {
-        type: DebateChatEvent.CONNECTION_RESTORED,
-        payload: snapshot,
-      });
+      // 접속마다 한 번뿐인 이벤트라 id를 파생하지 않는다(재접속은 새 사실이다).
+      this.send(client, wsEvent(DebateChatEvent.CONNECTION_RESTORED, snapshot));
       this.logger.log(
-        `접속: debateId=${debateId}, memberId=${client.memberId}, room=${this.publisher.size(debateId)}`,
+        `접속: debateId=${debateId}, memberId=${client.memberId}, 인원=${this.publisher.size(debateId)}, ${describePeer(client)}`,
       );
     } catch (error) {
       const appError = toAppError(error, this.logger);
-      this.send(client, {
-        type: DebateChatEvent.ERROR,
-        payload: {
+      this.send(
+        client,
+        wsEvent(DebateChatEvent.ERROR, {
           debateId: client.debateId,
           code: appError.code,
           message: appError.detail,
-        },
-      });
+        }),
+      );
       this.publisher.leave(client);
       client.close(CLOSE_POLICY_VIOLATION, appError.code);
     }
@@ -106,7 +113,7 @@ export class DebateChatGateway
     this.publisher.leave(client);
     if (client.debateId) {
       this.logger.log(
-        `종료: debateId=${client.debateId}, memberId=${client.memberId}, room=${this.publisher.size(client.debateId)}`,
+        `종료: debateId=${client.debateId}, memberId=${client.memberId}, 인원=${this.publisher.size(client.debateId)}, ${describeClose(client)}, ${describePeer(client)}, ${describeUptime(client)}`,
       );
     }
   }
@@ -153,16 +160,18 @@ export class DebateChatGateway
     if (result.status === 'APPENDED') {
       this.publisher.messageCreated(debateId, result.message, client);
     }
-    return {
-      type: DebateChatEvent.TURN_MESSAGE_ACK,
-      payload: {
+    // 명령 하나에 ack 하나라 commandId에서 파생한다 — 재전송하면 같은 ack id로 다시 온다.
+    return wsEvent(
+      DebateChatEvent.TURN_MESSAGE_ACK,
+      {
         debateId,
         commandId: command.id,
         clientMessageId: command.clientMessageId,
         status: result.status,
         message: result.message,
       },
-    };
+      [command.id],
+    );
   }
 
   // handleConnection이 끝난 소켓만 명령을 보낼 수 있으므로 컨텍스트는 항상 있다.
@@ -176,7 +185,10 @@ export class DebateChatGateway
     return { debateId: client.debateId, memberId: client.memberId };
   }
 
-  private send<T>(client: WebSocket, event: WsServerEvent<T>): void {
+  private send<T extends object>(
+    client: WebSocket,
+    event: WsServerEvent<T>,
+  ): void {
     sendEvent(client, event);
   }
 }

@@ -113,34 +113,6 @@ describe('MemberCommunitiesService', () => {
     });
   });
 
-  describe('upsertKeynote', () => {
-    // 신규/기존 여부와 무관하게 (memberId, communityId) 유니크로 opinion/reasons를 upsert (원자적)
-    it('유니크 충돌 경로로 upsert하고 재조회 없이 제출한 값을 그대로 반환한다', async () => {
-      const result = await service.upsertKeynote(
-        'member-uuid',
-        'community-uuid',
-        '수정된 의견',
-        ['새이유'],
-      );
-
-      expect(repository.upsert).toHaveBeenCalledWith(
-        {
-          memberId: 'member-uuid',
-          communityId: 'community-uuid',
-          opinion: '수정된 의견',
-          reasons: ['새이유'],
-        },
-        ['memberId', 'communityId'],
-      );
-      // 재조회(findOneBy/findOneByOrFail)나 읽기-수정-쓰기(save) 경로를 타지 않는다
-      expect(repository.findOneBy).not.toHaveBeenCalled();
-      expect(repository.findOneByOrFail).not.toHaveBeenCalled();
-      expect(repository.save).not.toHaveBeenCalled();
-      expect(result.opinion).toBe('수정된 의견');
-      expect(result.reasons).toEqual(['새이유']);
-    });
-  });
-
   describe('updateKeynote', () => {
     it('참여 행이 없으면 null을 돌려준다(호출자가 권한 에러로 옮긴다)', async () => {
       repository.findOneBy.mockResolvedValue(null);
