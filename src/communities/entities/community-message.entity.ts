@@ -10,12 +10,22 @@ import { Member } from '../../members/entities/member.entity';
 import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
 import { Community } from './community.entity';
 
-// 계약의 CommunityMessage.messageType 문자열 집합. 값을 바꾸면 프론트 렌더링 분기가 깨진다.
-// 사용자가 보낸 일반 메시지는 TEXT, 나머지는 서버가 만드는 시스템 메시지다(후속 이슈).
+/**
+ * 계약의 CommunityMessage.messageType 문자열 집합. 값을 바꾸면 프론트 렌더링 분기가 깨진다.
+ * 계약의 다른 열거형과 같이 SCREAMING_SNAKE_CASE로 쓴다.
+ *
+ * 사용자가 보낸 일반 메시지는 TEXT, 나머지는 서버가 만드는 시스템 메시지다. DEBATE_* 네 가지는
+ * 프론트가 각각 다른 카드로 그리는 토론 알림이며, 이 값을 실제로 만들어 넣는 것은 후속 작업이다
+ * (지금은 계약에 맞춘 값 집합만 정의한다).
+ */
 export enum CommunityChatMessageType {
-  TEXT = 'text',
-  SYSTEM = 'system',
-  OPINION_NOTICE = 'opinionNotice',
+  TEXT = 'TEXT',
+  SYSTEM = 'SYSTEM',
+  OPINION_NOTICE = 'OPINION_NOTICE',
+  DEBATE_STARTED = 'DEBATE_STARTED',
+  DEBATE_RESULT = 'DEBATE_RESULT',
+  DEBATE_FORFEIT = 'DEBATE_FORFEIT',
+  DEBATE_TIMEOUT = 'DEBATE_TIMEOUT',
 }
 
 /**

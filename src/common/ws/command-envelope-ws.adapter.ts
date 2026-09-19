@@ -2,14 +2,19 @@ import { WsAdapter } from '@nestjs/platform-ws';
 import { MessageMappingProperties } from '@nestjs/websockets';
 import * as http from 'node:http';
 import { EMPTY, Observable } from 'rxjs';
+import { WebSocketServer } from 'ws';
+import { ClosableSocket } from './ws-close';
+import { installHeartbeat } from './ws-heartbeat';
 
 /**
  * 계약의 명령 봉투 { id, type, payload, ... }를 Nest 핸들러에 연결하고,
  * 한 포트에 올라간 여러 게이트웨이를 경로 접두사로 가른다.
  *
  * 기본 WsAdapter는 (1) { event, data }를 기대하며 data만 핸들러에 넘기고,
- * (2) upgrade 요청을 `pathname === wsServer.path` 완전 일치로만 라우팅한다.
- * 계약 경로는 /debates/:id/chat처럼 동적이라 완전 일치로는 매칭되지 않으므로 두 지점만 바꾼다.
+ * (2) upgrade 요청을 `pathname === wsServer.path` 완전 일치로만 라우팅하며,
+ * (3) close 콜백을 인자 없이 불러 종료 원인(code·reason)을 게이트웨이에 전달하지 않으며,
+ * (4) ping/pong keepalive가 없어 유휴 연결이 조용히 끊겨도 서버가 알지 못한다.
+ * 계약 경로는 /debates/:id/chat처럼 동적이라 완전 일치로는 매칭되지 않으므로 이 네 지점만 바꾼다.
  */
 export class CommandEnvelopeWsAdapter extends WsAdapter {
   // type으로 핸들러를 찾고 봉투 전체를 넘긴다.
@@ -32,6 +37,25 @@ export class CommandEnvelopeWsAdapter extends WsAdapter {
     } catch {
       return EMPTY;
     }
+  }
+
+  // 이 어댑터가 만드는 모든 ws 서버(포트당 게이트웨이마다 하나)에 keepalive를 건다.
+  create(port: number, options?: Record<string, unknown>): unknown {
+    const server = super.create(port, options) as WebSocketServer;
+    installHeartbeat(server);
+    return server;
+  }
+
+  /**
+   * 기본 구현은 close 리스너로 콜백을 그대로 달아, Nest가 인자를 버린 콜백만 남는다.
+   * 종료 원인을 소켓에 적어 둔 뒤 콜백을 불러, handleDisconnect가 describeClose로 읽게 한다.
+   */
+  bindClientDisconnect(client: ClosableSocket, callback: () => void): void {
+    client.on('close', (code: number, reason: Buffer) => {
+      // keepalive가 끊은 경우엔 이미 원인이 적혀 있다 — 그 쪽이 1006보다 정확하다.
+      client.closeInfo ??= { code, reason: reason.toString() };
+      callback();
+    });
   }
 
   /**

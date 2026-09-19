@@ -9,6 +9,7 @@ import {
   FactCheckSource,
   VerificationStatus,
 } from './judge.types';
+import { REPORT_FIRST_ATTEMPT_START_ONLY } from './judge-stage-reporting';
 import { JudgeTaskHandler, NonRetryableTaskError } from './judge-task.worker';
 import { JudgeResultRepository } from './judge-result.repository';
 import { DebateArgumentComponent } from './entities/debate-argument.entity';
@@ -41,11 +42,15 @@ export class FactCheckSourceValidationError extends Error {
  *
  * 여기서 최종 실패(FAILED)해도 판정은 막히지 않는다 — 검색이 안 됐다는 이유로 토론 전체가
  * 영영 판정 불가가 되면 안 되기 때문이다. 그 판단은 판정 조건 쪽에 있다.
+ *
+ * 같은 이유로 프론트에는 첫 시도의 "시작"만 알린다. 재시도·최종 실패는 사용자가 할 수 있는
+ * 일이 없는 내부 사정이므로 백엔드 로그에만 남긴다.
  */
 @Injectable()
 export class FactCheckerService implements JudgeTaskHandler {
   private readonly logger = new Logger(FactCheckerService.name);
   readonly kind = JudgeTaskKind.FACT_CHECK;
+  readonly stageReporting = REPORT_FIRST_ATTEMPT_START_ONLY;
 
   constructor(
     @Inject(FACT_CHECKER)

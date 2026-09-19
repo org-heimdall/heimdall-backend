@@ -9,7 +9,6 @@ import {
   HttpCode,
   Put,
   ParseUUIDPipe,
-  DefaultValuePipe,
 } from '@nestjs/common';
 import { ParsePositiveIntPipe } from '../common/pipes/parse-positive-int.pipe';
 import {
@@ -27,7 +26,6 @@ import { CommunityDto } from './dto/community.dto';
 import { ThemeDto } from './dto/theme.dto';
 import { CommunityMemberDto } from './dto/community-member.dto';
 import { UpdateDebateIntentDto } from './dto/update-debate-intent.dto';
-import { KeynoteDto } from './dto/keynote.dto';
 import { CommunityMemberType, CommunitySort } from './communities.enums';
 import { CommunityErrorCode } from './exceptions/community-error-code';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
@@ -57,14 +55,27 @@ export class CommunitiesController {
   @ApiOperation({
     summary: '커뮤니티 목록 조회',
     description:
-      '정렬·페이지·테마 필터는 모두 선택이며, 쿼리 없이 부르면 최신순 첫 페이지를 돌려준다. ' +
+      '정렬·페이지·테마 필터는 모두 선택이며, 쿼리 없이 부르면 최신순 전체 목록을 돌려준다. ' +
+      'size를 주면 그 크기로 잘라 page번째 묶음만 돌려준다. ' +
       'isOwnedByCurrentUser/isJoined는 액세스 토큰의 회원 기준이다.',
   })
   @ApiOkResponse({ type: [CommunityDto] })
   @ApiAuthRequired()
   @Get()
-  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
-  @ApiQuery({ name: 'size', required: false, type: Number, example: 10 })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    example: 1,
+    description: 'size와 함께 줄 때만 의미가 있다(기본 1).',
+  })
+  @ApiQuery({
+    name: 'size',
+    required: false,
+    type: Number,
+    example: 10,
+    description: '생략하면 자르지 않고 전체를 돌려준다.',
+  })
   @ApiQuery({
     name: 'sort',
     required: false,
@@ -81,8 +92,8 @@ export class CommunitiesController {
   })
   async findAll(
     @CurrentMember() memberId: string,
-    @Query('page', new DefaultValuePipe(1), ParsePositiveIntPipe) page: number,
-    @Query('size', new DefaultValuePipe(10), ParsePositiveIntPipe) size: number,
+    @Query('page', new ParsePositiveIntPipe({ optional: true })) page?: number,
+    @Query('size', new ParsePositiveIntPipe({ optional: true })) size?: number,
     @Query('sort') sort?: CommunitySort,
     @Query('themeId', new ParseUUIDPipe({ optional: true })) themeId?: string,
   ): Promise<CommunityDto[]> {
@@ -238,44 +249,6 @@ export class CommunitiesController {
     );
 
     this.publisher.memberDebateIntentChanged({ communityId, member });
-  }
-
-  @ApiOperation({
-    summary: '커뮤니티 참여자의 기조 발언 조회',
-  })
-  @ApiParam({ name: 'communityId', format: 'uuid' })
-  @ApiParam({ name: 'memberId', format: 'uuid' })
-  @ApiOkResponse({ type: KeynoteDto })
-  @ApiErrorResponses(
-    CommunityErrorCode.PARTICIPANT_NOT_FOUND,
-    CommunityErrorCode.KEYNOTE_NOT_FOUND,
-  )
-  @Get(':communityId/keynotes/:memberId')
-  async getMemberKeynote(
-    @Param('communityId', ParseUUIDPipe) communityId: string,
-    @Param('memberId', ParseUUIDPipe) memberId: string,
-  ): Promise<KeynoteDto> {
-    return this.communitiesService.getMemberKeynote(communityId, memberId);
-  }
-
-  @ApiOperation({
-    summary: '커뮤니티에 대한 나의 기조 발언 작성/수정',
-  })
-  @ApiParam({ name: 'communityId', format: 'uuid' })
-  @ApiOkResponse({ type: KeynoteDto })
-  @ApiErrorResponses(CommunityErrorCode.NOT_FOUND)
-  @ApiAuthRequired()
-  @Put(':communityId/keynotes/me')
-  async upsertMyKeynote(
-    @Param('communityId', ParseUUIDPipe) communityId: string,
-    @CurrentMember() memberId: string,
-    @Body() request: KeynoteDto,
-  ): Promise<KeynoteDto> {
-    return this.communitiesService.upsertMyKeynote(
-      communityId,
-      memberId,
-      request,
-    );
   }
 
   @ApiOperation({
