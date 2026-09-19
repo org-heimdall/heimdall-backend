@@ -6,6 +6,10 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { validationExceptionFactory } from './common/exceptions/validation-exception.factory';
 import { CommandEnvelopeWsAdapter } from './common/ws/command-envelope-ws.adapter';
+import { Server } from 'node:http';
+
+// 클라이언트(Dio·OkHttp)의 풀 유지 시간보다 길게 잡는다.
+const KEEP_ALIVE_TIMEOUT_MS = 65_000;
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -34,6 +38,17 @@ async function bootstrap() {
   // Swagger 문서 생성 및 엔드포인트 설정
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api-docs', app, document); // 'localhost:3000/api-docs'로 접속 가능
+
+  /*
+   * Node의 keep-alive 타임아웃 기본값은 5초라, 클라이언트가 커넥션 풀에 5초 넘게 묵혀 둔
+   * 연결을 재사용하는 순간 서버가 막 닫은 소켓에 요청이 실려 응답 없이 멈춘다
+   * (Dio의 receive timeout, OkHttp의 unexpected end of stream으로 나타난다).
+   * 끊는 쪽을 항상 클라이언트로 만들기 위해 서버 쪽을 넉넉히 늘린다.
+   * headersTimeout은 keepAliveTimeout보다 커야 같은 경합이 헤더 단계에서 재발하지 않는다.
+   */
+  const httpServer = app.getHttpServer() as Server;
+  httpServer.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+  httpServer.headersTimeout = KEEP_ALIVE_TIMEOUT_MS + 1_000;
 
   await app.listen(process.env.PORT ?? 3000);
 }

@@ -8,11 +8,17 @@ import {
   WebSocketGateway,
 } from '@nestjs/websockets';
 import { IncomingMessage } from 'node:http';
-import { WebSocket } from 'ws';
 import { AuthErrorCode } from '../auth/exceptions/auth-error-code';
 import { TokenService } from '../auth/token.service';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { createValidationPipe } from '../common/pipes/validation-pipe.factory';
+import {
+  ClosableSocket,
+  describeClose,
+  describePeer,
+  describeUptime,
+  openSession,
+} from '../common/ws/ws-close';
 import {
   CLOSE_POLICY_VIOLATION,
   sendEvent,
@@ -38,7 +44,7 @@ import {
 } from './community-chat.types';
 
 // 인증·경로 검증이 끝난 뒤 소켓에 붙여 두는 접속 컨텍스트.
-export interface CommunityChatSocket extends WebSocket {
+export interface CommunityChatSocket extends ClosableSocket {
   communityId?: string;
   memberId?: string;
 }
@@ -71,6 +77,7 @@ export class CommunityChatGateway
     client: CommunityChatSocket,
     request: IncomingMessage,
   ): Promise<void> {
+    openSession(client, request);
     try {
       const communityId = parseRoomId(request.url, PATH_PATTERN);
       client.memberId = this.tokenService.verifyAccessToken(
@@ -82,7 +89,7 @@ export class CommunityChatGateway
 
       await this.replay(client, communityId);
       this.logger.log(
-        `접속: communityId=${communityId}, memberId=${client.memberId}, room=${this.publisher.size(communityId)}`,
+        `접속: communityId=${communityId}, memberId=${client.memberId}, 인원=${this.publisher.size(communityId)}, ${describePeer(client)}`,
       );
     } catch (error) {
       const appError = toAppError(error, this.logger);
@@ -103,7 +110,7 @@ export class CommunityChatGateway
     this.publisher.leave(client);
     if (client.communityId) {
       this.logger.log(
-        `종료: communityId=${client.communityId}, memberId=${client.memberId}, room=${this.publisher.size(client.communityId)}`,
+        `종료: communityId=${client.communityId}, memberId=${client.memberId}, 인원=${this.publisher.size(client.communityId)}, ${describeClose(client)}, ${describePeer(client)}, ${describeUptime(client)}`,
       );
     }
   }

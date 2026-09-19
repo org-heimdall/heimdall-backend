@@ -14,6 +14,13 @@ import { TokenService } from '../auth/token.service';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { createValidationPipe } from '../common/pipes/validation-pipe.factory';
 import {
+  ClosableSocket,
+  describeClose,
+  describePeer,
+  describeUptime,
+  openSession,
+} from '../common/ws/ws-close';
+import {
   CLOSE_POLICY_VIOLATION,
   sendEvent,
   WsServerEvent,
@@ -39,7 +46,7 @@ import {
 } from './debate-chat.types';
 
 // 인증·경로 검증이 끝난 뒤 소켓에 붙여 두는 접속 컨텍스트.
-export interface DebateChatSocket extends WebSocket {
+export interface DebateChatSocket extends ClosableSocket {
   debateId?: string;
   memberId?: string;
 }
@@ -72,6 +79,7 @@ export class DebateChatGateway
     client: DebateChatSocket,
     request: IncomingMessage,
   ): Promise<void> {
+    openSession(client, request);
     try {
       const debateId = parseRoomId(request.url, PATH_PATTERN);
       client.memberId = this.tokenService.verifyAccessToken(
@@ -84,7 +92,7 @@ export class DebateChatGateway
       // 접속마다 한 번뿐인 이벤트라 id를 파생하지 않는다(재접속은 새 사실이다).
       this.send(client, wsEvent(DebateChatEvent.CONNECTION_RESTORED, snapshot));
       this.logger.log(
-        `접속: debateId=${debateId}, memberId=${client.memberId}, room=${this.publisher.size(debateId)}`,
+        `접속: debateId=${debateId}, memberId=${client.memberId}, 인원=${this.publisher.size(debateId)}, ${describePeer(client)}`,
       );
     } catch (error) {
       const appError = toAppError(error, this.logger);
@@ -105,7 +113,7 @@ export class DebateChatGateway
     this.publisher.leave(client);
     if (client.debateId) {
       this.logger.log(
-        `종료: debateId=${client.debateId}, memberId=${client.memberId}, room=${this.publisher.size(client.debateId)}`,
+        `종료: debateId=${client.debateId}, memberId=${client.memberId}, 인원=${this.publisher.size(client.debateId)}, ${describeClose(client)}, ${describePeer(client)}, ${describeUptime(client)}`,
       );
     }
   }
