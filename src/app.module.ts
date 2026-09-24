@@ -16,6 +16,7 @@ import { JudgeModule } from './judge/judge.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { buildTypeOrmOptions } from './common/database/typeorm-options';
+import { MetricsModule } from './common/metrics/metrics.module';
 import * as Joi from 'joi';
 
 @Module({
@@ -122,6 +123,9 @@ import * as Joi from 'joi';
 
         // 토론 초대 응답 제한 시간. 프론트의 5초 대기 화면과 같은 값이어야 한다.
         DEBATE_INVITATION_TTL_SECONDS: Joi.number().integer().min(1).default(5),
+
+        // Prometheus scrape 전용 포트. API 포트와 분리해 보안 그룹에서 관측 서버만 허용한다.
+        METRICS_PORT: Joi.number().integer().min(1).default(9100),
       }),
     }),
     TypeOrmModule.forRootAsync({
@@ -145,6 +149,7 @@ import * as Joi from 'joi';
     DebateChatModule,
     CommunityChatModule,
     JudgeModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [

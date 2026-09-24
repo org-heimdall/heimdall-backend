@@ -1,0 +1,26 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: ${LOKI_URL}/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: docker
+          __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      # json-file 드라이버 포맷에서 원본 로그 라인·stream(stdout/stderr)·타임스탬프를 복원한다.
+      - docker: {}
+      # 파일 경로에서 컨테이너 ID를 뽑아 컨테이너별로 로그를 구분한다.
+      - regex:
+          source: filename
+          expression: '^/var/lib/docker/containers/(?P<container_id>[0-9a-f]{12})'
+      - labels:
+          container_id:
