@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { validationExceptionFactory } from './common/exceptions/validation-exception.factory';
 import { CommandEnvelopeWsAdapter } from './common/ws/command-envelope-ws.adapter';
+import { WsMetrics } from './common/metrics/ws.metrics';
 import { Server } from 'node:http';
 
 // 클라이언트(Dio·OkHttp)의 풀 유지 시간보다 길게 잡는다.
@@ -16,7 +17,10 @@ async function bootstrap() {
   // 종료 시그널에서 WebSocket 서버까지 정리되도록 한다.
   app.enableShutdownHooks();
   // 계약의 명령 봉투 { id, type, payload }를 게이트웨이 핸들러에 연결한다.
-  app.useWebSocketAdapter(new CommandEnvelopeWsAdapter(app));
+  // 연결 수·명령 처리 메트릭도 이 어댑터가 기록한다.
+  app.useWebSocketAdapter(
+    new CommandEnvelopeWsAdapter(app, app.get(WsMetrics)),
+  );
 
   app.useGlobalPipes(
     new ValidationPipe({

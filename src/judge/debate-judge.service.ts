@@ -163,6 +163,7 @@ export class DebateJudgeService implements JudgeTaskHandler {
       sideBNickname: debate.opponentNickname ?? '',
       turns: await this.loadTranscript(debate, speakers),
       ...(await this.loadArgumentGraph(debate.id)),
+      logContext: { debateId: debate.id },
     });
 
     // 범위를 벗어난 점수로 총점을 계산하면 결과 전체가 무의미해진다. 거부되면 재시도로 넘어간다.

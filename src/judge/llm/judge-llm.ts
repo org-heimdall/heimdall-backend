@@ -14,6 +14,33 @@ export const DEBATE_JUDGE = Symbol('DEBATE_JUDGE');
 // 시간 초과로 아무 말도 하지 않은 차례. 판정에는 "넘겼다"는 사실이 필요하다.
 export const SILENT_TURN_PLACEHOLDER = '(발언 없음)';
 
+/*
+ * LLM 호출 로그에 싣는 단계별 도메인 컨텍스트. 프롬프트에는 들어가지 않고 LlmCallLogger로만 간다.
+ * 필드 순서가 로그 출력 순서이므로 서비스는 아래 선언 순서대로 채운다.
+ * (LlmLogContext에 대입하려면 index signature가 있어야 해서 interface가 아니라 type으로 둔다.)
+ */
+
+// Analyzer는 턴 1개 단위라 turnIds에는 하나만 들어간다. heimdall_ai와 형식을 맞추려고 배열로 둔다.
+export type AnalyzerLogContext = {
+  debateId: string;
+  turnIds: string[];
+  phase: DebatePhase;
+  round: number;
+};
+
+// FactCheck는 Gemini 1회 호출이라 stage는 grounded_check 하나이고 targets에는 컴포넌트 id 1개가 들어간다.
+export type FactCheckLogContext = {
+  stage: 'grounded_check';
+  debateId: string;
+  phase: DebatePhase;
+  round: number;
+  targets: string[];
+};
+
+export type DebateJudgeLogContext = {
+  debateId: string;
+};
+
 // ---------------------------------------------------------------- Argument Analyzer
 
 export interface AnalyzerTurn {
@@ -40,6 +67,7 @@ export interface AnalyzerRequest {
   topic: string;
   turn: AnalyzerTurn;
   previousComponents: AnalyzerKnownComponent[];
+  logContext: AnalyzerLogContext;
 }
 
 export interface AnalyzedComponent {
@@ -77,6 +105,7 @@ export interface FactCheckRequest {
   statement: string;
   // 발언이 나온 맥락. 대명사·생략된 주어를 복원하는 데 쓴다.
   context: string;
+  logContext: FactCheckLogContext;
 }
 
 export interface FactCheckOutcome {
@@ -133,6 +162,7 @@ export interface DebateJudgeRequest {
   turns: JudgeTranscriptTurn[];
   components: JudgeComponentSummary[];
   relations: JudgeRelationSummary[];
+  logContext: DebateJudgeLogContext;
 }
 
 // 편 하나의 판정. 총점과 승자는 여기에 없다 — 서버가 계산한다.

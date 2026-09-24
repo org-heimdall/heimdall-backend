@@ -12,6 +12,7 @@ import {
 import { REPORT_FIRST_ATTEMPT_START_ONLY } from './judge-stage-reporting';
 import { JudgeTaskHandler, NonRetryableTaskError } from './judge-task.worker';
 import { JudgeResultRepository } from './judge-result.repository';
+import { resolveTurnSlot } from './judge-turn-slot';
 import { DebateArgumentComponent } from './entities/debate-argument.entity';
 import { JudgeTask } from './entities/judge-task.entity';
 import { FACT_CHECKER } from './llm/judge-llm';
@@ -70,11 +71,19 @@ export class FactCheckerService implements JudgeTaskHandler {
   async handle(task: JudgeTask): Promise<void> {
     const component = await this.findComponentOrThrow(task.targetId);
     const debate = await this.debates.findOneOrThrow(task.debateId);
+    const slot = resolveTurnSlot(debate, component.turnSequence);
 
     const outcome = await this.factChecker.check({
       topic: debate.topic,
       statement: component.statement,
       context: await this.loadContext(component),
+      logContext: {
+        stage: 'grounded_check',
+        debateId: task.debateId,
+        phase: slot.phase,
+        round: slot.round,
+        targets: [component.id],
+      },
     });
 
     // 지어낸 출처·검색 없는 판정을 거른다. 거부되면 예외가 올라가 worker가 재시도한다.

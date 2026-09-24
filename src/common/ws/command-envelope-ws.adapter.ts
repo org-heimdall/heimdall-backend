@@ -1,10 +1,21 @@
+import { INestApplicationContext } from '@nestjs/common';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { MessageMappingProperties } from '@nestjs/websockets';
 import * as http from 'node:http';
-import { EMPTY, Observable } from 'rxjs';
-import { WebSocketServer } from 'ws';
+import { performance } from 'node:perf_hooks';
+import { EMPTY, finalize, Observable, tap } from 'rxjs';
+import { WebSocket, WebSocketServer } from 'ws';
+import {
+  UNKNOWN_COMMAND_TYPE,
+  WsCommandOutcome,
+  WsMetrics,
+} from '../metrics/ws.metrics';
 import { ClosableSocket } from './ws-close';
+import { isCommandFailed } from './ws-command-outcome';
 import { installHeartbeat } from './ws-heartbeat';
+
+// 게이트웨이 path를 알 수 없을 때의 gateway label.
+const UNKNOWN_GATEWAY = 'unknown';
 
 /**
  * 계약의 명령 봉투 { id, type, payload, ... }를 Nest 핸들러에 연결하고,
@@ -15,34 +26,82 @@ import { installHeartbeat } from './ws-heartbeat';
  * (3) close 콜백을 인자 없이 불러 종료 원인(code·reason)을 게이트웨이에 전달하지 않으며,
  * (4) ping/pong keepalive가 없어 유휴 연결이 조용히 끊겨도 서버가 알지 못한다.
  * 계약 경로는 /debates/:id/chat처럼 동적이라 완전 일치로는 매칭되지 않으므로 이 네 지점만 바꾼다.
+ * 모든 연결·명령이 이곳을 지나므로 WS 메트릭(연결 수·명령 수·처리 시간)도 여기서 기록한다.
  */
 export class CommandEnvelopeWsAdapter extends WsAdapter {
-  // type으로 핸들러를 찾고 봉투 전체를 넘긴다.
-  // JSON이 아니거나 type에 맞는 핸들러가 없으면 기본 어댑터와 같이 무시한다.
+  // 소켓이 어느 게이트웨이(path) 소속인지. 메시지 핸들러는 소켓만 알 수 있어 연결 시점에 적어 둔다.
+  private readonly gatewayOfSocket = new WeakMap<WebSocket, string>();
+
+  constructor(
+    app: INestApplicationContext,
+    private readonly metrics: WsMetrics,
+  ) {
+    super(app);
+  }
+
+  /**
+   * type으로 핸들러를 찾고 봉투 전체를 넘긴다.
+   * JSON이 아니거나 type에 맞는 핸들러가 없으면 기본 어댑터와 같이 무시하되 type=unknown으로 센다.
+   *
+   * 처리 시간은 핸들러 호출 직전부터 반환 Observable이 끝날 때(완료·에러·연결 종료로 인한 구독 해제)까지다.
+   * 핸들러 예외는 WsProxy가 삼켜 Observable이 정상 완료되므로, 예외 필터가 남긴 표식으로 error를 가른다.
+   * buffer는 ws의 MessageEvent라(rxjs fromEvent가 addEventListener로 구독) target이 보낸 소켓이다.
+   */
   bindMessageHandler(
-    buffer: { data: string | Buffer },
+    buffer: { data: string | Buffer; target?: WebSocket },
     handlersMap: Map<string, MessageMappingProperties>,
     transform: (data: unknown) => Observable<unknown>,
   ): Observable<unknown> {
+    const startedAt = performance.now();
+    const gateway =
+      (buffer.target && this.gatewayOfSocket.get(buffer.target)) ??
+      UNKNOWN_GATEWAY;
+
+    const message = parseEnvelope(buffer.data);
+    const handler =
+      typeof message?.type === 'string'
+        ? handlersMap.get(message.type)
+        : undefined;
+    if (!message || !handler) {
+      this.recordCommand(gateway, UNKNOWN_COMMAND_TYPE, 'error', startedAt);
+      return EMPTY;
+    }
+
+    const type = handler.message as string;
+    let errored = false;
     try {
-      const message = JSON.parse(buffer.data.toString()) as { type?: string };
-      const handler =
-        typeof message.type === 'string'
-          ? handlersMap.get(message.type)
-          : undefined;
-      if (!handler) {
-        return EMPTY;
-      }
-      return transform(handler.callback(message));
+      return transform(handler.callback(message)).pipe(
+        tap({ error: () => (errored = true) }),
+        finalize(() =>
+          this.recordCommand(
+            gateway,
+            type,
+            errored || isCommandFailed(message) ? 'error' : 'ok',
+            startedAt,
+          ),
+        ),
+      );
     } catch {
+      this.recordCommand(gateway, type, 'error', startedAt);
       return EMPTY;
     }
   }
 
-  // 이 어댑터가 만드는 모든 ws 서버(포트당 게이트웨이마다 하나)에 keepalive를 건다.
+  /**
+   * 이 어댑터가 만드는 모든 ws 서버(포트당 게이트웨이마다 하나)에 keepalive를 걸고 연결 수를 센다.
+   * 연결 수는 게이트웨이의 handleDisconnect 구현 여부와 무관하도록 소켓의 close 이벤트로 직접 줄인다.
+   */
   create(port: number, options?: Record<string, unknown>): unknown {
     const server = super.create(port, options) as WebSocketServer;
     installHeartbeat(server);
+
+    const gateway =
+      typeof options?.path === 'string' ? options.path : UNKNOWN_GATEWAY;
+    server.on('connection', (socket: WebSocket) => {
+      this.gatewayOfSocket.set(socket, gateway);
+      this.metrics.connectionOpened(gateway);
+      socket.once('close', () => this.metrics.connectionClosed(gateway));
+    });
     return server;
   }
 
@@ -108,6 +167,31 @@ export class CommandEnvelopeWsAdapter extends WsAdapter {
     });
 
     return httpServer;
+  }
+
+  // 명령 1건의 소요 시간을 초 단위로 환산해 기록한다.
+  private recordCommand(
+    gateway: string,
+    type: string,
+    outcome: WsCommandOutcome,
+    startedAt: number,
+  ): void {
+    this.metrics.recordCommand(
+      gateway,
+      type,
+      outcome,
+      (performance.now() - startedAt) / 1000,
+    );
+  }
+}
+
+// 명령 봉투를 파싱한다. JSON이 아니거나 객체가 아니면 null이다.
+function parseEnvelope(data: string | Buffer): { type?: unknown } | null {
+  try {
+    const parsed: unknown = JSON.parse(data.toString());
+    return typeof parsed === 'object' && parsed !== null ? parsed : null;
+  } catch {
+    return null;
   }
 }
 

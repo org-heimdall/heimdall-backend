@@ -275,6 +275,13 @@ describe('DebateJudgeService', () => {
     );
   });
 
+  it('호출 로그 컨텍스트에 debateId를 싣는다', async () => {
+    await service.handle(task);
+
+    const [request] = judge.judge.mock.calls[0] as [DebateJudgeRequest];
+    expect(request.logContext).toEqual({ debateId: DEBATE_ID });
+  });
+
   it('시간 초과로 비어 있는 턴은 전사에 "(발언 없음)"으로 남는다', async () => {
     await service.handle(task);
 
