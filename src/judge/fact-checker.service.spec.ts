@@ -1,5 +1,5 @@
 import { Repository } from 'typeorm';
-import { DebateSide } from '../debates/debate-turn';
+import { DebatePhase, DebateSide } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
@@ -17,7 +17,7 @@ import {
 } from './judge.types';
 import { DebateArgumentComponent } from './entities/debate-argument.entity';
 import { JudgeTask } from './entities/judge-task.entity';
-import type { FactCheckOutcome } from './llm/judge-llm';
+import type { FactCheckOutcome, FactCheckRequest } from './llm/judge-llm';
 
 describe('FactCheckerService', () => {
   const DEBATE_ID = 'debate-uuid';
@@ -86,6 +86,7 @@ describe('FactCheckerService', () => {
         Object.assign(new Debate(), {
           id: DEBATE_ID,
           topic: 'AI 규제, 필요한가?',
+          rebuttalQuestionRounds: 1,
         }),
       ),
     };
@@ -105,6 +106,7 @@ describe('FactCheckerService', () => {
       topic: 'AI 규제, 필요한가?',
       statement: '2025년 EU가 AI법을 시행했다',
       context: 'AI 규제는 필요하다. 2025년 EU가 AI법을 시행했다.',
+      logContext: expect.any(Object) as unknown,
     });
     expect(results.replaceFactCheck).toHaveBeenCalledWith({
       debateId: DEBATE_ID,
@@ -113,6 +115,28 @@ describe('FactCheckerService', () => {
       reason: '2024년 발효, 2025년부터 단계적 시행이다.',
       sources: outcome.sources,
     });
+  });
+
+  it('호출 로그 컨텍스트에 검증 대상 컴포넌트와 발언의 phase·round를 싣는다', async () => {
+    // 1라운드 반론·질의 토론의 3번째 턴 = 반론·질의 1라운드 SIDE_A.
+    results.findComponentById.mockResolvedValue(
+      Object.assign(new DebateArgumentComponent(), {
+        ...component,
+        turnSequence: 3,
+      }),
+    );
+
+    await service.handle(task);
+
+    const [request] = factChecker.check.mock.calls[0] as [FactCheckRequest];
+    // 필드 순서가 로그 순서다.
+    expect(Object.entries(request.logContext)).toEqual([
+      ['stage', 'grounded_check'],
+      ['debateId', DEBATE_ID],
+      ['phase', DebatePhase.REBUTTAL_QUESTION],
+      ['round', 1],
+      ['targets', [COMPONENT_ID]],
+    ]);
   });
 
   describe('Source Validator', () => {

@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { Job, UnrecoverableError } from 'bullmq';
 import Redis from 'ioredis';
 import { DebateChatPublisher } from '../debate-chat/debate-chat.publisher';
@@ -11,6 +12,7 @@ import {
   StageReportingPolicy,
 } from './judge-stage-reporting';
 import { JudgeTaskRepository } from './judge-task.repository';
+import { JudgeTaskMetrics } from './judge-task.metrics';
 import {
   JudgeTaskQueue,
   JudgeTaskWorker,
@@ -38,6 +40,7 @@ describe('JudgeTaskWorker', () => {
     release: jest.Mock;
   };
   let publisher: { processingStage: jest.Mock };
+  let metrics: { record: jest.Mock };
   let worker: JudgeTaskWorker;
 
   const buildTask = (overrides: Partial<JudgeTask> = {}): JudgeTask =>
@@ -53,7 +56,10 @@ describe('JudgeTaskWorker', () => {
       ...overrides,
     });
 
-  const job = { data: { taskId: TASK_ID } } as Job<{ taskId: string }>;
+  const JOB_ID = 'job-1';
+  const job = { id: JOB_ID, data: { taskId: TASK_ID } } as Job<{
+    taskId: string;
+  }>;
 
   // worker가 이번 시도에 붙인 식별자. 결과 반영이 같은 값으로 일어나는지 보는 데 쓴다.
   const acquiredRequestId = (): string =>
@@ -90,6 +96,7 @@ describe('JudgeTaskWorker', () => {
       release: jest.fn().mockResolvedValue(true),
     };
     publisher = { processingStage: jest.fn() };
+    metrics = { record: jest.fn() };
 
     worker = new JudgeTaskWorker(
       {} as Redis,
@@ -101,7 +108,9 @@ describe('JudgeTaskWorker', () => {
       {
         jobTimeoutMs: 1000,
         workerConcurrency: 1,
+        backoffMs: 5000,
       } as unknown as JudgeConfig,
+      metrics as unknown as JudgeTaskMetrics,
     );
   });
 
@@ -117,6 +126,11 @@ describe('JudgeTaskWorker', () => {
     expect(listener.onTaskSettled).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID }),
       'COMPLETED',
+    );
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.ANALYZER,
+      'completed',
+      expect.any(Number),
     );
   });
 
@@ -139,6 +153,8 @@ describe('JudgeTaskWorker', () => {
 
     expect(handler.handle).not.toHaveBeenCalled();
     expect(publisher.processingStage).not.toHaveBeenCalled();
+    // 실행하지 않은 시도는 메트릭에 세지 않는다.
+    expect(metrics.record).not.toHaveBeenCalled();
   });
 
   it('이미 완료된 작업의 재실행은 결과를 건드리지 않는다(멱등)', async () => {
@@ -169,6 +185,12 @@ describe('JudgeTaskWorker', () => {
     ]);
     // 아직 확정되지 않았으므로 후속 판단(판정 조건 평가)도 부르지 않는다.
     expect(listener.onTaskSettled).not.toHaveBeenCalled();
+    expect(metrics.record).toHaveBeenCalledTimes(1);
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.ANALYZER,
+      'retry',
+      expect.any(Number),
+    );
   });
 
   it('재시도를 소진하면 FAILED로 끝내고 다시 시도하지 않는다', async () => {
@@ -195,6 +217,12 @@ describe('JudgeTaskWorker', () => {
       expect.objectContaining({ id: TASK_ID }),
       'FAILED',
     );
+    expect(metrics.record).toHaveBeenCalledTimes(1);
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.ANALYZER,
+      'failed',
+      expect.any(Number),
+    );
   });
 
   it('재시도 불가 실패는 예산이 남아 있어도 즉시 FAILED다', async () => {
@@ -207,6 +235,30 @@ describe('JudgeTaskWorker', () => {
       TASK_ID,
       acquiredRequestId(),
       '입력 없음',
+    );
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.ANALYZER,
+      'failed',
+      expect.any(Number),
+    );
+  });
+
+  it('처리기가 없는 종류는 소요 시간 없이 failed로만 센다', async () => {
+    tasks.acquire.mockResolvedValue(
+      buildTask({
+        kind: JudgeTaskKind.JUDGE,
+        status: JudgeTaskStatus.PROCESSING,
+        attempt: 1,
+        requestId: 'request-uuid',
+      }),
+    );
+
+    await expect(worker.process(job)).rejects.toThrow(UnrecoverableError);
+
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.JUDGE,
+      'failed',
+      null,
     );
   });
 
@@ -225,6 +277,84 @@ describe('JudgeTaskWorker', () => {
     await worker.process(job);
 
     expect(tasks.acquire).not.toHaveBeenCalled();
+  });
+
+  describe('확정 로그(key=value)', () => {
+    let log: jest.SpyInstance;
+    let warn: jest.SpyInstance;
+    let error: jest.SpyInstance;
+
+    beforeEach(() => {
+      log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+      warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    const lines = (spy: jest.SpyInstance): string[] =>
+      spy.mock.calls.map(([line]: [string]) => line);
+
+    it('성공은 jobId·durationMs를 담아 log로 남긴다', async () => {
+      await worker.process(job);
+
+      expect(lines(log)).toContainEqual(
+        expect.stringMatching(
+          /^kind=ANALYZER outcome=COMPLETED jobId=job-1 taskId=task-uuid attempt=1 maxAttempts=3 durationMs=\d+$/,
+        ),
+      );
+    });
+
+    it('재시도는 backoff 대기 시간과 원인을 담아 warn으로 남긴다', async () => {
+      tasks.acquire.mockResolvedValue(
+        buildTask({
+          status: JudgeTaskStatus.PROCESSING,
+          attempt: 2,
+          requestId: 'request-uuid',
+        }),
+      );
+      handler.handle.mockRejectedValue(new Error('rate limit'));
+
+      await expect(worker.process(job)).rejects.toThrow('rate limit');
+
+      // retryDelayMs = backoffMs × 2^(attempt−1). 공백이 있는 원인은 따옴표로 감싼다.
+      expect(lines(warn)).toContainEqual(
+        expect.stringMatching(
+          /^kind=ANALYZER outcome=RETRY jobId=job-1 taskId=task-uuid attempt=2 maxAttempts=3 retryDelayMs=10000 durationMs=\d+ error="rate limit"$/,
+        ),
+      );
+    });
+
+    it('최종 실패는 retryDelayMs 없이 error로 남긴다', async () => {
+      handler.handle.mockRejectedValue(new NonRetryableTaskError('입력 없음'));
+
+      await expect(worker.process(job)).rejects.toThrow(UnrecoverableError);
+
+      expect(lines(error)).toContainEqual(
+        expect.stringMatching(
+          /^kind=ANALYZER outcome=FAILED jobId=job-1 taskId=task-uuid attempt=1 maxAttempts=3 durationMs=\d+ error="입력 없음"$/,
+        ),
+      );
+    });
+
+    it('처리기를 부르지 못한 실패에는 durationMs가 없다', async () => {
+      tasks.acquire.mockResolvedValue(
+        buildTask({
+          kind: JudgeTaskKind.JUDGE,
+          status: JudgeTaskStatus.PROCESSING,
+          attempt: 1,
+          requestId: 'request-uuid',
+        }),
+      );
+
+      await expect(worker.process(job)).rejects.toThrow(UnrecoverableError);
+
+      expect(lines(error)).toContainEqual(
+        'kind=JUDGE outcome=FAILED jobId=job-1 taskId=task-uuid attempt=1 maxAttempts=3 error="처리기가 없습니다: JUDGE"',
+      );
+    });
   });
 
   describe('stage 공개 규칙', () => {

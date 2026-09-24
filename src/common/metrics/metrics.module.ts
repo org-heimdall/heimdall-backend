@@ -1,6 +1,9 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { collectDefaultMetrics, Registry } from 'prom-client';
+import { HttpMetrics } from './http.metrics';
+import { HttpMetricsMiddleware } from './http-metrics.middleware';
 import { MetricsServer } from './metrics.server';
+import { WsMetrics } from './ws.metrics';
 
 @Module({
   providers: [
@@ -15,7 +18,15 @@ import { MetricsServer } from './metrics.server';
       },
     },
     MetricsServer,
+    HttpMetrics,
+    // WS 어댑터는 DI 밖(main.ts)에서 만들어지므로 app.get(WsMetrics)로 꺼내 넘긴다.
+    WsMetrics,
   ],
-  exports: [Registry],
+  exports: [Registry, WsMetrics],
 })
-export class MetricsModule {}
+export class MetricsModule implements NestModule {
+  // 404·가드 거절까지 세도록 라우트 매칭 전 단계인 미들웨어로 전 경로에 건다.
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(HttpMetricsMiddleware).forRoutes('{*splat}');
+  }
+}

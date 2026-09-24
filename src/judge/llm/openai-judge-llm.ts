@@ -21,7 +21,7 @@ import {
   SideJudgment,
   SILENT_TURN_PLACEHOLDER,
 } from './judge-llm';
-import { LlmCallLogger, LlmTokenUsage } from './llm-call-logger';
+import { LlmCallLogger, LlmLogContext, LlmTokenUsage } from './llm-call-logger';
 
 // 1단계, 3단계 (Argument Analyzer, Debate Judge)는 OpenAI API 사용
 @Injectable()
@@ -29,9 +29,11 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
   private readonly logger = new Logger(OpenAiJudgeLlm.name);
   private readonly model: string;
   private readonly client: OpenAI | null;
-  private readonly callLogger = new LlmCallLogger();
 
-  constructor(configService: ConfigService) {
+  constructor(
+    configService: ConfigService,
+    private readonly callLogger: LlmCallLogger,
+  ) {
     this.model = configService.getOrThrow<string>('OPENAI_MODEL');
 
     const apiKey = configService.get<string>('OPENAI_API_KEY');
@@ -52,6 +54,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
   async analyze(request: AnalyzerRequest): Promise<AnalyzerResult> {
     const parsed = await this.parse(
       'analyze',
+      request.logContext,
       SYSTEM_PROMPT_ANALYZER,
       buildAnalyzerInput(request),
       AnalyzedGraph,
@@ -80,6 +83,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
     const [performance, violation] = await Promise.all([
       this.parse(
         'judge.performance',
+        request.logContext,
         SYSTEM_PROMPT_JUDGE,
         input,
         JudgingDebatePerformance,
@@ -87,6 +91,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
       ),
       this.parse(
         'judge.violation',
+        request.logContext,
         SYSTEM_PROMPT_VIOLATION,
         input,
         JudgingDebateViolation,
@@ -105,6 +110,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
   // 구조화 출력 호출의 공통부. 스키마와 프롬프트만 갈아 끼운다.
   private async parse<T extends z.ZodType>(
     operation: string,
+    logContext: LlmLogContext,
     systemPrompt: string,
     input: string,
     schema: T,
@@ -120,7 +126,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
     const client = this.client;
     // 호출마다 소요 시간과 token usage를 남긴다(판정은 두 호출이 병렬이라 두 줄이 남는다).
     const response = await this.callLogger.measure(
-      { provider: 'openai', model: this.model, operation },
+      { provider: 'openai', model: this.model, operation, context: logContext },
       () =>
         client.responses.parse({
           model: this.model,
@@ -151,10 +157,10 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
 function toTokenUsage(usage: ResponseUsage | undefined): LlmTokenUsage {
   return {
     inputTokens: usage?.input_tokens ?? null,
-    outputTokens: usage?.output_tokens ?? null,
-    totalTokens: usage?.total_tokens ?? null,
     cachedTokens: usage?.input_tokens_details?.cached_tokens ?? null,
-    reasoningTokens: usage?.output_tokens_details?.reasoning_tokens ?? null,
+    outputTokens: usage?.output_tokens ?? null,
+    thinkingTokens: usage?.output_tokens_details?.reasoning_tokens ?? null,
+    totalTokens: usage?.total_tokens ?? null,
   };
 }
 

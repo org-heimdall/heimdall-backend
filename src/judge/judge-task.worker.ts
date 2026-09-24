@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import {
   Inject,
   Injectable,
@@ -8,6 +9,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { formatLogFields } from '../common/logging/log-fields';
 import { Job, Queue, UnrecoverableError, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { DebateChatPublisher } from '../debate-chat/debate-chat.publisher';
@@ -16,6 +18,7 @@ import {
   DebateProcessingStageStatus,
 } from '../debate-chat/debate-chat.types';
 import { JudgeConfig } from './judge.config';
+import { JudgeTaskMetricOutcome, JudgeTaskMetrics } from './judge-task.metrics';
 import {
   REPORT_ALL_STAGES,
   StageReportingPolicy,
@@ -75,6 +78,18 @@ export class NonRetryableTaskError extends Error {
     this.name = 'NonRetryableTaskError';
   }
 }
+
+// 작업 시도 1회의 식별자와 측정값. 확정 처리(상태 전이·로그·메트릭)가 함께 쓴다.
+interface TaskRun {
+  jobId: string | undefined;
+  requestId: string;
+  // stage 메시지 접두사(turn #3 등).
+  prefix: string | null;
+  // handler 실행 시간. handler를 부르지 못한 시도는 null이다.
+  durationMs: number | null;
+}
+
+type SettlementOutcome = 'COMPLETED' | 'RETRY' | 'FAILED';
 
 // 큐에 실리는 것은 작업 행을 가리키는 식별자뿐이다. 실제 입력은 worker가 DB에서 다시 읽는다
 // (재시작·재시도 사이에 payload가 낡는 문제를 원천 차단한다).
@@ -184,6 +199,7 @@ export class JudgeTaskWorker
     private readonly queue: JudgeTaskQueue,
     private readonly publisher: DebateChatPublisher,
     private readonly config: JudgeConfig,
+    private readonly metrics: JudgeTaskMetrics,
   ) {
     this.handlers = new Map(handlers.map((handler) => [handler.kind, handler]));
   }
@@ -265,21 +281,35 @@ export class JudgeTaskWorker
     if (handler === undefined) {
       // 구현체가 등록되지 않은 종류다. 재시도해도 달라지지 않는다.
       const reason = `처리기가 없습니다: ${acquired.kind}`;
-      await this.settleFailed(acquired, null, requestId, reason);
+      await this.settleFailed(
+        acquired,
+        { jobId: job.id, requestId, prefix: null, durationMs: null },
+        reason,
+      );
       throw new UnrecoverableError(reason);
     }
 
     const prefix = await this.describe(handler, acquired);
     this.publish(acquired, DebateProcessingStageStatus.STARTED, prefix, '시작');
 
+    // 소요 시간은 handler 실행 구간만 잰다(큐 대기·backoff 제외).
+    const startedAt = performance.now();
+    const runOf = (): TaskRun => ({
+      jobId: job.id,
+      requestId,
+      prefix,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
     try {
       await this.runWithTimeout(handler, acquired);
     } catch (error: unknown) {
-      await this.settleFailure(acquired, prefix, requestId, error);
+      await this.settleFailure(acquired, runOf(), error);
       return;
     }
+    const run = runOf();
 
     await this.tasks.complete(acquired.id, requestId);
+    this.record(acquired, 'COMPLETED', run);
     this.publish(
       acquired,
       DebateProcessingStageStatus.COMPLETED,
@@ -320,8 +350,7 @@ export class JudgeTaskWorker
    */
   private async settleFailure(
     task: JudgeTask,
-    prefix: string | null,
-    requestId: string,
+    run: TaskRun,
     error: unknown,
   ): Promise<void> {
     const reason = error instanceof Error ? error.message : String(error);
@@ -330,40 +359,73 @@ export class JudgeTaskWorker
       task.attempt < task.maxAttempts;
 
     if (!retryable) {
-      await this.settleFailed(task, prefix, requestId, reason);
+      await this.settleFailed(task, run, reason);
       throw new UnrecoverableError(reason);
     }
 
-    await this.tasks.release(task.id, requestId, reason);
+    await this.tasks.release(task.id, run.requestId, reason);
+    this.record(task, 'RETRY', run, reason);
     this.publish(
       task,
       DebateProcessingStageStatus.RETRYING,
-      prefix,
+      run.prefix,
       `재시도 예정 (${reason})`,
-    );
-    this.logger.warn(
-      `작업 재시도 예정: kind=${task.kind}, taskId=${task.id}, attempt=${task.attempt}/${task.maxAttempts}, 원인=${reason}`,
     );
     throw error instanceof Error ? error : new Error(reason);
   }
 
   private async settleFailed(
     task: JudgeTask,
-    prefix: string | null,
-    requestId: string,
+    run: TaskRun,
     reason: string,
   ): Promise<void> {
-    await this.tasks.fail(task.id, requestId, reason);
+    await this.tasks.fail(task.id, run.requestId, reason);
+    this.record(task, 'FAILED', run, reason);
     this.publish(
       task,
       DebateProcessingStageStatus.FAILED,
-      prefix,
+      run.prefix,
       `실패 (${reason})`,
     );
-    this.logger.error(
-      `작업 최종 실패: kind=${task.kind}, taskId=${task.id}, 원인=${reason}`,
-    );
     await this.notify(task, 'FAILED');
+  }
+
+  /**
+   * 시도 1회의 확정 결과를 key=value 한 줄 로그와 메트릭으로 남긴다.
+   * 성공은 log, 재시도는 warn, 최종 실패는 error다. 재시도면 다음 시도까지의 backoff도 싣는다.
+   */
+  private record(
+    task: JudgeTask,
+    outcome: SettlementOutcome,
+    run: TaskRun,
+    error?: string,
+  ): void {
+    const line = formatLogFields([
+      ['kind', task.kind],
+      ['outcome', outcome],
+      ['jobId', run.jobId],
+      ['taskId', task.id],
+      ['attempt', task.attempt],
+      ['maxAttempts', task.maxAttempts],
+      [
+        'retryDelayMs',
+        outcome === 'RETRY' ? this.retryDelayMs(task.attempt) : undefined,
+      ],
+      ['durationMs', run.durationMs ?? undefined],
+      ['error', error],
+    ]);
+    this.logger[LOG_LEVEL_OF[outcome]](line);
+
+    this.metrics.record(
+      task.kind,
+      METRIC_OUTCOME_OF[outcome],
+      run.durationMs === null ? null : run.durationMs / 1000,
+    );
+  }
+
+  // attempt번째 시도가 실패한 뒤의 대기 시간. BullMQ exponential backoff와 같은 식이다.
+  private retryDelayMs(attempt: number): number {
+    return this.config.backoffMs * 2 ** (attempt - 1);
   }
 
   // 확정 뒤 후속 판단(판정 조건 평가)은 실패해도 작업 결과를 뒤집지 않는다.
@@ -429,6 +491,18 @@ export class JudgeTaskWorker
     return this.handlers.get(kind)?.stageReporting ?? REPORT_ALL_STAGES;
   }
 }
+
+const LOG_LEVEL_OF: Record<SettlementOutcome, 'log' | 'warn' | 'error'> = {
+  COMPLETED: 'log',
+  RETRY: 'warn',
+  FAILED: 'error',
+};
+
+const METRIC_OUTCOME_OF: Record<SettlementOutcome, JudgeTaskMetricOutcome> = {
+  COMPLETED: 'completed',
+  RETRY: 'retry',
+  FAILED: 'failed',
+};
 
 const STAGE_OF: Record<JudgeTaskKind, DebateProcessingStage> = {
   [JudgeTaskKind.ANALYZER]: DebateProcessingStage.ANALYZER,

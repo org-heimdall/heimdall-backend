@@ -58,9 +58,11 @@ export class GeminiFactChecker implements FactChecker {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly client: GoogleGenAI | null;
-  private readonly callLogger = new LlmCallLogger();
 
-  constructor(configService: ConfigService) {
+  constructor(
+    configService: ConfigService,
+    private readonly callLogger: LlmCallLogger,
+  ) {
     this.model = configService.getOrThrow<string>('GEMINI_MODEL');
     this.timeoutMs = configService.getOrThrow<number>('GEMINI_TIMEOUT_MS');
 
@@ -83,7 +85,12 @@ export class GeminiFactChecker implements FactChecker {
 
     const client = this.client;
     const response = await this.callLogger.measure(
-      { provider: 'gemini', model: this.model, operation: 'fact_check' },
+      {
+        provider: 'gemini',
+        model: this.model,
+        operation: 'fact_check',
+        context: request.logContext,
+      },
       () =>
         client.models.generateContent({
           model: this.model,
@@ -114,10 +121,10 @@ function toTokenUsage(
 ): LlmTokenUsage {
   return {
     inputTokens: usage?.promptTokenCount ?? null,
-    outputTokens: usage?.candidatesTokenCount ?? null,
-    totalTokens: usage?.totalTokenCount ?? null,
     cachedTokens: usage?.cachedContentTokenCount ?? null,
-    reasoningTokens: usage?.thoughtsTokenCount ?? null,
+    outputTokens: usage?.candidatesTokenCount ?? null,
+    thinkingTokens: usage?.thoughtsTokenCount ?? null,
+    totalTokens: usage?.totalTokenCount ?? null,
   };
 }
 

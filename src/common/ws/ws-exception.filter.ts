@@ -4,6 +4,7 @@ import { AppError } from '../exceptions/app-error.interface';
 import { ErrorCode } from '../exceptions/error-code';
 import { GeneralException } from '../exceptions/general.exception';
 import { ClosableSocket, describePeer } from './ws-close';
+import { markCommandFailed } from './ws-command-outcome';
 import { sendEvent, wsEvent } from './ws-event';
 
 // 계약의 모든 채팅 게이트웨이가 쓰는 오류 이벤트 이름.
@@ -50,6 +51,8 @@ export abstract class WsCommandExceptionFilter<
     const client = ctx.getClient<TClient>();
     const command = ctx.getData<{ id?: unknown; type?: unknown } | undefined>();
     const appError = toAppError(exception, this.logger);
+    // 어댑터의 명령 메트릭이 이 명령을 outcome=error로 세도록 표시한다.
+    markCommandFailed(command);
 
     const payload: WsErrorPayload = {
       ...this.scopeOf(client),

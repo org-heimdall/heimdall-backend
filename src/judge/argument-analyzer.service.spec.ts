@@ -1,5 +1,5 @@
 import { Repository } from 'typeorm';
-import { DebateSide } from '../debates/debate-turn';
+import { DebatePhase, DebateSide } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate, DebateTurn } from '../debates/entities/debate.entity';
@@ -136,6 +136,13 @@ describe('ArgumentAnalyzerService', () => {
       speakerSide: DebateSide.SIDE_A,
       speakerNickname: '메시',
     });
+    // 호출 로그에 붙는 도메인 컨텍스트. 필드 순서가 로그 순서다.
+    expect(Object.entries(request.logContext)).toEqual([
+      ['debateId', DEBATE_ID],
+      ['turnIds', [TURN_ID]],
+      ['phase', DebatePhase.OPENING],
+      ['round', 1],
+    ]);
     expect(graph.replaceTurnGraph).toHaveBeenCalledWith(
       expect.objectContaining({
         debateId: DEBATE_ID,
