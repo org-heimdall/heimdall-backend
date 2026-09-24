@@ -17,6 +17,7 @@ import { DebateChatGateway } from './debate-chat.gateway';
 import { DebateChatService } from './debate-chat.service';
 import { DebateTurnTimeoutScheduler } from './debate-turn-timeout.scheduler';
 import { JudgeModule } from '../judge/judge.module';
+import { DebateOutcomesModule } from '../debate-outcomes/debate-outcomes.module';
 
 @Module({
   imports: [
@@ -26,6 +27,8 @@ import { JudgeModule } from '../judge/judge.module';
     DebateChatPublisherModule,
     // 확정된 턴을 처리(Analyzer→FactCheck→Judge)로 넘기는 파이프라인은 이 모듈이 제공한다.
     JudgeModule,
+    // 기권·전체 시간 초과의 결과(보상·시스템 메시지·커뮤니티 상태)를 종료 트랜잭션에 함께 넣는다.
+    DebateOutcomesModule,
     // 확정 턴 저장과 토론 상태 갱신은 저장소가 직접 한다(judge 모듈과 같은 방식).
     TypeOrmModule.forFeature([Debate, DebateMessage]),
   ],

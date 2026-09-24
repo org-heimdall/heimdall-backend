@@ -172,6 +172,13 @@ describe('CommunityChatService', () => {
   });
 
   describe('sendMessage', () => {
+    beforeEach(() => {
+      // 기조 발언을 작성한 참여자가 기본이다.
+      memberCommunitiesService.findOne.mockResolvedValue(
+        buildParticipation({ opinion: '찬성', reasons: ['이유'] }),
+      );
+    });
+
     it('참여자의 메시지를 저장하고 STORED를 그대로 전달한다', async () => {
       communityMessagesService.create.mockImplementation(
         (message: CommunityMessage) =>
@@ -229,6 +236,19 @@ describe('CommunityChatService', () => {
         CommunityChatErrorCode.NOT_PARTICIPANT.code,
       );
       expect(communityMessagesService.create).not.toHaveBeenCalled();
+    });
+
+    it('기조 발언을 작성하지 않은 참여자면 OPINION_REQUIRED를 던지고 저장하지 않는다', async () => {
+      memberCommunitiesService.findOne.mockResolvedValue(
+        buildParticipation({ opinion: null }),
+      );
+
+      await expectCode(
+        service.sendMessage(COMMUNITY_ID, MEMBER_ID, '안녕하세요', 'key'),
+        CommunityChatErrorCode.OPINION_REQUIRED.code,
+      );
+      expect(communityMessagesService.create).not.toHaveBeenCalled();
+      expect(CommunityChatErrorCode.OPINION_REQUIRED.httpStatus).toBe(403);
     });
 
     it('없는 커뮤니티면 NOT_FOUND를 던진다', async () => {

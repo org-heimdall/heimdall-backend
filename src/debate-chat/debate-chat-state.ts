@@ -15,6 +15,10 @@ import {
 } from '../debates/debate-turn';
 import { Debate } from '../debates/entities/debate.entity';
 import {
+  DebateOutcome,
+  DebateOutcomeKind,
+} from '../debate-outcomes/debate-outcome.types';
+import {
   CurrentTurn,
   DebateChatSnapshot,
   DebateEndReason,
@@ -59,9 +63,21 @@ export interface DraftAppendResult {
 
 export interface TurnFinalizeResult {
   turn: DebateChatTurn;
-  // 이번 확정으로 마지막 차례까지 끝났는지. true면 status가 DEBATE_FINALIZED로 바뀌어 있다.
+  // 이번 확정으로 마지막 차례까지 끝났는지.
   ended: boolean;
+  // 끝났다면 그 이유. 양쪽 모두 발언했으면 ALL_TURNS_FINALIZED(판정으로), 아니면 TOTAL_TIME_EXPIRED.
+  endReason: DebateEndReason | null;
+  // 판정 없이 끝나(FAILED) 결과를 바로 반영해야 하면 그 결과. 판정으로 넘어가면 null.
+  outcome: DebateOutcome | null;
 }
+
+// 판정 없이 토론을 끝내는 사유 → 결과 반영 종류. 여기 없는 사유(ALL_TURNS_FINALIZED)는 판정으로 넘어간다.
+const TERMINAL_OUTCOME_KINDS: Partial<
+  Record<DebateEndReason, DebateOutcomeKind>
+> = {
+  [DebateEndReason.FORFEIT]: DebateOutcomeKind.FORFEIT,
+  [DebateEndReason.TOTAL_TIME_EXPIRED]: DebateOutcomeKind.TOTAL_TIMEOUT,
+};
 
 // debate 행에 반영할 변경. 함께 움직이는 값이라 부분 갱신 없이 통째로 넘긴다.
 // 상태가 읽어 온 값 그대로를 다시 쓰는 필드(winnerId 등)가 섞여 있어도 결과는 같다.
@@ -71,6 +87,7 @@ export interface DebateRowChanges {
   endedAt: Date | null;
   expiresAt: Date | null;
   winnerId: string | null;
+  endReason: DebateEndReason | null;
 }
 
 /**
@@ -86,6 +103,8 @@ export interface DebateChatStateChanges {
   debate: DebateRowChanges | null;
   // 이번 작업에서 토론이 끝났다면 그 사유. 방에 debate.ended를 보낼지 판단하는 근거다.
   endReason: DebateEndReason | null;
+  // 판정 없이 끝났다면(기권·전체 시간 초과) 종료 트랜잭션에서 함께 반영할 결과.
+  outcome: DebateOutcome | null;
 }
 
 function emptyChanges(): DebateChatStateChanges {
@@ -95,6 +114,7 @@ function emptyChanges(): DebateChatStateChanges {
     clearedDraftTurnIndex: null,
     debate: null,
     endReason: null,
+    outcome: null,
   };
 }
 
@@ -109,6 +129,8 @@ export interface DebateChatStateProps {
   endedAt: Date | null;
   expiresAt: Date | null;
   winnerId: string | null;
+  // 끝난 토론의 종료 사유. 행 변경은 통째로 쓰므로 읽어 온 값을 그대로 들고 있어야 한다.
+  endReason?: DebateEndReason | null;
   // 확정된 턴(sequence 오름차순)과 현재 차례의 draft.
   turns: DebateChatTurn[];
   drafts: DraftMessage[];
@@ -140,6 +162,7 @@ export class DebateChatState {
   private endedAt: Date | null;
   private expiresAt: Date | null;
   private winnerId: string | null;
+  private endReason: DebateEndReason | null;
   private readonly turns: DebateChatTurn[];
   private drafts: DraftMessage[];
   private readonly draftsByClientMessageId: Map<string, DraftMessage>;
@@ -158,6 +181,7 @@ export class DebateChatState {
     this.endedAt = props.endedAt;
     this.expiresAt = props.expiresAt;
     this.winnerId = props.winnerId;
+    this.endReason = props.endReason ?? null;
     this.turns = [...props.turns];
     this.drafts = [...props.drafts];
     this.draftsByClientMessageId = new Map(props.clientMessages ?? []);
@@ -195,14 +219,19 @@ export class DebateChatState {
   /**
    * 발언자가 기권한다. 토론은 판정 없이 FAILED로 끝나고 승자는 상대다.
    * 관전자는 부를 수 없고(NOT_PARTICIPANT), 진행 중이 아니면 거절한다(NOT_IN_PROGRESS).
+   * 종료 트랜잭션에서 함께 반영할 결과(보상·알림·커뮤니티 상태)를 돌려준다.
    */
-  forfeit(memberId: string): void {
+  forfeit(memberId: string): DebateOutcome {
     const side = this.requireSpeakerSide(memberId);
     if (this.status !== DebateStatus.IN_PROGRESS) {
       throw new GeneralException(DebateChatErrorCode.NOT_IN_PROGRESS);
     }
     this.winnerId = this.speakers[oppositeSide(side)];
-    this.end(DebateStatus.FAILED, DebateEndReason.FORFEIT);
+    // FORFEIT는 TERMINAL_OUTCOME_KINDS에 있으므로 결과가 항상 있다.
+    return this.end(
+      DebateStatus.FAILED,
+      DebateEndReason.FORFEIT,
+    ) as DebateOutcome;
   }
 
   // 발언자만 낼 수 있는 명령(REST의 /start·/forfeit)의 공통 검증.
@@ -298,6 +327,7 @@ export class DebateChatState {
 
   // 현재 차례의 draft를 턴으로 굳혀 변경 기록에 남기고 다음 차례로 넘긴다.
   // 마지막 차례였으면 토론을 끝낸다(시간 초과로 확정됐더라도 모든 차례가 지난 것은 같다).
+  // 끝나는 방식은 finishAllTurns가 정한다.
   private confirmTurn(slot: TurnSlot): TurnFinalizeResult {
     const turn: DebateChatTurn = {
       id: this.generateId(),
@@ -316,13 +346,39 @@ export class DebateChatState {
     this.drafts = [];
 
     if (this.schedule.next(slot) !== null) {
-      return { turn, ended: false };
+      return { turn, ended: false, endReason: null, outcome: null };
     }
-    this.end(
-      DebateStatus.DEBATE_FINALIZED,
-      DebateEndReason.ALL_TURNS_FINALIZED,
-    );
-    return { turn, ended: true };
+    const outcome = this.finishAllTurns();
+    return { turn, ended: true, endReason: this.endReason, outcome };
+  }
+
+  /**
+   * 모든 차례가 지났을 때 토론을 끝낸다.
+   * 양쪽 모두 한 번이라도 발언했으면 판정으로 넘기고(DEBATE_FINALIZED), 한쪽이라도 확정 턴이 전부
+   * 비어 있으면 판정 없이 전체 시간 초과(FAILED)로 끝낸다. 승자는 발언한 쪽이며 양쪽 모두
+   * 무발언이면 승자가 없다.
+   */
+  private finishAllTurns(): DebateOutcome | null {
+    const spoke = (side: DebateSide): boolean =>
+      this.turns.some(
+        (turn) => turn.speakerSide === side && turn.content.trim() !== '',
+      );
+    const sideASpoke = spoke(DebateSide.SIDE_A);
+    const sideBSpoke = spoke(DebateSide.SIDE_B);
+
+    if (sideASpoke && sideBSpoke) {
+      return this.end(
+        DebateStatus.DEBATE_FINALIZED,
+        DebateEndReason.ALL_TURNS_FINALIZED,
+      );
+    }
+
+    this.winnerId = sideASpoke
+      ? this.speakers[DebateSide.SIDE_A]
+      : sideBSpoke
+        ? this.speakers[DebateSide.SIDE_B]
+        : null;
+    return this.end(DebateStatus.FAILED, DebateEndReason.TOTAL_TIME_EXPIRED);
   }
 
   // 현재 차례가 끝나야 하는 시각. 진행 중이 아니거나 시작 시각을 알 수 없으면 null.
@@ -351,11 +407,31 @@ export class DebateChatState {
     return drained;
   }
 
-  private end(status: DebateStatus, reason: DebateEndReason): void {
+  // 토론을 끝내고 변경에 기록한다. 판정 없이 끝나는 사유면 함께 반영할 결과를 돌려준다(아니면 null).
+  private end(
+    status: DebateStatus,
+    reason: DebateEndReason,
+  ): DebateOutcome | null {
     this.status = status;
     this.endedAt = this.now();
+    this.endReason = reason;
     this.changes.endReason = reason;
     this.recordDebateChange();
+
+    const kind = TERMINAL_OUTCOME_KINDS[reason];
+    const outcome: DebateOutcome | null =
+      kind === undefined
+        ? null
+        : {
+            debateId: this.debateId,
+            communityId: this.communityId,
+            kind,
+            status,
+            reason,
+            winnerId: this.winnerId,
+          };
+    this.changes.outcome = outcome;
+    return outcome;
   }
 
   private recordDebateChange(): void {
@@ -365,6 +441,7 @@ export class DebateChatState {
       endedAt: this.endedAt,
       expiresAt: this.expiresAt,
       winnerId: this.winnerId,
+      endReason: this.endReason,
     };
   }
 

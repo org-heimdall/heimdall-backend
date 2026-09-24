@@ -8,18 +8,27 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { WsCommandDto } from '../common/ws/ws-command.dto';
+import { SYSTEM_CLIENT_MESSAGE_ID_PATTERN } from '../communities/entities/community-message.entity';
 
 // 계약의 길이 제한. REST(POST /messages, PUT /opinions/me)와 WS가 같은 값을 쓴다.
 export const MESSAGE_TEXT_MAX_LENGTH = 2000;
 export const OPINION_CLAIM_MAX_LENGTH = 2000;
 export const OPINION_REASON_MAX_LENGTH = 2000;
 export const OPINION_REASONS_MAX_SIZE = 10;
+
+// 사용자 메시지의 clientMessageId는 시스템 메시지 키 형식으로 시작할 수 없다(부정 전방탐색).
+const USER_CLIENT_MESSAGE_ID_PATTERN = new RegExp(
+  `^(?!${SYSTEM_CLIENT_MESSAGE_ID_PATTERN.source.slice(1)})`,
+);
+const RESERVED_CLIENT_MESSAGE_ID_MESSAGE =
+  'clientMessageId는 시스템 메시지용 형식(debate_*:)으로 시작할 수 없습니다.';
 
 // 메시지 목록 조회의 기본/최대 개수. 기본값은 계약(50)이고, 최대는 한 번에 읽는 양을 서버가 막는 선이다.
 export const MESSAGE_PAGE_DEFAULT_LIMIT = 50;
@@ -53,10 +62,14 @@ export class CommunityMessagesQueryDto {
 export class CommunityMessageSendDto {
   @ApiProperty({
     example: 'c1f0a2b3-4d5e-6f70-8192-a3b4c5d6e7f8',
-    description: '재전송 중복 방지 키. 같은 키로 다시 보내면 저장되지 않는다.',
+    description:
+      '재전송 중복 방지 키. 같은 키로 다시 보내면 저장되지 않는다. 시스템 메시지용 형식(debate_*:)은 쓸 수 없다.',
   })
   @IsString()
   @IsNotEmpty()
+  @Matches(USER_CLIENT_MESSAGE_ID_PATTERN, {
+    message: RESERVED_CLIENT_MESSAGE_ID_MESSAGE,
+  })
   clientMessageId: string;
 
   @ApiProperty({ example: '저는 이 주제에 찬성합니다.' })
@@ -103,6 +116,9 @@ export class CommunityMessageTextDto {
 export class CommunityMessageSendCommandDto extends WsCommandDto {
   @IsString()
   @IsNotEmpty()
+  @Matches(USER_CLIENT_MESSAGE_ID_PATTERN, {
+    message: RESERVED_CLIENT_MESSAGE_ID_MESSAGE,
+  })
   clientMessageId: string;
 
   @ValidateNested()

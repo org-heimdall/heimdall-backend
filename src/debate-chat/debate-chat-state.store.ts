@@ -7,6 +7,7 @@ import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { REDIS_CLIENT } from '../common/redis/redis.module';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
 import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
@@ -73,6 +74,7 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
     private readonly messageRepository: Repository<DebateMessage>,
     private readonly dataSource: DataSource,
     private readonly config: DebateChatConfig,
+    private readonly outcomes: DebateOutcomeService,
   ) {
     this.draftTtlSeconds =
       this.config.limits.maxDurationSeconds * DRAFT_TTL_TURN_MULTIPLIER;
@@ -156,6 +158,7 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
       endedAt: debate.endedAt,
       expiresAt: debate.expiresAt,
       winnerId: debate.winnerId,
+      endReason: debate.endReason,
       turns,
       drafts,
       clientMessages,
@@ -204,7 +207,7 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
   }
 
   /**
-   * 상태가 남긴 변경을 반영한다. 확정 턴과 토론 행은 한 트랜잭션으로 커밋하고,
+   * 상태가 남긴 변경을 반영한다. 확정 턴과 토론 행(판정 없이 끝났다면 그 결과 반영까지)은 한 트랜잭션으로 커밋하고,
    * 커밋된 뒤에야 Redis의 draft를 지운다(지우기가 실패해도 다음 차례의 키가 달라 섞이지 않는다).
    */
   private async persist(
@@ -255,6 +258,11 @@ export class RedisDebateChatStateStore implements DebateChatStateStore {
       }
       if (changes.debate !== null) {
         await manager.getRepository(Debate).update(debateId, changes.debate);
+      }
+      // 기권·전체 시간 초과는 보상·시스템 메시지·커뮤니티 상태까지 종료와 함께 남거나 함께 없어야 한다.
+      // 토론 단위 락 안의 IN_PROGRESS → FAILED 전이라 이 반영은 토론당 한 번뿐이다.
+      if (changes.outcome !== null) {
+        await this.outcomes.applyWithin(manager, changes.outcome);
       }
     });
   }

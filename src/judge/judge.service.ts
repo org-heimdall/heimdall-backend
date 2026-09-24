@@ -5,16 +5,26 @@ import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { ErrorCode } from '../common/exceptions/error-code';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { DebateChatTurn } from '../debate-chat/debate-chat.types';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
+import {
+  DebateOutcome,
+  DebateOutcomeKind,
+} from '../debate-outcomes/debate-outcome.types';
 import { resolveSide, resolveSpeakers } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateDto } from '../debates/dto/debate.dto';
+import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate } from '../debates/entities/debate.entity';
 import { JudgeConfig } from './judge.config';
 import { JudgeTaskRepository } from './judge-task.repository';
 import { JudgeTaskKind } from './judge.types';
-import { JudgeTaskQueue, JudgeTaskListener } from './judge-task.worker';
+import {
+  JudgeTaskQueue,
+  JudgeTaskListener,
+  TaskOutcome,
+} from './judge-task.worker';
 import { JudgeResultRepository } from './judge-result.repository';
 import {
   DebateResultDto,
@@ -57,6 +67,7 @@ export class JudgeService implements JudgeTaskListener {
     private readonly results: JudgeResultRepository,
     private readonly debates: DebatesService,
     private readonly config: JudgeConfig,
+    private readonly outcomes: DebateOutcomeService,
   ) {}
 
   // ------------------------------------------------------------- 채팅 훅
@@ -84,12 +95,20 @@ export class JudgeService implements JudgeTaskListener {
     );
   }
 
-  // 작업이 확정될 때마다(성공·최종 실패 모두) 다시 판단한다. 판정 자신의 결과는 볼 필요가 없다.
-  async onTaskSettled(task: JudgeTask): Promise<void> {
-    if (task.kind === JudgeTaskKind.JUDGE) {
+  /**
+   * 작업이 확정될 때마다(성공·최종 실패 모두) 다시 판단한다.
+   * 판정 자신의 성공은 결과 반영까지 끝난 것이라 볼 일이 없고, 최종 실패면 토론을 판정 실패로 닫는다
+   * (/judge/retry로 되살릴 수 있다).
+   */
+  async onTaskSettled(task: JudgeTask, outcome: TaskOutcome): Promise<void> {
+    if (task.kind !== JudgeTaskKind.JUDGE) {
+      await this.tryStartJudge(task.debateId);
       return;
     }
-    await this.tryStartJudge(task.debateId);
+    if (outcome === 'FAILED') {
+      const debate = await this.debates.findOneOrThrow(task.debateId);
+      await this.failJudgment(debate);
+    }
   }
 
   // ---------------------------------------------------------- 판정 조건
@@ -119,7 +138,7 @@ export class JudgeService implements JudgeTaskListener {
 
     // 분석이 최종 실패하면 논증 그래프가 반쪽이라 판정할 수 없다. 재개(/judge/retry)로만 풀린다.
     if (analyzer.failed > 0) {
-      await this.results.markFailed(debateId);
+      await this.failJudgment(debate);
       this.logger.warn(
         `분석 실패로 판정 불가: debateId=${debateId}, failed=${analyzer.failed}`,
       );
@@ -201,6 +220,13 @@ export class JudgeService implements JudgeTaskListener {
     if ((await this.results.findJudgment(debateId)) !== null) {
       throw new GeneralException(JudgeErrorCode.ALREADY_COMPLETED);
     }
+    // 판정 없이 끝난 토론(기권·전체 시간 초과)은 되살리지 않는다 — 판정·보상이 겹친다.
+    if (
+      debate.debateStatus === DebateStatus.FAILED &&
+      debate.endReason !== DebateEndReason.JUDGMENT_FAILED
+    ) {
+      throw new GeneralException(JudgeErrorCode.NOTHING_TO_RETRY);
+    }
 
     const failed = await this.tasks.findFailed(debateId, RETRYABLE_KINDS);
     const missing = await this.resumeAnalyzers(debateId);
@@ -210,14 +236,15 @@ export class JudgeService implements JudgeTaskListener {
 
     this.assertCooldownPassed(failed.map((task) => task.updatedAt));
 
+    // 판정 실패로 FAILED가 된 토론을 판정 가능한 상태로 먼저 되돌린다. 작업을 먼저 올리면 판정이
+    // 되돌리기 전에 끝나 조건부 전이에서 질 수 있다. 커뮤니티는 결정대로 WAITING에 둔다.
+    await this.results.restoreFinalized(debateId);
     for (const task of await this.tasks.resetFailed(
       debateId,
       RETRYABLE_KINDS,
     )) {
       await this.queue.enqueue(task);
     }
-    // 분석 실패로 FAILED가 된 토론을 판정 가능한 상태로 되돌린다.
-    await this.results.restoreFinalized(debateId);
 
     throw this.toReadinessException(await this.tryStartJudge(debateId));
   }
@@ -239,6 +266,27 @@ export class JudgeService implements JudgeTaskListener {
       judgmentResult: JudgmentResultDto.from(judgment),
       factChecks: await this.loadFactChecks(debateId),
     });
+  }
+
+  /**
+   * 판정할 수 없게 된 토론을 FAILED + JUDGMENT_FAILED로 닫고, 같은 트랜잭션에서 커뮤니티를 복귀시킨다.
+   * 전이가 성공한 호출만 반영하므로 분석 실패·판정 실패 경로가 겹쳐도 한 번뿐이다.
+   */
+  private async failJudgment(debate: Debate): Promise<void> {
+    const outcome: DebateOutcome = {
+      debateId: debate.id,
+      communityId: debate.communityId,
+      kind: DebateOutcomeKind.JUDGMENT_FAILED,
+      status: DebateStatus.FAILED,
+      reason: DebateEndReason.JUDGMENT_FAILED,
+      winnerId: null,
+    };
+    const moved = await this.results.failJudgment(debate.id, (manager) =>
+      this.outcomes.applyWithin(manager, outcome),
+    );
+    if (moved) {
+      await this.outcomes.announce(outcome);
+    }
   }
 
   /**

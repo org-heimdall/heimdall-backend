@@ -1,4 +1,5 @@
 import { GeneralException } from '../common/exceptions/general.exception';
+import { DebateOutcomeKind } from '../debate-outcomes/debate-outcome.types';
 import { DebateDto } from '../debates/dto/debate.dto';
 import { Debate } from '../debates/entities/debate.entity';
 import {
@@ -505,6 +506,7 @@ describe('DebateChatState', () => {
           clock.getTime() + 4 * limits.maxDurationSeconds * 1000,
         ),
         winnerId: null,
+        endReason: null,
       });
     });
 
@@ -626,7 +628,8 @@ describe('DebateChatState', () => {
       ]);
       expect(restored.turnCount).toBe(8);
       expect(restored.snapshot().currentTurn).toBeNull();
-      expect(restored.currentStatus).toBe(DebateStatus.DEBATE_FINALIZED);
+      // 양쪽 모두 한 번도 발언하지 않았으므로 판정 없이 전체 시간 초과로 끝난다.
+      expect(restored.currentStatus).toBe(DebateStatus.FAILED);
     });
 
     it('마지막 차례가 시간 초과되면 그 턴을 확정하며 토론이 정상 종료된다', () => {
@@ -685,6 +688,7 @@ describe('DebateChatState', () => {
         clearedDraftTurnIndex: null,
         debate: null,
         endReason: null,
+        outcome: null,
       });
       expect(state.drainChanges()).toEqual({
         appendedDrafts: [],
@@ -692,6 +696,7 @@ describe('DebateChatState', () => {
         clearedDraftTurnIndex: null,
         debate: null,
         endReason: null,
+        outcome: null,
       });
     });
 
@@ -731,6 +736,9 @@ describe('DebateChatState', () => {
       });
 
       expect(result.ended).toBe(true);
+      expect(result.endReason).toBe(DebateEndReason.ALL_TURNS_FINALIZED);
+      // 판정으로 넘어가므로 바로 반영할 결과는 없다.
+      expect(result.outcome).toBeNull();
       expect(restored.drainChanges()).toMatchObject({
         finalizedTurn: result.turn,
         clearedDraftTurnIndex: 3,
@@ -738,9 +746,78 @@ describe('DebateChatState', () => {
           debateStatus: DebateStatus.DEBATE_FINALIZED,
           startedAt: NOW,
           endedAt: clock,
+          endReason: DebateEndReason.ALL_TURNS_FINALIZED,
         },
         endReason: DebateEndReason.ALL_TURNS_FINALIZED,
+        outcome: null,
       });
+    });
+  });
+
+  describe('전체 시간 초과', () => {
+    // 1~3번 턴이 확정된 토론에서 마지막 차례(CLOSING/SIDE_B)가 시간 초과된다. contents는 1~3번 턴의 내용.
+    const expireLastTurn = (contents: [string, string, string]) => {
+      const restored = build({
+        turns: contents.map((content, index) => ({
+          ...finalizedTurn(index + 1, NOW),
+          content,
+        })),
+      });
+      clock = new Date(NOW.getTime() + 180_000);
+      return { restored, result: restored.expireTurn()! };
+    };
+
+    it('한쪽의 확정 턴이 전부 비어 있으면 판정 없이 FAILED로 끝나고 발언한 쪽이 이긴다', () => {
+      // SIDE_B(2번 턴, 마지막 4번 턴)는 한 글자도 쓰지 않았다.
+      const { restored, result } = expireLastTurn(['a', '', 'c']);
+
+      expect(result.ended).toBe(true);
+      expect(result.endReason).toBe(DebateEndReason.TOTAL_TIME_EXPIRED);
+      expect(restored.currentStatus).toBe(DebateStatus.FAILED);
+      const outcome = {
+        debateId: DEBATE_ID,
+        communityId: COMMUNITY_ID,
+        kind: DebateOutcomeKind.TOTAL_TIMEOUT,
+        status: DebateStatus.FAILED,
+        reason: DebateEndReason.TOTAL_TIME_EXPIRED,
+        winnerId: SIDE_A_ID,
+      };
+      expect(result.outcome).toEqual(outcome);
+      expect(restored.drainChanges()).toMatchObject({
+        debate: {
+          debateStatus: DebateStatus.FAILED,
+          endedAt: clock,
+          winnerId: SIDE_A_ID,
+          endReason: DebateEndReason.TOTAL_TIME_EXPIRED,
+        },
+        endReason: DebateEndReason.TOTAL_TIME_EXPIRED,
+        outcome,
+      });
+    });
+
+    it('공백만 있는 턴도 발언하지 않은 것으로 본다', () => {
+      const { result } = expireLastTurn(['  ', 'b', ' \n ']);
+
+      expect(result.endReason).toBe(DebateEndReason.TOTAL_TIME_EXPIRED);
+      expect(result.outcome?.winnerId).toBe(SIDE_B_ID);
+    });
+
+    it('양쪽 모두 발언하지 않았으면 승자 없이 FAILED로 끝난다', () => {
+      const { restored, result } = expireLastTurn(['', '', '']);
+
+      expect(restored.currentStatus).toBe(DebateStatus.FAILED);
+      expect(result.outcome).toMatchObject({
+        kind: DebateOutcomeKind.TOTAL_TIMEOUT,
+        winnerId: null,
+      });
+    });
+
+    it('양쪽 모두 한 번이라도 발언했으면 마지막 차례가 비어도 판정으로 넘어간다', () => {
+      const { restored, result } = expireLastTurn(['a', 'b', 'c']);
+
+      expect(restored.currentStatus).toBe(DebateStatus.DEBATE_FINALIZED);
+      expect(result.endReason).toBe(DebateEndReason.ALL_TURNS_FINALIZED);
+      expect(result.outcome).toBeNull();
     });
   });
   describe('forfeit', () => {
@@ -757,7 +834,22 @@ describe('DebateChatState', () => {
         debateStatus: DebateStatus.FAILED,
         endedAt: clock,
         winnerId: SIDE_B_ID,
+        endReason: DebateEndReason.FORFEIT,
       });
+    });
+
+    it('종료 트랜잭션에서 반영할 기권 결과를 돌려주고 변경에도 남긴다', () => {
+      const outcome = state.forfeit(SIDE_A_ID);
+
+      expect(outcome).toEqual({
+        debateId: DEBATE_ID,
+        communityId: COMMUNITY_ID,
+        kind: DebateOutcomeKind.FORFEIT,
+        status: DebateStatus.FAILED,
+        reason: DebateEndReason.FORFEIT,
+        winnerId: SIDE_B_ID,
+      });
+      expect(state.drainChanges().outcome).toEqual(outcome);
     });
 
     it('관전자는 기권할 수 없다', () => {

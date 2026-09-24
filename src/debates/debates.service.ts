@@ -80,8 +80,12 @@ export class DebatesService {
 
   // 토론 1건을 커뮤니티와 함께 조회한다.
   // 토론과 커뮤니티 모두 soft-delete되지 않은 것만 대상이며, 없으면 NOT_FOUND.
-  async findOneOrThrow(debateId: string): Promise<Debate> {
-    const debate = await this.debateRepository.findOne({
+  // manager를 받으면 호출자 트랜잭션 안에서 읽는다(방금 만들거나 바꾼 행을 보기 위해).
+  async findOneOrThrow(
+    debateId: string,
+    manager?: EntityManager,
+  ): Promise<Debate> {
+    const debate = await this.repo(manager).findOne({
       where: {
         id: debateId,
         status: ResourceStatus.NORMAL,
@@ -161,6 +165,23 @@ export class DebatesService {
         debateStatus: In([...ACTIVE_DEBATE_STATUSES]),
       },
       order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * 커뮤니티에 활성 토론(ACTIVE_DEBATE_STATUSES)이 하나라도 있는지. 토론이 끝날 때 커뮤니티 상태를
+   * 정하는 근거다. 종료 트랜잭션의 manager로 부르면 방금 바뀐 이 토론의 상태까지 반영된다.
+   */
+  async existsActiveByCommunity(
+    communityId: string,
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    return this.repo(manager).exists({
+      where: {
+        communityId,
+        status: ResourceStatus.NORMAL,
+        debateStatus: In([...ACTIVE_DEBATE_STATUSES]),
+      },
     });
   }
 

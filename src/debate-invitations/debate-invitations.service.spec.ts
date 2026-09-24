@@ -7,7 +7,10 @@ import { CommunitiesService } from '../communities/communities.service';
 import { Community } from '../communities/entities/community.entity';
 import { CommunityChatPublisher } from '../community-chat/community-chat.publisher';
 import { DebateChatService } from '../debate-chat/debate-chat.service';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
+import { DebateOutcomeKind } from '../debate-outcomes/debate-outcome.types';
 import { DebatesService } from '../debates/debates.service';
+import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
 import {
   CommunityDebateIntent,
@@ -64,6 +67,7 @@ describe('DebateInvitationsService', () => {
     findDetail: jest.Mock;
   };
   let debateChatService: { start: jest.Mock };
+  let outcomes: { applyWithin: jest.Mock; announce: jest.Mock };
   let publisher: {
     debateRequested: jest.Mock;
     debateRequestRejected: jest.Mock;
@@ -167,6 +171,10 @@ describe('DebateInvitationsService', () => {
       findDetail: jest.fn().mockResolvedValue(buildDetail()),
     };
     debateChatService = { start: jest.fn().mockResolvedValue(undefined) };
+    outcomes = {
+      applyWithin: jest.fn().mockResolvedValue(undefined),
+      announce: jest.fn().mockResolvedValue(undefined),
+    };
     publisher = {
       debateRequested: jest.fn(),
       debateRequestRejected: jest.fn(),
@@ -191,6 +199,7 @@ describe('DebateInvitationsService', () => {
         { provide: MembersService, useValue: membersService },
         { provide: DebatesService, useValue: debatesService },
         { provide: DebateChatService, useValue: debateChatService },
+        { provide: DebateOutcomeService, useValue: outcomes },
         { provide: CommunityChatPublisher, useValue: publisher },
         { provide: DebateInvitationExpiryScheduler, useValue: expiry },
         {
@@ -441,9 +450,20 @@ describe('DebateInvitationsService', () => {
       expect(repository.update).toHaveBeenCalledWith(INVITATION_ID, {
         debateId: DEBATE_ID,
       });
-      expect(communitiesService.markActive).toHaveBeenCalledWith(
-        COMMUNITY_ID,
-        manager,
+      // 시작 알림 저장과 커뮤니티 ACTIVE 전이는 같은 트랜잭션에서 한다.
+      const started = {
+        debateId: DEBATE_ID,
+        communityId: COMMUNITY_ID,
+        kind: DebateOutcomeKind.STARTED,
+        status: DebateStatus.READY,
+        reason: null,
+        winnerId: null,
+      };
+      expect(outcomes.applyWithin).toHaveBeenCalledWith(manager, started);
+      // 커밋 뒤에 저장된 시작 알림을 발행한다.
+      expect(outcomes.announce).toHaveBeenCalledWith(started);
+      expect(outcomes.announce.mock.invocationCallOrder[0]).toBeGreaterThan(
+        outcomes.applyWithin.mock.invocationCallOrder[0],
       );
       // 만료 타이머를 풀고 토론을 곧바로 시작한다.
       expect(expiry.clear).toHaveBeenCalledWith(INVITATION_ID);
@@ -472,6 +492,19 @@ describe('DebateInvitationsService', () => {
         service.accept(COMMUNITY_ID, INVITATION_ID, OPPONENT_ID),
       ).rejects.toBe(failure);
       expect(debateChatService.start).not.toHaveBeenCalled();
+      expect(publisher.debateStarted).not.toHaveBeenCalled();
+      expect(outcomes.applyWithin).not.toHaveBeenCalled();
+      expect(outcomes.announce).not.toHaveBeenCalled();
+    });
+
+    it('시작 알림 저장이 실패하면 수락 전체가 실패하고 아무것도 발행하지 않는다', async () => {
+      outcomes.applyWithin.mockRejectedValue(new Error('db down'));
+
+      await expect(
+        service.accept(COMMUNITY_ID, INVITATION_ID, OPPONENT_ID),
+      ).rejects.toThrow('db down');
+      expect(debateChatService.start).not.toHaveBeenCalled();
+      expect(outcomes.announce).not.toHaveBeenCalled();
       expect(publisher.debateStarted).not.toHaveBeenCalled();
     });
   });

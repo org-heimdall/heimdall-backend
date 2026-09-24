@@ -15,6 +15,7 @@ DB/Redis만 컨테이너로 띄우고 앱은 호스트에서 돌리는 구성이
 
 ```bash
 docker compose up -d postgres redis
+npm run migration:show
 npm run migration:run        # 스키마 최신화
 npm run start:dev
 ```
@@ -24,6 +25,7 @@ npm run start:dev
 ```bash
 npm run migration:generate -- src/migrations/<이름>
 npm run migration:run
+npm run migration:show
 ```
 
 `migration:generate`는 **현재 DB와 엔티티의 차이**를 뽑는다. 초기 스키마처럼 전체를 다시 뽑아야 하면

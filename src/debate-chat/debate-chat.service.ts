@@ -5,6 +5,7 @@ import {
   OnApplicationBootstrap,
 } from '@nestjs/common';
 import { GeneralException } from '../common/exceptions/general.exception';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
 import { DebatesService } from '../debates/debates.service';
 import { DebateDto } from '../debates/dto/debate.dto';
 import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
@@ -46,6 +47,7 @@ export class DebateChatService implements OnApplicationBootstrap {
     private readonly judge: JudgeService,
     private readonly timeouts: DebateTurnTimeoutScheduler,
     private readonly debatesService: DebatesService,
+    private readonly outcomes: DebateOutcomeService,
   ) {
     // 타이머가 도메인을 모르도록 만료 시 실행할 동작을 여기서 걸어 준다.
     this.timeouts.register((debateId) => this.expireTurn(debateId));
@@ -105,24 +107,16 @@ export class DebateChatService implements OnApplicationBootstrap {
 
   /**
    * 발언자가 기권한다(계약 POST /debates/:id/forfeit). 토론은 판정 없이 FAILED로 끝나고
-   * 승자는 상대다. 턴 타이머를 풀고 방에 debate.ended를 알리며, 판정 파이프라인은 띄우지 않는다.
+   * 승자는 상대다. 보상·시스템 메시지·커뮤니티 복귀는 저장소가 종료와 같은 트랜잭션에서 반영한다.
+   * 턴 타이머를 풀고 커밋된 결과를 방에 알리며(message.created → debate.ended), 판정 파이프라인은 띄우지 않는다.
    */
   async forfeit(debateId: string, memberId: string): Promise<void> {
-    const { communityId, status } = await this.store.withState(
-      debateId,
-      (state) => {
-        state.forfeit(memberId);
-        return { communityId: state.communityId, status: state.currentStatus };
-      },
+    const outcome = await this.store.withState(debateId, (state) =>
+      state.forfeit(memberId),
     );
 
     this.timeouts.clear(debateId);
-    this.publisher.debateEnded({
-      communityId,
-      debateId,
-      status,
-      reason: DebateEndReason.FORFEIT,
-    });
+    await this.outcomes.announce(outcome);
   }
 
   // draft 추가. APPENDED/DUPLICATE 판정과 저장된 메시지를 돌려준다(차례는 바뀌지 않는다).
@@ -152,7 +146,7 @@ export class DebateChatService implements OnApplicationBootstrap {
       }));
 
     this.timeouts.arm(debateId, deadline);
-    this.announceTurn(debateId, communityId, status, result);
+    await this.announceTurn(debateId, communityId, status, result);
     return result.turn;
   }
 
@@ -178,7 +172,7 @@ export class DebateChatService implements OnApplicationBootstrap {
       this.logger.log(
         `턴 시간 초과로 차례를 넘김: debateId=${debateId}, sequence=${result.turn.sequence}`,
       );
-      this.announceTurn(debateId, communityId, status, result);
+      await this.announceTurn(debateId, communityId, status, result);
     } catch (error: unknown) {
       if (this.isLockContention(error)) {
         // 다른 명령을 처리 중이었다. 잠시 뒤 같은 판정을 다시 시도한다.
@@ -200,13 +194,15 @@ export class DebateChatService implements OnApplicationBootstrap {
    * 직접 확정이든 시간 초과든 확정 이후는 같다.
    *
    * 저장소가 커밋을 끝낸 뒤에 불리므로, 파이프라인이 보는 턴은 이미 DB에 있다.
+   * 전체 시간 초과(한쪽 무발언)로 끝났으면 판정 없이 커밋된 결과만 알린다. 판정은 양쪽 모두 발언한
+   * 정상 종료(DEBATE_FINALIZED)에서만 시작한다.
    */
-  private announceTurn(
+  private async announceTurn(
     debateId: string,
     communityId: string,
     status: DebateStatus,
-    { turn, ended }: TurnFinalizeResult,
-  ): void {
+    { turn, ended, outcome }: TurnFinalizeResult,
+  ): Promise<void> {
     this.publisher.turnFinalized(debateId, turn);
     this.inBackground(
       () => this.judge.onTurnFinalized(turn),
@@ -214,6 +210,10 @@ export class DebateChatService implements OnApplicationBootstrap {
     );
 
     if (!ended) {
+      return;
+    }
+    if (outcome !== null) {
+      await this.outcomes.announce(outcome);
       return;
     }
     this.publisher.debateEnded({

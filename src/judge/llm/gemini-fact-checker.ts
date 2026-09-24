@@ -1,11 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI } from '@google/genai';
-import type { GenerateContentResponse } from '@google/genai';
+import type {
+  GenerateContentResponse,
+  GenerateContentResponseUsageMetadata,
+} from '@google/genai';
 import * as z from 'zod';
 import { NonRetryableTaskError } from '../judge-task.worker';
 import { VerificationStatus } from '../judge.types';
 import { FactCheckOutcome, FactCheckRequest, FactChecker } from './judge-llm';
+import { LlmCallLogger, LlmTokenUsage } from './llm-call-logger';
 
 // 2단계 (Fact Checker)는 Gemini API 사용
 const RESPONSE_JSON_SCHEMA: z.core.JSONSchema.BaseSchema = {
@@ -54,6 +58,7 @@ export class GeminiFactChecker implements FactChecker {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly client: GoogleGenAI | null;
+  private readonly callLogger = new LlmCallLogger();
 
   constructor(configService: ConfigService) {
     this.model = configService.getOrThrow<string>('GEMINI_MODEL');
@@ -76,17 +81,23 @@ export class GeminiFactChecker implements FactChecker {
       );
     }
 
-    const response = await this.client.models.generateContent({
-      model: this.model,
-      contents: buildInput(request),
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        tools: [{ googleSearch: {} }],
-        responseMimeType: 'application/json',
-        responseJsonSchema: RESPONSE_JSON_SCHEMA,
-        httpOptions: { timeout: this.timeoutMs },
-      },
-    });
+    const client = this.client;
+    const response = await this.callLogger.measure(
+      { provider: 'gemini', model: this.model, operation: 'fact_check' },
+      () =>
+        client.models.generateContent({
+          model: this.model,
+          contents: buildInput(request),
+          config: {
+            systemInstruction: SYSTEM_INSTRUCTION,
+            tools: [{ googleSearch: {} }],
+            responseMimeType: 'application/json',
+            responseJsonSchema: RESPONSE_JSON_SCHEMA,
+            httpOptions: { timeout: this.timeoutMs },
+          },
+        }),
+      (result) => toTokenUsage(result.usageMetadata),
+    );
 
     // 검증을 통과한 값만 이 자리에 온다 — 모양 보증은 위의 스키마가 한다.
     const outcome = RESPONSE_VALIDATOR.parse(
@@ -95,6 +106,19 @@ export class GeminiFactChecker implements FactChecker {
 
     return { ...outcome, groundedDomains: extractGroundedDomains(response) };
   }
+}
+
+// Gemini의 usageMetadata를 공통 로그 모양으로 옮긴다. 출력 토큰은 후보 응답 기준이며 사고 토큰은 따로 싣는다.
+function toTokenUsage(
+  usage: GenerateContentResponseUsageMetadata | undefined,
+): LlmTokenUsage {
+  return {
+    inputTokens: usage?.promptTokenCount ?? null,
+    outputTokens: usage?.candidatesTokenCount ?? null,
+    totalTokens: usage?.totalTokenCount ?? null,
+    cachedTokens: usage?.cachedContentTokenCount ?? null,
+    reasoningTokens: usage?.thoughtsTokenCount ?? null,
+  };
 }
 
 // 검증 대상과 맥락을 한 덩어리로. 문장만 주면 대명사·생략된 주어를 검색할 수 없다.
