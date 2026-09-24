@@ -6,48 +6,68 @@ import type {
   GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import * as z from 'zod';
+import { MAX_SOURCES } from '../fact-checker.service';
 import { NonRetryableTaskError } from '../judge-task.worker';
 import { VerificationStatus } from '../judge.types';
 import { FactCheckOutcome, FactCheckRequest, FactChecker } from './judge-llm';
 import { LlmCallLogger, LlmTokenUsage } from './llm-call-logger';
 
 // 2단계 (Fact Checker)는 Gemini API 사용
-const RESPONSE_JSON_SCHEMA: z.core.JSONSchema.BaseSchema = {
-  type: 'object',
-  properties: {
-    status: {
-      type: 'string',
-      enum: Object.values(VerificationStatus),
-      description: '검증 결과.',
+const SOURCES_JSON_SCHEMA: z.core.JSONSchema.BaseSchema = {
+  type: 'array',
+  description: `판정 근거가 된 출처. 검색 결과에 실제로 있던 것만 최대 ${MAX_SOURCES}개까지 넣는다.`,
+  items: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: '문서 제목.' },
+      publisher: { type: 'string', description: '발행 매체·기관 이름.' },
+      url: { type: 'string', description: '원문 URL.' },
     },
-    reason: {
-      type: 'string',
-      description: '왜 그렇게 판정했는지 한국어 두세 문장.',
-    },
-    sources: {
-      type: 'array',
-      description: '판정 근거가 된 출처. 검색 결과에 실제로 있던 것만 넣는다.',
-      items: {
-        type: 'object',
-        properties: {
-          title: { type: 'string', description: '문서 제목.' },
-          publisher: { type: 'string', description: '발행 매체·기관 이름.' },
-          url: { type: 'string', description: '원문 URL.' },
-        },
-        required: ['title', 'publisher', 'url'],
-      },
-    },
+    required: ['title', 'publisher', 'url'],
   },
-  required: ['status', 'reason', 'sources'],
 };
 
-// 응답 검증기. 스키마를 어기면 throw되고 worker가 재시도로 넘긴다.
-const RESPONSE_VALIDATOR = z.fromJSONSchema(RESPONSE_JSON_SCHEMA);
+// 응답 스키마 골격. 출처 스키마만 모델용/검증용으로 갈아 끼운다.
+function buildResponseJsonSchema(
+  sources: z.core.JSONSchema.BaseSchema,
+): z.core.JSONSchema.BaseSchema {
+  return {
+    type: 'object',
+    properties: {
+      status: {
+        type: 'string',
+        enum: Object.values(VerificationStatus),
+        description: '검증 결과.',
+      },
+      reason: {
+        type: 'string',
+        description: '왜 그렇게 판정했는지 한국어 두세 문장.',
+      },
+      sources,
+    },
+    required: ['status', 'reason', 'sources'],
+  };
+}
+
+// 모델에 보내는 스키마. 출처 개수 상한을 생성 단계에서부터 건다.
+const RESPONSE_JSON_SCHEMA = buildResponseJsonSchema({
+  ...SOURCES_JSON_SCHEMA,
+  maxItems: MAX_SOURCES,
+});
+
+/**
+ * 응답 검증기. 스키마를 어기면 throw되고 worker가 재시도로 넘긴다.
+ * 출처 개수 상한은 일부러 뺀다 — 넘친 출처는 거부하지 않고 FactCheckerService가 잘라내기 때문이다.
+ */
+const RESPONSE_VALIDATOR = z.fromJSONSchema(
+  buildResponseJsonSchema(SOURCES_JSON_SCHEMA),
+);
 
 const SYSTEM_INSTRUCTION = [
   '너는 토론 발언의 사실 여부를 검증하는 팩트체커다.',
   'Google 검색으로 근거를 찾은 뒤에만 판정한다. 검색으로 확인하지 못한 것은 INSUFFICIENT_EVIDENCE로 둔다.',
   '출처는 검색 결과에 실제로 있던 문서만 넣고, URL을 지어내지 않는다.',
+  `출처는 판정에 가장 직접적인 근거가 된 것부터 최대 ${MAX_SOURCES}개까지만 넣는다.`,
   'SUPPORTED(뒷받침됨) · CONTRADICTED(반대 근거) · PARTIALLY_SUPPORTED(일부만) · INSUFFICIENT_EVIDENCE(자료 부족) · NOT_VERIFIABLE(검증 대상 아님) · OUTDATED(과거엔 맞았으나 현재는 아님) 중에서 고른다.',
   '설명은 한국어로 쓴다.',
 ].join('\n');

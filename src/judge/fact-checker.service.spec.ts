@@ -6,6 +6,7 @@ import { Debate } from '../debates/entities/debate.entity';
 import {
   FactCheckerService,
   FactCheckSourceValidationError,
+  MAX_SOURCES,
 } from './fact-checker.service';
 import { NonRetryableTaskError } from './judge-task.worker';
 import { JudgeResultRepository } from './judge-result.repository';
@@ -137,6 +138,30 @@ describe('FactCheckerService', () => {
       ['round', 1],
       ['targets', [COMPONENT_ID]],
     ]);
+  });
+
+  it('출처가 상한을 넘으면 검색 결과와 일치하는 출처를 먼저 두고 잘라 저장한다', async () => {
+    const source = (host: string) => ({
+      title: host,
+      publisher: host,
+      url: `https://${host}/a`,
+    });
+    // 검색 결과와 무관한 출처가 앞에 와도 일치하는 출처가 먼저 남는다.
+    const ungrounded = ['a.com', 'b.com', 'c.com'].map(source);
+    const grounded = ['x.com', 'y.com'].map(source);
+    factChecker.check.mockResolvedValue({
+      ...outcome,
+      sources: [...ungrounded, ...grounded],
+      groundedDomains: ['x.com', 'y.com'],
+    });
+
+    await service.handle(task);
+
+    expect(results.replaceFactCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [...grounded, ungrounded[0]].slice(0, MAX_SOURCES),
+      }),
+    );
   });
 
   describe('Source Validator', () => {
