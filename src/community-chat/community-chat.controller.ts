@@ -65,7 +65,7 @@ export class CommunityChatController {
   @ApiOperation({
     summary: '커뮤니티 메시지 전송',
     description:
-      '커뮤니티 참여자만 보낼 수 있다. 같은 clientMessageId를 다시 보내면 저장 없이 기존 메시지를 돌려준다.',
+      '기조 발언을 작성한 커뮤니티 참여자만 보낼 수 있다. 같은 clientMessageId를 다시 보내면 저장 없이 기존 메시지를 돌려준다.',
   })
   @ApiParam({ name: 'communityId', format: 'uuid' })
   @ApiCreatedResponse({ type: CommunityMessageDto })
@@ -73,6 +73,7 @@ export class CommunityChatController {
     CommunityErrorCode.NOT_FOUND,
     MemberErrorCode.NOT_FOUND,
     CommunityChatErrorCode.NOT_PARTICIPANT,
+    CommunityChatErrorCode.OPINION_REQUIRED,
   )
   @ApiAuthRequired()
   @Post('messages')

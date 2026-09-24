@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
+import type { ResponseUsage } from 'openai/resources/responses/responses';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 import { MAX_SCORE, MIN_SCORE } from '../debate-judge.service';
@@ -20,6 +21,7 @@ import {
   SideJudgment,
   SILENT_TURN_PLACEHOLDER,
 } from './judge-llm';
+import { LlmCallLogger, LlmTokenUsage } from './llm-call-logger';
 
 // 1단계, 3단계 (Argument Analyzer, Debate Judge)는 OpenAI API 사용
 @Injectable()
@@ -27,6 +29,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
   private readonly logger = new Logger(OpenAiJudgeLlm.name);
   private readonly model: string;
   private readonly client: OpenAI | null;
+  private readonly callLogger = new LlmCallLogger();
 
   constructor(configService: ConfigService) {
     this.model = configService.getOrThrow<string>('OPENAI_MODEL');
@@ -48,6 +51,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
 
   async analyze(request: AnalyzerRequest): Promise<AnalyzerResult> {
     const parsed = await this.parse(
+      'analyze',
       SYSTEM_PROMPT_ANALYZER,
       buildAnalyzerInput(request),
       AnalyzedGraph,
@@ -75,12 +79,14 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
     // 두 판정은 서로 독립이라 순차로 기다릴 이유가 없다(판정 대기 시간에 직결된다).
     const [performance, violation] = await Promise.all([
       this.parse(
+        'judge.performance',
         SYSTEM_PROMPT_JUDGE,
         input,
         JudgingDebatePerformance,
         'judging_debate_performance',
       ),
       this.parse(
+        'judge.violation',
         SYSTEM_PROMPT_VIOLATION,
         input,
         JudgingDebateViolation,
@@ -98,6 +104,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
 
   // 구조화 출력 호출의 공통부. 스키마와 프롬프트만 갈아 끼운다.
   private async parse<T extends z.ZodType>(
+    operation: string,
     systemPrompt: string,
     input: string,
     schema: T,
@@ -110,14 +117,21 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
       );
     }
 
-    const response = await this.client.responses.parse({
-      model: this.model,
-      input: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: input },
-      ],
-      text: { format: zodTextFormat(schema, schemaName) },
-    });
+    const client = this.client;
+    // 호출마다 소요 시간과 token usage를 남긴다(판정은 두 호출이 병렬이라 두 줄이 남는다).
+    const response = await this.callLogger.measure(
+      { provider: 'openai', model: this.model, operation },
+      () =>
+        client.responses.parse({
+          model: this.model,
+          input: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: input },
+          ],
+          text: { format: zodTextFormat(schema, schemaName) },
+        }),
+      (result) => toTokenUsage(result.usage),
+    );
 
     // 안전상 거부·토큰 한도 초과·서버 측 실패에서는 스키마를 지키지 못해 파싱 결과가 비어 있다.
     // SDK가 예외를 던지지 않으므로 직접 확인하고 재시도 대상으로 올린다.
@@ -132,6 +146,17 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
 }
 
 // ---------------------------------------------------------------- Argument Analyzer
+
+// OpenAI Responses API의 usage를 공통 로그 모양으로 옮긴다.
+function toTokenUsage(usage: ResponseUsage | undefined): LlmTokenUsage {
+  return {
+    inputTokens: usage?.input_tokens ?? null,
+    outputTokens: usage?.output_tokens ?? null,
+    totalTokens: usage?.total_tokens ?? null,
+    cachedTokens: usage?.input_tokens_details?.cached_tokens ?? null,
+    reasoningTokens: usage?.output_tokens_details?.reasoning_tokens ?? null,
+  };
+}
 
 const AnalyzedGraph = z.object({
   components: z.array(

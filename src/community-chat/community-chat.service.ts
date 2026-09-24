@@ -100,14 +100,14 @@ export class CommunityChatService {
     );
   }
 
-  // 메시지 전송(참여자만). 같은 clientMessageId를 다시 보내면 저장 없이 DUPLICATE로 알린다.
+  // 메시지 전송(기조 발언을 작성한 참여자만). 같은 clientMessageId를 다시 보내면 저장 없이 DUPLICATE로 알린다.
   async sendMessage(
     communityId: string,
     memberId: string,
     text: string,
     clientMessageId: string,
   ): Promise<CommunityMessageResult> {
-    const author = await this.requireParticipantMember(communityId, memberId);
+    const author = await this.requireOpinionAuthor(communityId, memberId);
 
     const result = await this.communityMessagesService.create(
       CommunityMessage.write({
@@ -157,8 +157,11 @@ export class CommunityChatService {
     );
   }
 
-  // 커뮤니티가 살아 있고 요청자가 참여자인지 확인하고, 작성자 회원을 돌려준다.
-  private async requireParticipantMember(
+  /**
+   * 커뮤니티가 살아 있고 요청자가 기조 발언을 작성한 참여자인지 확인하고, 작성자 회원을 돌려준다.
+   * 저장·broadcast 전에 던지므로 조건을 만족하지 못한 메시지는 남지 않는다.
+   */
+  private async requireOpinionAuthor(
     communityId: string,
     memberId: string,
   ): Promise<Member> {
@@ -170,6 +173,9 @@ export class CommunityChatService {
     );
     if (!participation) {
       throw new GeneralException(CommunityChatErrorCode.NOT_PARTICIPANT);
+    }
+    if (participation.opinion === null) {
+      throw new GeneralException(CommunityChatErrorCode.OPINION_REQUIRED);
     }
 
     return this.membersService.findOneOrThrow(memberId);

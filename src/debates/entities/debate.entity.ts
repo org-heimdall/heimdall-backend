@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { Community } from '../../communities/entities/community.entity';
 import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity';
+import { DebateEndReason } from './debate-end-reason.enum';
 import { DebateStatus } from './debate-status.enum';
 
 export enum DebateTurn {
@@ -78,6 +79,10 @@ export class Debate extends SoftDeletableEntity {
 
   @Column({ type: 'uuid', nullable: true })
   winnerId: string | null;
+
+  // 토론이 끝난 이유. 끝나지 않았으면 null. FAILED의 원인(기권·시간 초과·판정 실패)을 가르는 유일한 근거다.
+  @Column({ type: 'enum', enum: DebateEndReason, nullable: true })
+  endReason: DebateEndReason | null;
 
   @ManyToOne(() => Community, { nullable: false })
   @JoinColumn({ name: 'community_id' })

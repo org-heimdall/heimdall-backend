@@ -1,4 +1,8 @@
 import { Repository } from 'typeorm';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
+import { DebateOutcomeKind } from '../debate-outcomes/debate-outcome.types';
+import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
+import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { DebatePhase, DebateSide } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
@@ -14,7 +18,10 @@ import {
   toSocialCreditPenalty,
 } from './debate-judge.service';
 import { NonRetryableTaskError } from './judge-task.worker';
-import { JudgeResultRepository } from './judge-result.repository';
+import {
+  JudgeResultRepository,
+  JudgmentAlreadySettledError,
+} from './judge-result.repository';
 import {
   ArgumentComponentKind,
   ArgumentRelationKind,
@@ -52,6 +59,7 @@ describe('DebateJudgeService', () => {
   };
   let debates: { findOneOrThrow: jest.Mock };
   let members: { deductSocialCredit: jest.Mock };
+  let outcomes: { applyWithin: jest.Mock; announce: jest.Mock };
   let service: DebateJudgeService;
 
   const task = Object.assign(new JudgeTask(), {
@@ -67,6 +75,8 @@ describe('DebateJudgeService', () => {
   const buildDebate = (overrides: Partial<Debate> = {}): Debate =>
     Object.assign(new Debate(), {
       id: DEBATE_ID,
+      communityId: 'community-uuid',
+      endReason: DebateEndReason.ALL_TURNS_FINALIZED,
       topic: 'AI 규제, 필요한가?',
       hostId: HOST_ID,
       hostNickname: '메시',
@@ -143,6 +153,10 @@ describe('DebateJudgeService', () => {
     };
     members = { deductSocialCredit: jest.fn().mockResolvedValue(undefined) };
     debates = { findOneOrThrow: jest.fn().mockResolvedValue(buildDebate()) };
+    outcomes = {
+      applyWithin: jest.fn().mockResolvedValue(undefined),
+      announce: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new DebateJudgeService(
       judge,
@@ -150,7 +164,74 @@ describe('DebateJudgeService', () => {
       results as unknown as JudgeResultRepository,
       debates as unknown as DebatesService,
       members as unknown as MembersService,
+      outcomes as unknown as DebateOutcomeService,
     );
+  });
+
+  describe('결과 반영', () => {
+    const resultOutcome = (winnerId: string | null) => ({
+      debateId: DEBATE_ID,
+      communityId: 'community-uuid',
+      kind: DebateOutcomeKind.RESULT,
+      status: DebateStatus.COMPLETED,
+      reason: DebateEndReason.ALL_TURNS_FINALIZED,
+      winnerId,
+    });
+
+    it('판정 트랜잭션 안에서 승리 보상·결과 알림·커뮤니티 복귀를 반영하고 커밋 뒤에 알린다', async () => {
+      await service.handle(task);
+
+      expect(outcomes.applyWithin).toHaveBeenCalledWith(
+        MANAGER,
+        resultOutcome(OPPONENT_ID),
+      );
+      expect(outcomes.announce).toHaveBeenCalledWith(
+        resultOutcome(OPPONENT_ID),
+      );
+      expect(outcomes.announce.mock.invocationCallOrder[0]).toBeGreaterThan(
+        outcomes.applyWithin.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('무승부면 보상 대상(winnerId)이 없다', async () => {
+      judge.judge.mockResolvedValue(
+        judgment({
+          sideB: {
+            argumentationScore: 70,
+            interactionScore: 60,
+            factualReliabilityScore: 70,
+            feedback: 'B 피드백',
+            violations: [],
+          },
+        }),
+      );
+
+      await service.handle(task);
+
+      expect(outcomes.applyWithin).toHaveBeenCalledWith(
+        MANAGER,
+        resultOutcome(null),
+      );
+    });
+
+    it('이미 확정된 판정의 중복 실행은 차감·보상·알림 없이 조용히 끝난다', async () => {
+      // 조건부 전이에서 져 트랜잭션이 롤백된 상황(부수 작업 콜백은 불리지 않는다).
+      results.completeJudgment.mockRejectedValue(
+        new JudgmentAlreadySettledError(DEBATE_ID),
+      );
+
+      await expect(service.handle(task)).resolves.toBeUndefined();
+      expect(members.deductSocialCredit).not.toHaveBeenCalled();
+      expect(outcomes.applyWithin).not.toHaveBeenCalled();
+      expect(outcomes.announce).not.toHaveBeenCalled();
+    });
+
+    it('결과 반영이 실패하면 판정도 실패로 전파해 재시도로 넘긴다', async () => {
+      outcomes.applyWithin.mockRejectedValue(new Error('reward failed'));
+
+      await expect(service.handle(task)).rejects.toThrow('reward failed');
+      expect(outcomes.announce).not.toHaveBeenCalled();
+    });
   });
 
   it('총점은 서버가 가중합으로 계산하고 승자도 서버가 정한다', async () => {

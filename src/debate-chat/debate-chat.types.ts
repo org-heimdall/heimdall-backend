@@ -21,15 +21,10 @@ export type { DebateChatTurn, DraftMessage };
 // 채팅이 전이시키는 구간은 READY → IN_PROGRESS → DEBATE_FINALIZED(전원 발언) 또는 FAILED(시간 초과)이며,
 // JUDGING 이후는 처리 파이프라인(Phase 3) 담당이다.
 import { DebateStatus } from '../debates/entities/debate-status.enum';
+// 토론이 끝난 이유도 debate 행의 컬럼(end_reason)이라 소유 도메인에 있다.
+import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
 
-export { DebateStatus };
-
-// 토론이 끝난 이유. 시간 초과는 토론이 아니라 차례만 넘기므로 여기에 들어가지 않는다.
-export enum DebateEndReason {
-  ALL_TURNS_FINALIZED = 'ALL_TURNS_FINALIZED',
-  // 발언자가 POST /debates/:id/forfeit으로 기권했다. 상태는 FAILED, 승자는 상대다.
-  FORFEIT = 'FORFEIT',
-}
+export { DebateStatus, DebateEndReason };
 
 export enum DebateProcessingStage {
   ANALYZER = 'ANALYZER',

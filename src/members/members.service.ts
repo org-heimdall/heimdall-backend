@@ -13,7 +13,11 @@ import { CreateMemberProfileDto } from './dto/create-member-profile.dto';
 import { LoginMemberDto } from './dto/login-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { MemberDto } from './dto/member.dto';
-import { MEMBER_EMAIL_UNIQUE, Member } from './entities/member.entity';
+import {
+  DEBATE_WIN_REWARD,
+  MEMBER_EMAIL_UNIQUE,
+  Member,
+} from './entities/member.entity';
 import { MemberOAuthAccount } from './entities/member-oauth-account.entity';
 import { MemberErrorCode } from './exceptions/member-error-code';
 import { OAuthProviderType } from './members.enums';
@@ -284,6 +288,25 @@ export class MembersService {
 
     member.deductSocialCredit(amount);
     await repository.save(member);
+  }
+
+  /**
+   * 토론 승자에게 보상을 준다(rating += DEBATE_WIN_REWARD). 읽고 쓰는 사이 다른 갱신이 끼지 않도록
+   * 한 문장의 원자적 증가로 처리하고, 토론 종료와 함께 남도록 호출자의 manager로 참여한다.
+   * 탈퇴 회원은 신뢰도 차감과 같은 정책으로 건너뛴다. DB 오류는 전파해 종료 트랜잭션 전체를 롤백시킨다.
+   */
+  async rewardWin(memberId: string, manager?: EntityManager): Promise<void> {
+    const result = await (manager ?? this.memberRepository.manager).increment(
+      Member,
+      { id: memberId, status: ResourceStatus.NORMAL },
+      'rating',
+      DEBATE_WIN_REWARD,
+    );
+    if ((result.affected ?? 0) === 0) {
+      this.logger.warn(
+        `승리 보상 대상 회원을 찾을 수 없음: memberId=${memberId}`,
+      );
+    }
   }
 
   // id로 회원을 조회하고, 없으면 GeneralException(NOT_FOUND)을 던진다.

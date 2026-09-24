@@ -4,6 +4,7 @@ import { CLOCK, systemClock } from '../common/scheduling/clock';
 import { CommunitiesModule } from '../communities/communities.module';
 import { CommunityChatPublisherModule } from '../community-chat/community-chat-publisher.module';
 import { DebateChatModule } from '../debate-chat/debate-chat.module';
+import { DebateOutcomesModule } from '../debate-outcomes/debate-outcomes.module';
 import { DebatesModule } from '../debates/debates.module';
 import { MemberCommunitiesModule } from '../member-communities/member-communities.module';
 import { MembersModule } from '../members/members.module';
@@ -24,6 +25,8 @@ import { DebateInvitation } from './entities/debate-invitation.entity';
     // 수락과 동시에 토론을 시작하기 위해 토론 채팅 서비스를 쓴다.
     // 토론 채팅은 이 모듈을 모르므로 순환이 생기지 않는다.
     DebateChatModule,
+    // 토론 시작 알림 저장과 커뮤니티 상태 전이를 수락 트랜잭션에 함께 넣는다.
+    DebateOutcomesModule,
     CommunityChatPublisherModule,
   ],
   controllers: [DebateInvitationsController],

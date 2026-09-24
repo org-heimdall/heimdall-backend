@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunityErrorCode } from './exceptions/community-error-code';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
 import { Community, CommunityState } from './entities/community.entity';
 import { Theme } from './entities/theme.entity';
 import { CommunityFavorite } from './entities/community-favorite.entity';
@@ -195,16 +195,55 @@ export class CommunitiesService {
   }
 
   /**
-   * 토론이 시작되면 커뮤니티를 진행 중으로 옮긴다(WAITING → ACTIVE).
-   * 이미 ACTIVE면 결과가 같으므로 조건 없이 갱신한다. 초대 수락 트랜잭션에 manager로 참여한다.
+   * 활성 토론이 생기면 커뮤니티를 진행 중으로 옮긴다(→ ACTIVE).
+   * 이미 ACTIVE면 결과가 같아 멱등하다. 닫힌(CLOSED) 커뮤니티는 되살리지 않는다.
    */
   async markActive(
     communityId: string,
     manager?: EntityManager,
   ): Promise<void> {
+    await this.changeState(communityId, CommunityState.ACTIVE, manager);
+  }
+
+  /**
+   * 활성 토론이 모두 끝나면 커뮤니티를 대기 중으로 되돌린다(→ WAITING).
+   * 이미 WAITING이면 결과가 같아 멱등하다. 닫힌(CLOSED) 커뮤니티는 되살리지 않는다.
+   */
+  async markWaiting(
+    communityId: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    await this.changeState(communityId, CommunityState.WAITING, manager);
+  }
+
+  /**
+   * 커뮤니티 행에 쓰기 락을 건다(트랜잭션 안에서만 의미가 있다).
+   * "활성 토론이 있는지 보고 상태를 정하는" 흐름이 초대 수락의 markActive와 엇갈리지 않도록 직렬화한다.
+   * 삭제된 커뮤니티면 null.
+   */
+  async lockForUpdate(
+    communityId: string,
+    manager: EntityManager,
+  ): Promise<Community | null> {
+    return manager.getRepository(Community).findOne({
+      where: { id: communityId, status: ResourceStatus.NORMAL },
+      lock: { mode: 'pessimistic_write' },
+    });
+  }
+
+  // 커뮤니티 진행 상태 전이. CLOSED는 토론 흐름이 아닌 별도 결정이라 덮어쓰지 않는다.
+  private async changeState(
+    communityId: string,
+    next: CommunityState.ACTIVE | CommunityState.WAITING,
+    manager?: EntityManager,
+  ): Promise<void> {
     await this.repo(manager).update(
-      { id: communityId, status: ResourceStatus.NORMAL },
-      { state: CommunityState.ACTIVE },
+      {
+        id: communityId,
+        status: ResourceStatus.NORMAL,
+        state: Not(CommunityState.CLOSED),
+      },
+      { state: next },
     );
   }
 

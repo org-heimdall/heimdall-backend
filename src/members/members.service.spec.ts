@@ -5,6 +5,7 @@ import * as bcrypt from 'bcrypt';
 import { MembersService } from './members.service';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import {
+  DEBATE_WIN_REWARD,
   INITIAL_SOCIAL_CREDIT,
   MEMBER_EMAIL_UNIQUE,
   Member,
@@ -623,6 +624,45 @@ describe('MembersService', () => {
       expect(txRepository.save).toHaveBeenCalledWith(member);
       // 판정 저장과 같은 트랜잭션에서 커밋되어야 하므로 기본 레포지토리를 쓰면 안 된다.
       expect(repository.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('rewardWin', () => {
+    const buildManager = (affected: number) => ({
+      increment: jest.fn().mockResolvedValue({ affected }),
+    });
+
+    it('정상 회원의 rating을 승리 보상만큼 원자적으로 올린다', async () => {
+      const manager = buildManager(1);
+
+      await service.rewardWin('member-uuid', manager as never);
+
+      expect(manager.increment).toHaveBeenCalledWith(
+        Member,
+        // 탈퇴(soft-delete) 회원은 status 조건에 걸려 갱신되지 않는다.
+        { id: 'member-uuid', status: ResourceStatus.NORMAL },
+        'rating',
+        DEBATE_WIN_REWARD,
+      );
+      expect(DEBATE_WIN_REWARD).toBe(10);
+    });
+
+    it('탈퇴한 회원이면 경고만 남기고 넘어간다', async () => {
+      const manager = buildManager(0);
+
+      await expect(
+        service.rewardWin('member-uuid', manager as never),
+      ).resolves.toBeUndefined();
+    });
+
+    it('DB 오류는 전파해 호출자 트랜잭션을 롤백시킨다', async () => {
+      const manager = {
+        increment: jest.fn().mockRejectedValue(new Error('db down')),
+      };
+
+      await expect(
+        service.rewardWin('member-uuid', manager as never),
+      ).rejects.toThrow('db down');
     });
   });
 

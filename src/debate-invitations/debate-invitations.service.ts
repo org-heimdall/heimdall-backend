@@ -19,8 +19,14 @@ import type { Clock } from '../common/scheduling/clock';
 import { CommunitiesService } from '../communities/communities.service';
 import { CommunityChatPublisher } from '../community-chat/community-chat.publisher';
 import { DebateChatService } from '../debate-chat/debate-chat.service';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
+import {
+  DebateOutcome,
+  DebateOutcomeKind,
+} from '../debate-outcomes/debate-outcome.types';
 import { DebatesService } from '../debates/debates.service';
 import { DebateDetailDto } from '../debates/dto/debate.dto';
+import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
 import { CommunityDebateIntent } from '../member-communities/entities/member-community.entity';
 import { MemberCommunitiesService } from '../member-communities/member-communities.service';
@@ -65,6 +71,7 @@ export class DebateInvitationsService implements OnApplicationBootstrap {
     private readonly membersService: MembersService,
     private readonly debatesService: DebatesService,
     private readonly debateChatService: DebateChatService,
+    private readonly outcomes: DebateOutcomeService,
     private readonly publisher: CommunityChatPublisher,
     private readonly expiry: DebateInvitationExpiryScheduler,
     private readonly config: DebateInvitationsConfig,
@@ -153,8 +160,8 @@ export class DebateInvitationsService implements OnApplicationBootstrap {
 
   /**
    * 초대받은 사람이 수락한다(계약 POST …/:invitationId/accept).
-   * 초대를 ACCEPTED로 옮기는 것과 토론 생성은 한 트랜잭션이다 — 둘 중 하나만 남으면
-   * 영원히 시작되지 않는 초대나 아무도 모르는 토론이 된다.
+   * 초대를 ACCEPTED로 옮기는 것과 토론 생성, 시작 알림 저장, 커뮤니티 ACTIVE 전이는 한 트랜잭션이다 —
+   * 하나만 남으면 영원히 시작되지 않는 초대나 아무도 모르는 토론이 된다.
    */
   async accept(
     communityId: string,
@@ -167,9 +174,9 @@ export class DebateInvitationsService implements OnApplicationBootstrap {
     const community = await this.communitiesService.findOneOrThrow(communityId);
     const now = this.now();
 
-    let debateId: string;
+    let started: DebateOutcome;
     try {
-      debateId = await this.dataSource.transaction(async (manager) => {
+      started = await this.dataSource.transaction(async (manager) => {
         const moved = await this.transition(
           invitationId,
           DebateInvitationStatus.ACCEPTED,
@@ -196,9 +203,17 @@ export class DebateInvitationsService implements OnApplicationBootstrap {
         );
 
         await this.repo(manager).update(invitationId, { debateId: debate.id });
-        // 토론이 시작되면 커뮤니티는 대기 중이 아니라 진행 중이다.
-        await this.communitiesService.markActive(communityId, manager);
-        return debate.id;
+        // 시작 알림(시스템 메시지)을 남기고, 활성 토론이 생겼으니 커뮤니티를 진행 중으로 옮긴다.
+        const outcome: DebateOutcome = {
+          debateId: debate.id,
+          communityId,
+          kind: DebateOutcomeKind.STARTED,
+          status: DebateStatus.READY,
+          reason: null,
+          winnerId: null,
+        };
+        await this.outcomes.applyWithin(manager, outcome);
+        return outcome;
       });
     } catch (error: unknown) {
       if (error instanceof InvitationTransitionLost) {
@@ -208,12 +223,15 @@ export class DebateInvitationsService implements OnApplicationBootstrap {
     }
 
     this.expiry.clear(invitationId);
+    const debateId = started.debateId;
 
     // 수락과 동시에 토론을 시작한다 — 대기 화면에서 토론 화면으로 바로 넘어가므로
     // 응답의 startedAt/expiresAt이 확정된 값이어야 한다.
     await this.debateChatService.start(debateId, memberId);
     const detail = await this.debatesService.findDetail(debateId, memberId);
 
+    // 커밋된 시작 알림을 커뮤니티 방에 보낸다(저장이 먼저, 발행은 그 뒤).
+    await this.outcomes.announce(started);
     this.publisher.debateStarted({
       communityId,
       debateId,

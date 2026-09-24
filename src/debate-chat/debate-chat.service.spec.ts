@@ -1,5 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { GeneralException } from '../common/exceptions/general.exception';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
+import { DebateOutcomeKind } from '../debate-outcomes/debate-outcome.types';
 import { DebatesService } from '../debates/debates.service';
 import { DebateErrorCode } from '../debates/exceptions/debate-error-code';
 import { DebateChatState, DebateTurnSchedule } from './debate-chat-state';
@@ -28,6 +30,7 @@ describe('DebateChatService', () => {
   let state: DebateChatState;
   let clock: Date;
   let store: { withState: jest.Mock };
+  let outcomes: { announce: jest.Mock };
 
   const DEBATE_ID = 'debate-uuid';
   const COMMUNITY_ID = 'community-uuid';
@@ -122,6 +125,8 @@ describe('DebateChatService', () => {
       findOneDto: jest.fn().mockResolvedValue({ id: DEBATE_ID }),
     };
 
+    outcomes = { announce: jest.fn().mockResolvedValue(undefined) };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DebateChatService,
@@ -130,6 +135,7 @@ describe('DebateChatService', () => {
         { provide: JudgeService, useValue: pipeline },
         { provide: DebateTurnTimeoutScheduler, useValue: timeouts },
         { provide: DebatesService, useValue: debatesService },
+        { provide: DebateOutcomeService, useValue: outcomes },
       ],
     }).compile();
 
@@ -349,6 +355,36 @@ describe('DebateChatService', () => {
       });
       expect(pipeline.onDebateEnded).toHaveBeenCalledTimes(1);
       expect(timeouts.arm).toHaveBeenLastCalledWith(DEBATE_ID, null);
+      // 판정으로 넘어가는 종료는 결과 반영 알림을 쓰지 않는다.
+      expect(outcomes.announce).not.toHaveBeenCalled();
+    });
+
+    it('한쪽이 한 번도 발언하지 않은 채 모든 차례가 지나면 판정 없이 전체 시간 초과 결과만 알린다', async () => {
+      // SIDE_A만 발언하고 SIDE_B의 두 차례는 모두 시간 초과로 비어 있다.
+      await send(DebateSide.SIDE_A, 'x');
+      await finalize(DebateSide.SIDE_A);
+      clock = new Date(clock.getTime() + 180_000);
+      await service.expireTurn(DEBATE_ID);
+      await send(DebateSide.SIDE_A, 'y', undefined, DebatePhase.CLOSING);
+      await finalize(DebateSide.SIDE_A, DebatePhase.CLOSING);
+      clock = new Date(clock.getTime() + 180_000);
+
+      await service.expireTurn(DEBATE_ID);
+
+      expect(state.currentStatus).toBe(DebateStatus.FAILED);
+      expect(outcomes.announce).toHaveBeenCalledTimes(1);
+      expect(outcomes.announce).toHaveBeenCalledWith({
+        debateId: DEBATE_ID,
+        communityId: COMMUNITY_ID,
+        kind: DebateOutcomeKind.TOTAL_TIMEOUT,
+        status: DebateStatus.FAILED,
+        reason: DebateEndReason.TOTAL_TIME_EXPIRED,
+        winnerId: HOST_ID,
+      });
+      // debate.ended는 결과 반영 알림이 한 번만 보낸다(여기서 따로 보내지 않는다).
+      expect(publisher.debateEnded).not.toHaveBeenCalled();
+      expect(pipeline.onDebateEnded).not.toHaveBeenCalled();
+      expect(timeouts.arm).toHaveBeenLastCalledWith(DEBATE_ID, null);
     });
 
     it('다른 명령을 처리 중이라 락을 잡지 못하면 잠시 뒤 다시 시도한다', async () => {
@@ -469,12 +505,17 @@ describe('DebateChatService', () => {
 
       expect(state.currentStatus).toBe(DebateStatus.FAILED);
       expect(timeouts.clear).toHaveBeenCalledWith(DEBATE_ID);
-      expect(publisher.debateEnded).toHaveBeenCalledWith({
+      // 커밋된 결과(시스템 메시지 → debate.ended)를 한 번 알린다.
+      expect(outcomes.announce).toHaveBeenCalledTimes(1);
+      expect(outcomes.announce).toHaveBeenCalledWith({
         communityId: COMMUNITY_ID,
         debateId: DEBATE_ID,
+        kind: DebateOutcomeKind.FORFEIT,
         status: DebateStatus.FAILED,
         reason: DebateEndReason.FORFEIT,
+        winnerId: OPPONENT_ID,
       });
+      expect(publisher.debateEnded).not.toHaveBeenCalled();
       // 판정 파이프라인은 띄우지 않는다.
       expect(pipeline.onDebateEnded).not.toHaveBeenCalled();
     });
@@ -498,6 +539,7 @@ describe('DebateChatService', () => {
         DebateChatErrorCode.NOT_PARTICIPANT.code,
       );
       expect(publisher.debateEnded).not.toHaveBeenCalled();
+      expect(outcomes.announce).not.toHaveBeenCalled();
     });
   });
 });

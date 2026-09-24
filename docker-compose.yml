@@ -51,11 +51,33 @@ services:
       - "3000:3000"
       # 토론 채팅 WebSocket(DEBATE_CHAT_WS_PORT). HTTP와 별도 포트를 쓴다.
       - "8080:8080"
+      # Prometheus scrape 전용(METRICS_PORT). 보안 그룹에서 Observability 서버 SG만 허용한다.
+      - "9100:9100"
     deploy:
       resources:
         limits:
           memory: 384M
 
+  # 컨테이너 로그(json-file)를 읽어 Observability 서버의 Loki로 push한다.
+  promtail:
+    image: grafana/promtail:3.6.11
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/promtail/promtail-config.yml
+      - -config.expand-env=true
+    environment:
+      # Loki 주소(예: http://<Observability 사설IP>:3100). 미설정 시 push만 실패하고 다른 서비스엔 영향 없다.
+      LOKI_URL: ${LOKI_URL:-http://localhost:3100}
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - promtail-positions:/var/lib/promtail
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+
 volumes:
   postgres-data: # 컨테이너 재시작 시 데이터 안 날아가게 함
   redis-data: # draft·중복 방지 키. 재시작 중 진행 중인 턴이 사라지지 않게 AOF로 남긴다
+  promtail-positions: # 읽은 로그 위치. 재시작 시 로그를 중복 전송하거나 건너뛰지 않게 한다
