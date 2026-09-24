@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, LessThan, Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { DebateSide } from '../debates/debate-turn';
+import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
 import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate } from '../debates/entities/debate.entity';
 import {
@@ -61,6 +62,32 @@ export interface SaveJudgmentInput {
   // 무승부면 null. 토론 행의 winner_id를 함께 갱신한다.
   winnerId: string | null;
 }
+
+// 판정 확정을 시도했지만 토론이 이미 판정 가능한 단계가 아니다(중복 실행이 먼저 끝냈거나 판정 실패로 닫혔다).
+// 트랜잭션을 롤백시키는 신호이며, 호출자는 부수효과 없이 조용히 끝낸다.
+export class JudgmentAlreadySettledError extends Error {
+  constructor(debateId: string) {
+    super(`이미 판정이 확정된 토론입니다: debateId=${debateId}`);
+    this.name = 'JudgmentAlreadySettledError';
+  }
+}
+
+// 토론 전이에 함께 실을 값과 조건.
+interface DebateTransitionOptions {
+  // 함께 기록할 종료 사유(판정 실패·재개)와 승자(판정 완료).
+  endReason?: DebateEndReason;
+  winnerId?: string | null;
+  // 이 종료 사유일 때만 옮긴다(재개는 판정 실패로 닫힌 토론만 되살린다).
+  expectedEndReason?: DebateEndReason;
+  // 호출자 트랜잭션에 참여한다.
+  manager?: EntityManager;
+}
+
+// 판정할 수 있는 단계. JUDGE 작업이 startJudging보다 먼저 끝나는 경쟁에서도 판정을 잃지 않도록 둘 다 받는다.
+const JUDGEABLE_STATUSES = [
+  DebateStatus.DEBATE_FINALIZED,
+  DebateStatus.JUDGING,
+];
 
 /**
  * 파이프라인이 남기는 결과 전부(논증 그래프 · 사실 검증 · 판정)와 토론 진행 단계 전이.
@@ -227,74 +254,121 @@ export class JudgeResultRepository {
     ]);
   }
 
-  // 판정할 수 없게 된 토론(분석 최종 실패). /judge/retry로만 풀린다.
-  async markFailed(debateId: string): Promise<boolean> {
-    return this.transitionDebate(debateId, DebateStatus.FAILED, [
-      DebateStatus.DEBATE_FINALIZED,
-      DebateStatus.JUDGING,
-    ]);
-  }
-
-  // 판정 실패 뒤 재개할 수 있도록 FAILED를 DEBATE_FINALIZED로 되돌린다(POST /judge/retry).
-  async restoreFinalized(debateId: string): Promise<boolean> {
-    return this.transitionDebate(debateId, DebateStatus.DEBATE_FINALIZED, [
-      DebateStatus.FAILED,
-    ]);
+  /**
+   * 판정할 수 없게 된 토론(분석·판정 최종 실패)을 FAILED + JUDGMENT_FAILED로 닫는다. /judge/retry로만 풀린다.
+   * 전이가 성공했을 때만 `withinTransaction`(커뮤니티 복귀 등)을 같은 트랜잭션에서 돌리므로,
+   * 여러 경로에서 겹쳐 불려도 부수효과는 한 번뿐이다. 실제로 옮겼으면 true.
+   */
+  async failJudgment(
+    debateId: string,
+    withinTransaction: (manager: EntityManager) => Promise<void>,
+  ): Promise<boolean> {
+    return this.dataSource.transaction(async (manager) => {
+      const moved = await this.transitionDebate(
+        debateId,
+        DebateStatus.FAILED,
+        JUDGEABLE_STATUSES,
+        { endReason: DebateEndReason.JUDGMENT_FAILED, manager },
+      );
+      if (moved) {
+        await withinTransaction(manager);
+      }
+      return moved;
+    });
   }
 
   /**
-   * 판정 확정. 결과 저장·토론 전이(COMPLETED·승자)·`withinTransaction`이 하나의 트랜잭션이다.
+   * 판정 실패 뒤 재개할 수 있도록 FAILED를 DEBATE_FINALIZED로 되돌린다(POST /judge/retry).
+   * 판정 실패로 닫힌 토론만 대상이다 — 기권·전체 시간 초과로 끝난 토론을 되살리면 판정·보상이 겹친다.
+   */
+  async restoreFinalized(debateId: string): Promise<boolean> {
+    return this.transitionDebate(
+      debateId,
+      DebateStatus.DEBATE_FINALIZED,
+      [DebateStatus.FAILED],
+      {
+        expectedEndReason: DebateEndReason.JUDGMENT_FAILED,
+        endReason: DebateEndReason.ALL_TURNS_FINALIZED,
+      },
+    );
+  }
+
+  /**
+   * 판정 확정. 토론 전이(COMPLETED·승자)·결과 저장·`withinTransaction`이 하나의 트랜잭션이다.
    *
    * 결과만 남고 상태가 안 바뀌면 프론트가 영원히 판정 중으로 보고, 신뢰도만 깎이고 판정이
-   * 안 남으면 근거 없는 차감이 된다. 그래서 부수 작업(신뢰도 차감)을 호출자에게서 받아
-   * 같은 트랜잭션 안에서 돌린다 — 무엇을 깎을지는 도메인 판단이라 저장소가 알 필요가 없다.
+   * 안 남으면 근거 없는 차감이 된다. 그래서 부수 작업(신뢰도 차감·승리 보상·결과 알림)을 호출자에게서
+   * 받아 같은 트랜잭션 안에서 돌린다 — 무엇을 할지는 도메인 판단이라 저장소가 알 필요가 없다.
+   *
+   * 전이는 판정 가능한 단계에서만 성공하는 조건부 UPDATE다. 같은 JUDGE 작업이 늦게 한 번 더 돌면
+   * 여기서 JudgmentAlreadySettledError로 롤백되어 결과를 갈아 끼우거나 점수를 다시 반영하지 않는다.
    */
   async completeJudgment(
     input: SaveJudgmentInput,
     withinTransaction: (manager: EntityManager) => Promise<void>,
   ): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
+      // winnerId는 판정 결과가 아니라 토론 행의 컬럼이므로 결과에서 뺀다.
+      const { winnerId, ...columns } = input;
+
+      const moved = await this.transitionDebate(
+        input.debateId,
+        DebateStatus.COMPLETED,
+        JUDGEABLE_STATUSES,
+        { winnerId, manager },
+      );
+      if (!moved) {
+        throw new JudgmentAlreadySettledError(input.debateId);
+      }
+
       const judgments = manager.getRepository(DebateJudgmentResult);
       // 재판정(retry)이면 이전 결과를 갈아 끼운다. 토론당 결과는 하나뿐이다.
       await judgments.delete({ debateId: input.debateId });
-
-      // winnerId는 판정 결과가 아니라 토론 행의 컬럼이므로 결과에서 뺀다.
-      const { winnerId, ...columns } = input;
       await judgments.save(
         judgments.create({ ...columns, judgedAt: new Date() }),
       );
-
-      await manager
-        .getRepository(Debate)
-        .createQueryBuilder()
-        .update(Debate)
-        .set({ debateStatus: DebateStatus.COMPLETED, winnerId })
-        .where('id = :debateId', { debateId: input.debateId })
-        .execute();
 
       await withinTransaction(manager);
     });
   }
 
-  // 토론 진행 단계 전이. 기대한 단계일 때만 바뀐다.
+  // 토론 진행 단계 전이. 기대한 단계(와 종료 사유)일 때만 바뀐다.
   private async transitionDebate(
     debateId: string,
     next: DebateStatus,
     expected: DebateStatus[],
+    options: DebateTransitionOptions = {},
   ): Promise<boolean> {
-    const result = await this.debates
+    const repository = options.manager
+      ? options.manager.getRepository(Debate)
+      : this.debates;
+
+    const query = repository
       .createQueryBuilder()
       .update(Debate)
-      .set(
-        next === DebateStatus.JUDGING
-          ? { debateStatus: next, judgingStartedAt: () => 'now()' }
-          : { debateStatus: next },
-      )
+      .set({
+        debateStatus: next,
+        ...(next === DebateStatus.JUDGING
+          ? { judgingStartedAt: () => 'now()' }
+          : {}),
+        ...(options.endReason !== undefined
+          ? { endReason: options.endReason }
+          : {}),
+        ...(options.winnerId !== undefined
+          ? { winnerId: options.winnerId }
+          : {}),
+      })
       .where('id = :debateId', { debateId })
       .andWhere('status = :status', { status: ResourceStatus.NORMAL })
-      .andWhere('debate_status IN (:...expected)', { expected })
-      .execute();
+      .andWhere('debate_status IN (:...expected)', { expected });
 
+    if (options.expectedEndReason !== undefined) {
+      query.andWhere('end_reason = :expectedEndReason', {
+        expectedEndReason: options.expectedEndReason,
+      });
+    }
+
+    const result = await query.execute();
     return (result.affected ?? 0) > 0;
   }
 }

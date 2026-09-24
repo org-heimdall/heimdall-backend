@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, Not } from 'typeorm';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { CommunitiesService } from './communities.service';
 import { MemberErrorCode } from '../members/exceptions/member-error-code';
@@ -718,9 +718,59 @@ describe('CommunitiesService', () => {
       await service.markActive('community-uuid');
 
       expect(communityRepository.update).toHaveBeenCalledWith(
-        { id: 'community-uuid', status: ResourceStatus.NORMAL },
+        {
+          id: 'community-uuid',
+          status: ResourceStatus.NORMAL,
+          // 닫힌 커뮤니티는 토론 흐름이 되살리지 않는다.
+          state: Not(CommunityState.CLOSED),
+        },
         { state: CommunityState.ACTIVE },
       );
+    });
+  });
+
+  describe('markWaiting', () => {
+    it('CLOSED를 덮어쓰지 않는 조건으로 WAITING으로 되돌린다', async () => {
+      await service.markWaiting('community-uuid');
+
+      expect(communityRepository.update).toHaveBeenCalledWith(
+        {
+          id: 'community-uuid',
+          status: ResourceStatus.NORMAL,
+          state: Not(CommunityState.CLOSED),
+        },
+        { state: CommunityState.WAITING },
+      );
+    });
+
+    it('manager를 받으면 호출자 트랜잭션의 레포지토리로 갱신한다', async () => {
+      const txRepository = { update: jest.fn().mockResolvedValue({}) };
+      const txManager = { getRepository: jest.fn(() => txRepository) };
+
+      await service.markWaiting('community-uuid', txManager as never);
+
+      expect(txManager.getRepository).toHaveBeenCalledWith(Community);
+      expect(txRepository.update).toHaveBeenCalled();
+      expect(communityRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lockForUpdate', () => {
+    it('삭제되지 않은 커뮤니티 행에 쓰기 락을 걸어 읽는다', async () => {
+      const community = { id: 'community-uuid' };
+      const txRepository = { findOne: jest.fn().mockResolvedValue(community) };
+      const txManager = { getRepository: jest.fn(() => txRepository) };
+
+      const locked = await service.lockForUpdate(
+        'community-uuid',
+        txManager as never,
+      );
+
+      expect(locked).toBe(community);
+      expect(txRepository.findOne).toHaveBeenCalledWith({
+        where: { id: 'community-uuid', status: ResourceStatus.NORMAL },
+        lock: { mode: 'pessimistic_write' },
+      });
     });
   });
 

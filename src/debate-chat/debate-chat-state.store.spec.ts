@@ -1,6 +1,8 @@
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { GeneralException } from '../common/exceptions/general.exception';
 import { Community } from '../communities/entities/community.entity';
+import { DebateOutcomeKind } from '../debate-outcomes/debate-outcome.types';
+import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate, DebateTurn } from '../debates/entities/debate.entity';
@@ -30,6 +32,9 @@ describe('RedisDebateChatStateStore', () => {
   let debateRepository: { update: jest.Mock };
   let debatesService: { findOneOrThrow: jest.Mock };
   let dataSource: { transaction: jest.Mock };
+  let outcomes: { applyWithin: jest.Mock };
+  // 트랜잭션 콜백에 넘긴 manager. 결과 반영이 같은 트랜잭션에 참여하는지 확인하는 데 쓴다.
+  let txManager: unknown;
   let store: RedisDebateChatStateStore;
 
   const buildDebate = (overrides: Partial<Debate> = {}): Debate =>
@@ -144,11 +149,19 @@ describe('RedisDebateChatStateStore', () => {
               getRepository: (entity: unknown) =>
                 entity === DebateMessage ? messageRepository : debateRepository,
             };
+            txManager = manager;
             const result = await work(manager);
             calls.push('db:commit');
             return result;
           },
         ),
+    };
+
+    outcomes = {
+      applyWithin: jest.fn().mockImplementation(() => {
+        calls.push('db:outcome');
+        return Promise.resolve();
+      }),
     };
 
     store = new RedisDebateChatStateStore(
@@ -163,6 +176,7 @@ describe('RedisDebateChatStateStore', () => {
           maxDurationSeconds: 180,
         },
       },
+      outcomes as never,
     );
   });
 
@@ -417,7 +431,87 @@ describe('RedisDebateChatStateStore', () => {
         endedAt: expect.any(Date) as unknown,
         expiresAt: null,
         winnerId: null,
+        endReason: DebateEndReason.ALL_TURNS_FINALIZED,
       });
+      // 판정으로 넘어가는 종료는 여기서 결과를 반영하지 않는다.
+      expect(outcomes.applyWithin).not.toHaveBeenCalled();
+    });
+
+    it('기권은 토론 종료와 결과 반영(보상·알림·커뮤니티)을 같은 트랜잭션에 담는다', async () => {
+      await store.withState(DEBATE_ID, (state) => state.forfeit(HOST_ID));
+
+      expect(debateRepository.update).toHaveBeenCalledWith(
+        DEBATE_ID,
+        expect.objectContaining({
+          debateStatus: DebateStatus.FAILED,
+          winnerId: OPPONENT_ID,
+          endReason: DebateEndReason.FORFEIT,
+        }),
+      );
+      expect(outcomes.applyWithin).toHaveBeenCalledWith(txManager, {
+        debateId: DEBATE_ID,
+        communityId: COMMUNITY_ID,
+        kind: DebateOutcomeKind.FORFEIT,
+        status: DebateStatus.FAILED,
+        reason: DebateEndReason.FORFEIT,
+        winnerId: OPPONENT_ID,
+      });
+      expect(calls).toEqual([
+        'db:begin',
+        'db:update',
+        'db:outcome',
+        'db:commit',
+        'redis:exec',
+        'redis:unlock',
+      ]);
+    });
+
+    it('마지막 차례에서 한쪽이 한 번도 발언하지 않았으면 전체 시간 초과 결과를 같은 트랜잭션에 반영한다', async () => {
+      // SIDE_B는 확정 턴이 모두 비어 있다.
+      messageRepository.find.mockResolvedValue([
+        buildMessage(1, HOST_ID, 'a'),
+        buildMessage(2, OPPONENT_ID, ''),
+        buildMessage(3, HOST_ID, 'c'),
+      ]);
+      // 마지막 차례(CLOSING/SIDE_B)의 제한 시간이 지난 뒤
+      const late = new Date(NOW.getTime() + 181_000);
+      jest.useFakeTimers({ now: late, doNotFake: ['setTimeout'] });
+
+      try {
+        await store.withState(DEBATE_ID, (state) => state.expireTurn());
+      } finally {
+        jest.useRealTimers();
+      }
+
+      expect(outcomes.applyWithin).toHaveBeenCalledWith(
+        txManager,
+        expect.objectContaining({
+          kind: DebateOutcomeKind.TOTAL_TIMEOUT,
+          reason: DebateEndReason.TOTAL_TIME_EXPIRED,
+          winnerId: HOST_ID,
+        }),
+      );
+      expect(calls).toEqual([
+        'db:begin',
+        'db:insert',
+        'db:update',
+        'db:outcome',
+        'db:commit',
+        'redis:exec',
+        'redis:unlock',
+      ]);
+    });
+
+    it('결과 반영이 실패하면 커밋이 실패하고 draft도 지우지 않는다', async () => {
+      outcomes.applyWithin.mockRejectedValue(new Error('reward failed'));
+
+      await expect(
+        store.withState(DEBATE_ID, (state) => state.forfeit(HOST_ID)),
+      ).rejects.toThrow('reward failed');
+      expect(calls).not.toContain('db:commit');
+      expect(calls).not.toContain('redis:exec');
+      // 락은 풀어 다음 명령이 진행될 수 있게 한다.
+      expect(calls).toContain('redis:unlock');
     });
   });
 });

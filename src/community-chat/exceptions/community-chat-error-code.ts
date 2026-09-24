@@ -11,4 +11,10 @@ export const CommunityChatErrorCode = {
     title: 'Not A Participant',
     detail: '커뮤니티 참여자만 메시지를 보낼 수 있습니다.',
   },
+  OPINION_REQUIRED: {
+    httpStatus: HttpStatus.FORBIDDEN,
+    code: 'COMMUNITY_CHAT.OPINION_REQUIRED',
+    title: 'Opinion Required',
+    detail: '기조 발언을 작성한 참여자만 메시지를 보낼 수 있습니다.',
+  },
 } as const satisfies Record<string, AppError>;

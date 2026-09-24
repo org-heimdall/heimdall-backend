@@ -1,4 +1,7 @@
 import { Repository } from 'typeorm';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
+import { DebateOutcomeKind } from '../debate-outcomes/debate-outcome.types';
+import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
 import { DebatePhase, DebateSide } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
@@ -40,16 +43,20 @@ describe('JudgeService', () => {
     findJudgment: jest.Mock;
     restoreFinalized: jest.Mock;
     startJudging: jest.Mock;
-    markFailed: jest.Mock;
+    failJudgment: jest.Mock;
     findComponents: jest.Mock;
     findFactChecks: jest.Mock;
   };
   let debates: { findOneOrThrow: jest.Mock; findOneDto: jest.Mock };
+  let outcomes: { applyWithin: jest.Mock; announce: jest.Mock };
   let service: JudgeService;
+  // failJudgment가 트랜잭션 안에서 넘겨주는 manager 자리.
+  const MANAGER = { id: 'entity-manager' };
 
   const buildDebate = (overrides: Partial<Debate> = {}): Debate =>
     Object.assign(new Debate(), {
       id: DEBATE_ID,
+      communityId: 'community-uuid',
       topic: 'AI 규제, 필요한가?',
       hostId: HOST_ID,
       hostNickname: '메시',
@@ -150,13 +157,29 @@ describe('JudgeService', () => {
       findJudgment: jest.fn().mockResolvedValue(null),
       restoreFinalized: jest.fn().mockResolvedValue(true),
       startJudging: jest.fn().mockResolvedValue(true),
-      markFailed: jest.fn().mockResolvedValue(true),
+      // 저장소가 전이에 성공하면 트랜잭션 안에서 부수 작업을 부르는 것까지 재현한다.
+      failJudgment: jest
+        .fn()
+        .mockImplementation(
+          async (
+            _debateId: string,
+            withinTransaction: (manager: unknown) => Promise<void>,
+          ) => {
+            await withinTransaction(MANAGER);
+            return true;
+          },
+        ),
       findComponents: jest.fn().mockResolvedValue([]),
       findFactChecks: jest.fn().mockResolvedValue([]),
     };
     debates = {
       findOneOrThrow: jest.fn().mockResolvedValue(buildDebate()),
       findOneDto: jest.fn().mockResolvedValue({ id: DEBATE_ID }),
+    };
+
+    outcomes = {
+      applyWithin: jest.fn().mockResolvedValue(undefined),
+      announce: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new JudgeService(
@@ -168,6 +191,7 @@ describe('JudgeService', () => {
       {
         judgeRetryCooldownSeconds: COOLDOWN_SECONDS,
       } as unknown as JudgeConfig,
+      outcomes as unknown as DebateOutcomeService,
     );
   });
 
@@ -332,7 +356,55 @@ describe('JudgeService', () => {
       ]);
       expect(queue.enqueue).toHaveBeenCalledTimes(1);
       expect(results.restoreFinalized).toHaveBeenCalledWith(DEBATE_ID);
+      // 되돌린 뒤에 작업을 올려야 판정이 조건부 전이에서 지지 않는다.
+      expect(results.restoreFinalized.mock.invocationCallOrder[0]).toBeLessThan(
+        queue.enqueue.mock.invocationCallOrder[0],
+      );
     });
+
+    it('판정 실패로 닫힌 토론은 재시도할 수 있다', async () => {
+      // 처음 읽을 때는 판정 실패로 닫혀 있고, 되돌린 뒤 다시 읽으면 DEBATE_FINALIZED다.
+      debates.findOneOrThrow.mockResolvedValueOnce(
+        buildDebate({
+          debateStatus: DebateStatus.FAILED,
+          endReason: DebateEndReason.JUDGMENT_FAILED,
+        }),
+      );
+      tasks.findFailed.mockResolvedValue([
+        buildTask({ kind: JudgeTaskKind.JUDGE }),
+      ]);
+      tasks.resetFailed.mockResolvedValue([
+        buildTask({
+          kind: JudgeTaskKind.JUDGE,
+          status: JudgeTaskStatus.PENDING,
+        }),
+      ]);
+
+      await expectCode(
+        service.retryJudgment(DEBATE_ID, HOST_ID),
+        JudgeErrorCode.IN_PROGRESS.code,
+      );
+      expect(results.restoreFinalized).toHaveBeenCalledWith(DEBATE_ID);
+      expect(queue.enqueue).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([DebateEndReason.FORFEIT, DebateEndReason.TOTAL_TIME_EXPIRED])(
+      '%s로 끝난 토론은 되살리지 않는다(판정·보상이 겹친다)',
+      async (endReason) => {
+        debates.findOneOrThrow.mockResolvedValue(
+          buildDebate({ debateStatus: DebateStatus.FAILED, endReason }),
+        );
+        tasks.findFailed.mockResolvedValue([buildTask()]);
+
+        await expectCode(
+          service.retryJudgment(DEBATE_ID, HOST_ID),
+          JudgeErrorCode.NOTHING_TO_RETRY.code,
+        );
+        expect(results.restoreFinalized).not.toHaveBeenCalled();
+        expect(tasks.resetFailed).not.toHaveBeenCalled();
+        expect(queue.schedule).not.toHaveBeenCalled();
+      },
+    );
 
     it('마지막 실패로부터 쿨다운이 지나지 않았으면 거절한다', async () => {
       tasks.findFailed.mockResolvedValue([
@@ -493,8 +565,32 @@ describe('JudgeService', () => {
       await expect(service.tryStartJudge(DEBATE_ID)).resolves.toBe(
         'ANALYZER_FAILED',
       );
-      expect(results.markFailed).toHaveBeenCalledWith(DEBATE_ID);
+      expect(results.failJudgment).toHaveBeenCalledWith(
+        DEBATE_ID,
+        expect.any(Function),
+      );
+      // 판정 실패로 닫으면서 같은 트랜잭션에서 커뮤니티를 복귀시킨다.
+      expect(outcomes.applyWithin).toHaveBeenCalledWith(MANAGER, {
+        debateId: DEBATE_ID,
+        communityId: 'community-uuid',
+        kind: DebateOutcomeKind.JUDGMENT_FAILED,
+        status: DebateStatus.FAILED,
+        reason: DebateEndReason.JUDGMENT_FAILED,
+        winnerId: null,
+      });
       expect(queue.schedule).not.toHaveBeenCalled();
+    });
+
+    it('이미 판정 실패로 닫혀 있으면 결과를 다시 반영하지 않는다', async () => {
+      tasks.countByKind.mockResolvedValue(
+        counts({ analyzer: { total: 2, completed: 1, failed: 1 } }),
+      );
+      results.failJudgment.mockResolvedValue(false);
+
+      await service.tryStartJudge(DEBATE_ID);
+
+      expect(outcomes.applyWithin).not.toHaveBeenCalled();
+      expect(outcomes.announce).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -536,16 +632,38 @@ describe('JudgeService', () => {
     it.each([JudgeTaskKind.ANALYZER, JudgeTaskKind.FACT_CHECK])(
       '%s 작업이 확정되면 판정 조건을 다시 본다',
       async (kind) => {
-        await service.onTaskSettled(settled(kind));
+        await service.onTaskSettled(settled(kind), 'COMPLETED');
 
         expect(tasks.countByKind).toHaveBeenCalledWith(DEBATE_ID);
       },
     );
 
     it('Judge 작업 자신의 결과로는 다시 평가하지 않는다', async () => {
-      await service.onTaskSettled(settled(JudgeTaskKind.JUDGE));
+      await service.onTaskSettled(settled(JudgeTaskKind.JUDGE), 'COMPLETED');
 
       expect(debates.findOneOrThrow).not.toHaveBeenCalled();
+      expect(results.failJudgment).not.toHaveBeenCalled();
+    });
+
+    it('Judge 작업이 최종 실패하면 토론을 판정 실패로 닫고 커뮤니티를 복귀시킨다', async () => {
+      setDebateStatus(DebateStatus.JUDGING);
+
+      await service.onTaskSettled(settled(JudgeTaskKind.JUDGE), 'FAILED');
+
+      expect(results.failJudgment).toHaveBeenCalledWith(
+        DEBATE_ID,
+        expect.any(Function),
+      );
+      expect(outcomes.applyWithin).toHaveBeenCalledWith(
+        MANAGER,
+        expect.objectContaining({
+          kind: DebateOutcomeKind.JUDGMENT_FAILED,
+          reason: DebateEndReason.JUDGMENT_FAILED,
+        }),
+      );
+      expect(outcomes.announce).toHaveBeenCalledTimes(1);
+      // 판정 조건을 다시 보지 않는다.
+      expect(tasks.countByKind).not.toHaveBeenCalled();
     });
   });
 

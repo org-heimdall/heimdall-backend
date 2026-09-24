@@ -2,6 +2,11 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
+import { DebateOutcomeService } from '../debate-outcomes/debate-outcome.service';
+import {
+  DebateOutcome,
+  DebateOutcomeKind,
+} from '../debate-outcomes/debate-outcome.types';
 import {
   DebateSide,
   DebateSpeakers,
@@ -10,7 +15,9 @@ import {
   resolveSpeakers,
 } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
+import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
+import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate } from '../debates/entities/debate.entity';
 import { MembersService } from '../members/members.service';
 import {
@@ -20,7 +27,10 @@ import {
   ViolationSeverity,
 } from './judge.types';
 import { JudgeTaskHandler, NonRetryableTaskError } from './judge-task.worker';
-import { JudgeResultRepository } from './judge-result.repository';
+import {
+  JudgeResultRepository,
+  JudgmentAlreadySettledError,
+} from './judge-result.repository';
 import { JudgeTask } from './entities/judge-task.entity';
 import { DEBATE_JUDGE, SILENT_TURN_PLACEHOLDER } from './llm/judge-llm';
 import type {
@@ -130,6 +140,7 @@ export class DebateJudgeService implements JudgeTaskHandler {
     private readonly results: JudgeResultRepository,
     private readonly debates: DebatesService,
     private readonly members: MembersService,
+    private readonly outcomes: DebateOutcomeService,
   ) {}
 
   // 판정은 토론 단위라 턴 접두사가 없다.
@@ -169,42 +180,67 @@ export class DebateJudgeService implements JudgeTaskHandler {
       result.sideB.violations,
     );
 
-    await this.results.completeJudgment(
-      {
-        debateId: debate.id,
-        winner,
-        sideAArgumentationScore: result.sideA.argumentationScore,
-        sideAInteractionScore: result.sideA.interactionScore,
-        sideAFactualReliabilityScore: result.sideA.factualReliabilityScore,
-        sideATotalScore,
-        sideBArgumentationScore: result.sideB.argumentationScore,
-        sideBInteractionScore: result.sideB.interactionScore,
-        sideBFactualReliabilityScore: result.sideB.factualReliabilityScore,
-        sideBTotalScore,
-        overallReason: result.overallReason,
-        sideAFeedback: result.sideA.feedback,
-        sideBFeedback: result.sideB.feedback,
-        sideAViolations: result.sideA.violations,
-        sideBViolations: result.sideB.violations,
-        sideASocialCreditPenalty,
-        sideBSocialCreditPenalty,
-        model: result.model,
-        winnerId: this.resolveWinnerId(debate, winner),
-      },
-      // 판정과 차감은 함께 남거나 함께 없어야 한다(근거 없는 차감을 만들지 않는다).
-      async (manager) => {
-        await this.members.deductSocialCredit(
-          speakers[DebateSide.SIDE_A],
+    const winnerId = this.resolveWinnerId(debate, winner);
+    const outcome: DebateOutcome = {
+      debateId: debate.id,
+      communityId: debate.communityId,
+      kind: DebateOutcomeKind.RESULT,
+      status: DebateStatus.COMPLETED,
+      reason: debate.endReason ?? DebateEndReason.ALL_TURNS_FINALIZED,
+      winnerId,
+    };
+
+    try {
+      await this.results.completeJudgment(
+        {
+          debateId: debate.id,
+          winner,
+          sideAArgumentationScore: result.sideA.argumentationScore,
+          sideAInteractionScore: result.sideA.interactionScore,
+          sideAFactualReliabilityScore: result.sideA.factualReliabilityScore,
+          sideATotalScore,
+          sideBArgumentationScore: result.sideB.argumentationScore,
+          sideBInteractionScore: result.sideB.interactionScore,
+          sideBFactualReliabilityScore: result.sideB.factualReliabilityScore,
+          sideBTotalScore,
+          overallReason: result.overallReason,
+          sideAFeedback: result.sideA.feedback,
+          sideBFeedback: result.sideB.feedback,
+          sideAViolations: result.sideA.violations,
+          sideBViolations: result.sideB.violations,
           sideASocialCreditPenalty,
-          manager,
-        );
-        await this.members.deductSocialCredit(
-          speakers[DebateSide.SIDE_B],
           sideBSocialCreditPenalty,
-          manager,
+          model: result.model,
+          winnerId,
+        },
+        // 판정·차감·승리 보상·결과 알림·커뮤니티 복귀는 함께 남거나 함께 없어야 한다
+        // (근거 없는 차감이나 점수 없는 완료를 만들지 않는다).
+        async (manager) => {
+          await this.members.deductSocialCredit(
+            speakers[DebateSide.SIDE_A],
+            sideASocialCreditPenalty,
+            manager,
+          );
+          await this.members.deductSocialCredit(
+            speakers[DebateSide.SIDE_B],
+            sideBSocialCreditPenalty,
+            manager,
+          );
+          await this.outcomes.applyWithin(manager, outcome);
+        },
+      );
+    } catch (error: unknown) {
+      // 같은 작업의 중복 실행이 이미 확정했다(또는 판정 실패로 닫혔다). 아무것도 바꾸지 않고 끝낸다.
+      if (error instanceof JudgmentAlreadySettledError) {
+        this.logger.log(
+          `이미 확정된 판정이라 결과를 반영하지 않습니다: debateId=${debate.id}`,
         );
-      },
-    );
+        return;
+      }
+      throw error;
+    }
+
+    await this.outcomes.announce(outcome);
 
     this.logJudgment(debate.id, result, {
       winner,

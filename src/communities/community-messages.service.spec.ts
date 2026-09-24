@@ -3,7 +3,10 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { LessThan } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { CommunityMessagesService } from './community-messages.service';
-import { CommunityMessage } from './entities/community-message.entity';
+import {
+  CommunityChatMessageType,
+  CommunityMessage,
+} from './entities/community-message.entity';
 
 describe('CommunityMessagesService', () => {
   let service: CommunityMessagesService;
@@ -21,7 +24,9 @@ describe('CommunityMessagesService', () => {
 
   const COMMUNITY_ID = 'community-uuid';
 
-  const buildMessage = (overrides: Partial<CommunityMessage> = {}) =>
+  const buildMessage = (
+    overrides: Partial<Parameters<typeof CommunityMessage.write>[0]> = {},
+  ) =>
     CommunityMessage.write({
       id: 'message-uuid',
       communityId: COMMUNITY_ID,
@@ -98,6 +103,61 @@ describe('CommunityMessagesService', () => {
       await expect(service.create(message)).resolves.toEqual({
         status: 'DUPLICATE',
         message,
+      });
+    });
+    it('manager를 받으면 호출자 트랜잭션의 레포지토리로 저장한다', async () => {
+      const txRepository = {
+        createQueryBuilder: jest.fn(() => insertQueryBuilder),
+        findOne: jest.fn(),
+      };
+      const manager = { getRepository: jest.fn(() => txRepository) };
+      const message = buildMessage();
+
+      const result = await service.create(message, manager as never);
+
+      expect(manager.getRepository).toHaveBeenCalledWith(CommunityMessage);
+      expect(txRepository.createQueryBuilder).toHaveBeenCalled();
+      expect(repository.createQueryBuilder).not.toHaveBeenCalled();
+      expect(result.status).toBe('STORED');
+    });
+
+    it('같은 결정적 키의 시스템 메시지를 다시 넣으면 DUPLICATE다', async () => {
+      insertQueryBuilder.execute.mockResolvedValue({ raw: [] });
+      const params = {
+        communityId: COMMUNITY_ID,
+        debateId: 'debate-uuid',
+        messageType: CommunityChatMessageType.DEBATE_FORFEIT,
+        clientMessageId: 'debate_forfeit:debate-uuid',
+        text: '기권',
+        createdAt: new Date('2026-09-18T12:00:00.000Z'),
+      };
+      const system = CommunityMessage.system({ ...params, id: 'system-uuid' });
+      repository.findOne.mockResolvedValue(system);
+
+      const result = await service.create(
+        CommunityMessage.system({ ...params, id: 'retry-uuid' }),
+      );
+
+      expect(result).toEqual({ status: 'DUPLICATE', message: system });
+      expect(system.memberId).toBeNull();
+    });
+  });
+
+  describe('findByClientMessageId', () => {
+    it('삭제되지 않은 메시지를 작성자와 함께 읽는다', async () => {
+      const stored = buildMessage();
+      repository.findOne.mockResolvedValue(stored);
+
+      await expect(
+        service.findByClientMessageId(COMMUNITY_ID, 'client-key'),
+      ).resolves.toBe(stored);
+      expect(repository.findOne).toHaveBeenCalledWith({
+        where: {
+          communityId: COMMUNITY_ID,
+          clientMessageId: 'client-key',
+          status: ResourceStatus.NORMAL,
+        },
+        relations: { member: true },
       });
     });
   });

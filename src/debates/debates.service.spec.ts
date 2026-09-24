@@ -25,6 +25,7 @@ describe('DebatesService', () => {
   let debateRepository: {
     findOne: jest.Mock;
     find: jest.Mock;
+    exists: jest.Mock;
     create: jest.Mock;
     save: jest.Mock;
   };
@@ -126,6 +127,7 @@ describe('DebatesService', () => {
     debateRepository = {
       findOne: jest.fn(),
       find: jest.fn().mockResolvedValue([]),
+      exists: jest.fn().mockResolvedValue(false),
       create: jest.fn((entity: object) => entity),
       save: jest.fn((entity: object) =>
         Promise.resolve(
@@ -275,6 +277,34 @@ describe('DebatesService', () => {
       await expect(
         service.findActiveByCommunity(COMMUNITY_ID),
       ).resolves.toBeNull();
+    });
+  });
+
+  describe('existsActiveByCommunity', () => {
+    it('삭제되지 않은 활성 단계 토론이 있는지만 본다', async () => {
+      debateRepository.exists.mockResolvedValue(true);
+
+      await expect(service.existsActiveByCommunity(COMMUNITY_ID)).resolves.toBe(
+        true,
+      );
+      expect(debateRepository.exists).toHaveBeenCalledWith({
+        where: {
+          communityId: COMMUNITY_ID,
+          status: ResourceStatus.NORMAL,
+          debateStatus: In([...ACTIVE_DEBATE_STATUSES]),
+        },
+      });
+    });
+
+    it('manager를 받으면 호출자 트랜잭션 안에서 읽는다', async () => {
+      const txRepository = { exists: jest.fn().mockResolvedValue(false) };
+      const manager = { getRepository: jest.fn(() => txRepository) };
+
+      await expect(
+        service.existsActiveByCommunity(COMMUNITY_ID, manager as never),
+      ).resolves.toBe(false);
+      expect(manager.getRepository).toHaveBeenCalledWith(Debate);
+      expect(debateRepository.exists).not.toHaveBeenCalled();
     });
   });
 

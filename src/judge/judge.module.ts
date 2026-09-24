@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import Redis from 'ioredis';
 import { DebateChatPublisherModule } from '../debate-chat/debate-chat-publisher.module';
+import { DebateOutcomesModule } from '../debate-outcomes/debate-outcomes.module';
 import { DebatesModule } from '../debates/debates.module';
 import { MembersModule } from '../members/members.module';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
@@ -47,6 +48,8 @@ import { OpenAiJudgeLlm } from './llm/openai-judge-llm';
     // 위반에 따른 신뢰도 차감(deductSocialCredit)만 쓴다.
     MembersModule,
     DebateChatPublisherModule,
+    // 판정 완료·실패의 결과(보상·시스템 메시지·커뮤니티 상태)를 판정 트랜잭션에 함께 넣는다.
+    DebateOutcomesModule,
     TypeOrmModule.forFeature([
       JudgeTask,
       DebateArgumentComponent,

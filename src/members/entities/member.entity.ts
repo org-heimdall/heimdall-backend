@@ -14,6 +14,8 @@ import { SoftDeletableEntity } from '../../common/entities/soft-deletable.entity
  */
 export const MEMBER_EMAIL_UNIQUE = 'UQ_member_email';
 export const INITIAL_SOCIAL_CREDIT = 100;
+// 토론 승리 보상(rating 증가량, 계약의 score). 판정 승리·기권승·시간 초과승 모두 같다.
+export const DEBATE_WIN_REWARD = 10;
 
 @Entity('member')
 @Unique(MEMBER_EMAIL_UNIQUE, ['email'])
