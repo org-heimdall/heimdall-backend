@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import {
   Inject,
   Injectable,
@@ -16,6 +17,7 @@ import {
   DebateProcessingStageStatus,
 } from '../debate-chat/debate-chat.types';
 import { JudgeConfig } from './judge.config';
+import { JudgeTaskMetrics } from './judge-task.metrics';
 import {
   REPORT_ALL_STAGES,
   StageReportingPolicy,
@@ -184,6 +186,7 @@ export class JudgeTaskWorker
     private readonly queue: JudgeTaskQueue,
     private readonly publisher: DebateChatPublisher,
     private readonly config: JudgeConfig,
+    private readonly metrics: JudgeTaskMetrics,
   ) {
     this.handlers = new Map(handlers.map((handler) => [handler.kind, handler]));
   }
@@ -265,21 +268,31 @@ export class JudgeTaskWorker
     if (handler === undefined) {
       // 구현체가 등록되지 않은 종류다. 재시도해도 달라지지 않는다.
       const reason = `처리기가 없습니다: ${acquired.kind}`;
-      await this.settleFailed(acquired, null, requestId, reason);
+      await this.settleFailed(acquired, null, requestId, reason, null);
       throw new UnrecoverableError(reason);
     }
 
     const prefix = await this.describe(handler, acquired);
     this.publish(acquired, DebateProcessingStageStatus.STARTED, prefix, '시작');
 
+    // 메트릭의 소요 시간은 handler 실행 구간만 잰다(큐 대기·backoff 제외).
+    const startedAt = performance.now();
     try {
       await this.runWithTimeout(handler, acquired);
     } catch (error: unknown) {
-      await this.settleFailure(acquired, prefix, requestId, error);
+      await this.settleFailure(
+        acquired,
+        prefix,
+        requestId,
+        error,
+        elapsedSeconds(startedAt),
+      );
       return;
     }
+    const durationSeconds = elapsedSeconds(startedAt);
 
     await this.tasks.complete(acquired.id, requestId);
+    this.metrics.record(acquired.kind, 'completed', durationSeconds);
     this.publish(
       acquired,
       DebateProcessingStageStatus.COMPLETED,
@@ -323,6 +336,7 @@ export class JudgeTaskWorker
     prefix: string | null,
     requestId: string,
     error: unknown,
+    durationSeconds: number,
   ): Promise<void> {
     const reason = error instanceof Error ? error.message : String(error);
     const retryable =
@@ -330,11 +344,12 @@ export class JudgeTaskWorker
       task.attempt < task.maxAttempts;
 
     if (!retryable) {
-      await this.settleFailed(task, prefix, requestId, reason);
+      await this.settleFailed(task, prefix, requestId, reason, durationSeconds);
       throw new UnrecoverableError(reason);
     }
 
     await this.tasks.release(task.id, requestId, reason);
+    this.metrics.record(task.kind, 'retry', durationSeconds);
     this.publish(
       task,
       DebateProcessingStageStatus.RETRYING,
@@ -352,8 +367,10 @@ export class JudgeTaskWorker
     prefix: string | null,
     requestId: string,
     reason: string,
+    durationSeconds: number | null,
   ): Promise<void> {
     await this.tasks.fail(task.id, requestId, reason);
+    this.metrics.record(task.kind, 'failed', durationSeconds);
     this.publish(
       task,
       DebateProcessingStageStatus.FAILED,
@@ -428,6 +445,11 @@ export class JudgeTaskWorker
   private reportingOf(kind: JudgeTaskKind): StageReportingPolicy {
     return this.handlers.get(kind)?.stageReporting ?? REPORT_ALL_STAGES;
   }
+}
+
+// performance.now() 기준 경과 시간(초). 메트릭 단위에 맞춘다.
+function elapsedSeconds(startedAt: number): number {
+  return (performance.now() - startedAt) / 1000;
 }
 
 const STAGE_OF: Record<JudgeTaskKind, DebateProcessingStage> = {

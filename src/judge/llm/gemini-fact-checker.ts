@@ -58,9 +58,11 @@ export class GeminiFactChecker implements FactChecker {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly client: GoogleGenAI | null;
-  private readonly callLogger = new LlmCallLogger();
 
-  constructor(configService: ConfigService) {
+  constructor(
+    configService: ConfigService,
+    private readonly callLogger: LlmCallLogger,
+  ) {
     this.model = configService.getOrThrow<string>('GEMINI_MODEL');
     this.timeoutMs = configService.getOrThrow<number>('GEMINI_TIMEOUT_MS');
 

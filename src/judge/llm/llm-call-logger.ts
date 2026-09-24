@@ -1,5 +1,6 @@
-import { Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { performance } from 'node:perf_hooks';
+import { LlmMetrics } from './llm.metrics';
 
 // 어느 호출인지. operation은 analyze / judge.performance / judge.violation / fact_check 중 하나다.
 export interface LlmCallMeta {
@@ -25,15 +26,17 @@ const NO_USAGE: LlmTokenUsage = {
   reasoningTokens: null,
 };
 
+@Injectable()
 export class LlmCallLogger {
   private readonly logger = new Logger('LlmCall');
+  private readonly now: () => number = () => performance.now();
 
-  constructor(private readonly now: () => number = () => performance.now()) {}
+  constructor(private readonly metrics: LlmMetrics) {}
 
   /**
    * LLM 호출 하나의 소요 시간과 token usage를 한 줄로 남긴다. 성공이든 실패든 반드시 남긴다.
    * 프롬프트·응답 원문은 발언 내용이 섞이므로 남기지 않는다. 실패는 usage 없이 에러 이름만 남기고
-   * 예외는 그대로 다시 던진다(재시도 판단은 호출자 몫이다).
+   * 예외는 그대로 다시 던진다(재시도 판단은 호출자 몫이다). 같은 지점에서 메트릭도 기록한다.
    */
   async measure<T>(
     meta: LlmCallMeta,
@@ -43,22 +46,20 @@ export class LlmCallLogger {
     const startedAt = this.now();
     try {
       const result = await call();
-      this.logger.log(
-        this.format(
-          meta,
-          'SUCCESS',
-          this.elapsed(startedAt),
-          this.safeUsage(result, extractUsage),
-        ),
-      );
+      const durationMs = this.elapsed(startedAt);
+      const usage = this.safeUsage(result, extractUsage);
+      this.logger.log(this.format(meta, 'SUCCESS', durationMs, usage));
+      this.metrics.record(meta, 'success', durationMs / 1000, usage);
       return result;
     } catch (error: unknown) {
+      const durationMs = this.elapsed(startedAt);
       this.logger.warn(
-        this.format(meta, 'FAILURE', this.elapsed(startedAt), {
+        this.format(meta, 'FAILURE', durationMs, {
           ...NO_USAGE,
           error: error instanceof Error ? error.name : typeof error,
         }),
       );
+      this.metrics.record(meta, 'failure', durationMs / 1000, NO_USAGE);
       throw error;
     }
   }

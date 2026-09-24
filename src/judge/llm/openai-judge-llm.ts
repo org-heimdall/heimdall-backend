@@ -29,9 +29,11 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
   private readonly logger = new Logger(OpenAiJudgeLlm.name);
   private readonly model: string;
   private readonly client: OpenAI | null;
-  private readonly callLogger = new LlmCallLogger();
 
-  constructor(configService: ConfigService) {
+  constructor(
+    configService: ConfigService,
+    private readonly callLogger: LlmCallLogger,
+  ) {
     this.model = configService.getOrThrow<string>('OPENAI_MODEL');
 
     const apiKey = configService.get<string>('OPENAI_API_KEY');

@@ -11,6 +11,7 @@ import {
   StageReportingPolicy,
 } from './judge-stage-reporting';
 import { JudgeTaskRepository } from './judge-task.repository';
+import { JudgeTaskMetrics } from './judge-task.metrics';
 import {
   JudgeTaskQueue,
   JudgeTaskWorker,
@@ -38,6 +39,7 @@ describe('JudgeTaskWorker', () => {
     release: jest.Mock;
   };
   let publisher: { processingStage: jest.Mock };
+  let metrics: { record: jest.Mock };
   let worker: JudgeTaskWorker;
 
   const buildTask = (overrides: Partial<JudgeTask> = {}): JudgeTask =>
@@ -90,6 +92,7 @@ describe('JudgeTaskWorker', () => {
       release: jest.fn().mockResolvedValue(true),
     };
     publisher = { processingStage: jest.fn() };
+    metrics = { record: jest.fn() };
 
     worker = new JudgeTaskWorker(
       {} as Redis,
@@ -102,6 +105,7 @@ describe('JudgeTaskWorker', () => {
         jobTimeoutMs: 1000,
         workerConcurrency: 1,
       } as unknown as JudgeConfig,
+      metrics as unknown as JudgeTaskMetrics,
     );
   });
 
@@ -117,6 +121,11 @@ describe('JudgeTaskWorker', () => {
     expect(listener.onTaskSettled).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID }),
       'COMPLETED',
+    );
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.ANALYZER,
+      'completed',
+      expect.any(Number),
     );
   });
 
@@ -139,6 +148,8 @@ describe('JudgeTaskWorker', () => {
 
     expect(handler.handle).not.toHaveBeenCalled();
     expect(publisher.processingStage).not.toHaveBeenCalled();
+    // 실행하지 않은 시도는 메트릭에 세지 않는다.
+    expect(metrics.record).not.toHaveBeenCalled();
   });
 
   it('이미 완료된 작업의 재실행은 결과를 건드리지 않는다(멱등)', async () => {
@@ -169,6 +180,12 @@ describe('JudgeTaskWorker', () => {
     ]);
     // 아직 확정되지 않았으므로 후속 판단(판정 조건 평가)도 부르지 않는다.
     expect(listener.onTaskSettled).not.toHaveBeenCalled();
+    expect(metrics.record).toHaveBeenCalledTimes(1);
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.ANALYZER,
+      'retry',
+      expect.any(Number),
+    );
   });
 
   it('재시도를 소진하면 FAILED로 끝내고 다시 시도하지 않는다', async () => {
@@ -195,6 +212,12 @@ describe('JudgeTaskWorker', () => {
       expect.objectContaining({ id: TASK_ID }),
       'FAILED',
     );
+    expect(metrics.record).toHaveBeenCalledTimes(1);
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.ANALYZER,
+      'failed',
+      expect.any(Number),
+    );
   });
 
   it('재시도 불가 실패는 예산이 남아 있어도 즉시 FAILED다', async () => {
@@ -207,6 +230,30 @@ describe('JudgeTaskWorker', () => {
       TASK_ID,
       acquiredRequestId(),
       '입력 없음',
+    );
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.ANALYZER,
+      'failed',
+      expect.any(Number),
+    );
+  });
+
+  it('처리기가 없는 종류는 소요 시간 없이 failed로만 센다', async () => {
+    tasks.acquire.mockResolvedValue(
+      buildTask({
+        kind: JudgeTaskKind.JUDGE,
+        status: JudgeTaskStatus.PROCESSING,
+        attempt: 1,
+        requestId: 'request-uuid',
+      }),
+    );
+
+    await expect(worker.process(job)).rejects.toThrow(UnrecoverableError);
+
+    expect(metrics.record).toHaveBeenCalledWith(
+      JudgeTaskKind.JUDGE,
+      'failed',
+      null,
     );
   });
 

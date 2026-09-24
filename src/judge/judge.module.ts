@@ -34,6 +34,10 @@ import { JudgeTask } from './entities/judge-task.entity';
 import { ARGUMENT_ANALYZER, DEBATE_JUDGE, FACT_CHECKER } from './llm/judge-llm';
 import { GeminiFactChecker } from './llm/gemini-fact-checker';
 import { OpenAiJudgeLlm } from './llm/openai-judge-llm';
+import { LlmCallLogger } from './llm/llm-call-logger';
+import { LlmMetrics } from './llm/llm.metrics';
+import { JudgeTaskMetrics } from './judge-task.metrics';
+import { MetricsModule } from '../common/metrics/metrics.module';
 
 /**
  * 토론 처리 파이프라인(Phase 3). 채팅이 넘겨 준 확정 턴을 작업으로 쌓고, worker가 Analyzer →
@@ -50,6 +54,8 @@ import { OpenAiJudgeLlm } from './llm/openai-judge-llm';
     DebateChatPublisherModule,
     // 판정 완료·실패의 결과(보상·시스템 메시지·커뮤니티 상태)를 판정 트랜잭션에 함께 넣는다.
     DebateOutcomesModule,
+    // 작업·LLM 호출 메트릭을 공용 레지스트리에 등록한다.
+    MetricsModule,
     TypeOrmModule.forFeature([
       JudgeTask,
       DebateArgumentComponent,
@@ -74,10 +80,14 @@ import { OpenAiJudgeLlm } from './llm/openai-judge-llm';
     JudgeResultRepository,
     JudgeTaskQueue,
     JudgeTaskWorker,
+    JudgeTaskMetrics,
     JudgeService,
     ArgumentAnalyzerService,
     FactCheckerService,
     DebateJudgeService,
+    // LLM 호출 1건의 로그·메트릭. 벤더 구현체가 함께 쓴다.
+    LlmMetrics,
+    LlmCallLogger,
     // LLM 구현체. 벤더는 단계마다 다르다 — 사실 검증만 Gemini(Google Search grounding).
     OpenAiJudgeLlm,
     { provide: ARGUMENT_ANALYZER, useExisting: OpenAiJudgeLlm },
