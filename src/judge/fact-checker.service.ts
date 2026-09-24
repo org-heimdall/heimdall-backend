@@ -27,6 +27,9 @@ const STATUSES_WITHOUT_SOURCES: readonly VerificationStatus[] = [
   VerificationStatus.NOT_VERIFIABLE,
 ];
 
+// 검증 결과 하나에 저장하는 출처 링크 상한. 넘는 것은 거부하지 않고 잘라낸다.
+export const MAX_SOURCES = 3;
+
 // 로그 한 줄에 싣는 검증 문장의 길이 상한.
 const LOG_STATEMENT_LENGTH = 60;
 
@@ -73,7 +76,7 @@ export class FactCheckerService implements JudgeTaskHandler {
     const debate = await this.debates.findOneOrThrow(task.debateId);
     const slot = resolveTurnSlot(debate, component.turnSequence);
 
-    const outcome = await this.factChecker.check({
+    const checked = await this.factChecker.check({
       topic: debate.topic,
       statement: component.statement,
       context: await this.loadContext(component),
@@ -87,8 +90,9 @@ export class FactCheckerService implements JudgeTaskHandler {
     });
 
     // 지어낸 출처·검색 없는 판정을 거른다. 거부되면 예외가 올라가 worker가 재시도한다.
-    this.validateSources(outcome);
-    this.logOutcome(component, outcome);
+    this.validateSources(checked);
+    const outcome = { ...checked, sources: limitSources(checked) };
+    this.logOutcome(component, outcome, checked.sources.length);
 
     await this.results.replaceFactCheck({
       debateId: task.debateId,
@@ -102,15 +106,21 @@ export class FactCheckerService implements JudgeTaskHandler {
   /**
    * 검증 결과를 로그로 남긴다. 판정 한 줄은 log, 근거·출처·검색 도메인은 debug다.
    * 검증 문장은 분석 단계가 이미 전문을 남겼으므로 여기서는 줄여 싣는다.
+   * 출처가 상한으로 잘렸으면 원래 건수를 함께 남긴다.
    */
   private logOutcome(
     component: DebateArgumentComponent,
     outcome: FactCheckOutcome,
+    receivedSourceCount: number,
   ): void {
+    const sourceCount =
+      receivedSourceCount > outcome.sources.length
+        ? `${outcome.sources.length}건(받은 ${receivedSourceCount}건에서 자름)`
+        : `${outcome.sources.length}건`;
     this.logger.log(
       `사실 검증 완료: debateId=${component.debateId}, ` +
         `turn #${component.turnSequence}, status=${outcome.status}, ` +
-        `출처 ${outcome.sources.length}건, 문장="${summarize(component.statement)}"`,
+        `출처 ${sourceCount}, 문장="${summarize(component.statement)}"`,
     );
 
     this.logger.debug(`  근거: ${outcome.reason.trim()}`);
@@ -156,10 +166,7 @@ export class FactCheckerService implements JudgeTaskHandler {
 
     // 출처 도메인 중 최소 하나는 실제 검색 결과에서 온 것이어야 한다.
     const grounded = outcome.groundedDomains.map(normalizeHost);
-    const matched = hosts.some((host) =>
-      grounded.some((domain) => host === domain || host.endsWith(`.${domain}`)),
-    );
-    if (!matched) {
+    if (!hosts.some((host) => isGroundedHost(host, grounded))) {
       throw new FactCheckSourceValidationError(
         `출처가 검색 결과와 일치하지 않습니다: ${hosts.join(', ')}`,
       );
@@ -168,20 +175,13 @@ export class FactCheckerService implements JudgeTaskHandler {
 
   // URL 형식 검사 겸 호스트 추출. http(s)가 아니면 인용할 수 없는 출처다.
   private toHostOrThrow(source: FactCheckSource): string {
-    let url: URL;
-    try {
-      url = new URL(source.url);
-    } catch {
+    const host = toHost(source.url);
+    if (host === null) {
       throw new FactCheckSourceValidationError(
         `출처 URL 형식이 올바르지 않습니다: ${source.url}`,
       );
     }
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      throw new FactCheckSourceValidationError(
-        `출처 URL 형식이 올바르지 않습니다: ${source.url}`,
-      );
-    }
-    return normalizeHost(url.hostname);
+    return host;
   }
 
   // 검증 문장이 나온 발언 원문. 대명사·생략된 주어를 검색어로 풀어내는 데 쓴다.
@@ -214,6 +214,46 @@ function summarize(statement: string): string {
   return statement.length <= LOG_STATEMENT_LENGTH
     ? statement
     : `${statement.slice(0, LOG_STATEMENT_LENGTH)}…`;
+}
+
+/**
+ * 출처를 상한까지만 남긴다. 실제 검색 결과(grounding)와 도메인이 일치하는 출처를 먼저 두고,
+ * 같은 그룹 안에서는 모델이 낸 순서를 지킨다 — 잘라낸 뒤에도 검색 근거가 있는 출처가 남도록.
+ */
+function limitSources(outcome: FactCheckOutcome): FactCheckSource[] {
+  if (outcome.sources.length <= MAX_SOURCES) {
+    return outcome.sources;
+  }
+  const grounded = outcome.groundedDomains.map(normalizeHost);
+  const isGrounded = (source: FactCheckSource): boolean => {
+    const host = toHost(source.url);
+    return host !== null && isGroundedHost(host, grounded);
+  };
+  return [
+    ...outcome.sources.filter(isGrounded),
+    ...outcome.sources.filter((source) => !isGrounded(source)),
+  ].slice(0, MAX_SOURCES);
+}
+
+// http(s) URL의 정규화된 호스트. 인용할 수 없는 URL이면 null이다.
+function toHost(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return null;
+  }
+  return normalizeHost(url.hostname);
+}
+
+// 호스트가 검색 결과 도메인과 같거나 그 하위 도메인인지.
+function isGroundedHost(host: string, groundedDomains: string[]): boolean {
+  return groundedDomains.some(
+    (domain) => host === domain || host.endsWith(`.${domain}`),
+  );
 }
 
 // 도메인 비교용 정규화. grounding 메타데이터의 title은 보통 도메인 문자열이다.

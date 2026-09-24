@@ -25,6 +25,9 @@ const KNOWN_REF_PREFIX = 'p';
 // 컴포넌트 문장 길이 상한. 한 문장짜리 주장을 벗어나면 요약에 실패한 것으로 본다.
 export const MAX_STATEMENT_LENGTH = 500;
 
+// 한 턴에서 사실 검증을 돌리는 컴포넌트 상한(비용). 넘는 것은 검증 대상에서만 뺀다.
+export const MAX_FACT_CHECKS_PER_TURN = 5;
+
 /**
  * Graph Validator가 거부한 결과. 같은 입력이라도 다시 물으면 달라질 수 있으므로 재시도 대상이다
  * (worker가 재시도 가능/불가를 예외 종류로 구분한다).
@@ -82,7 +85,7 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
       ]),
     );
 
-    const result = await this.analyzer.analyze({
+    const analyzed = await this.analyzer.analyze({
       topic: debate.topic,
       turn: {
         sequence,
@@ -101,7 +104,8 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
     });
 
     // 형식은 맞아도 참조가 어긋날 수 있다. 거부되면 예외가 올라가 worker가 재시도한다.
-    this.validateGraph(result, [...knownRefToId.keys()]);
+    this.validateGraph(analyzed, [...knownRefToId.keys()]);
+    const result = this.limitFactChecks(task.debateId, sequence, analyzed);
     this.logResult(task.debateId, sequence, result);
 
     const saved = await this.results.replaceTurnGraph({
@@ -124,6 +128,39 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
         );
       }
     }
+  }
+
+  /**
+   * 사실 검증 대상을 턴당 상한까지만 남긴다. 발언 순서상 앞선 것을 우선하고, 넘는 컴포넌트는
+   * 그래프에는 그대로 두되 needsFactCheck만 내린다 — 검증을 안 할 뿐 논증 자체는 유효하다.
+   */
+  private limitFactChecks(
+    debateId: string,
+    sequence: number,
+    result: AnalyzerResult,
+  ): AnalyzerResult {
+    let remaining = MAX_FACT_CHECKS_PER_TURN;
+    const components = result.components.map((component) => {
+      if (!component.needsFactCheck) {
+        return component;
+      }
+      if (remaining > 0) {
+        remaining -= 1;
+        return component;
+      }
+      return { ...component, needsFactCheck: false };
+    });
+
+    const requested = result.components.filter(
+      (component) => component.needsFactCheck,
+    ).length;
+    if (requested > MAX_FACT_CHECKS_PER_TURN) {
+      this.logger.log(
+        `검증 대상 상한 초과: debateId=${debateId}, turn #${sequence}, ` +
+          `${requested}건 중 ${MAX_FACT_CHECKS_PER_TURN}건만 검증한다.`,
+      );
+    }
+    return { ...result, components };
   }
 
   /**

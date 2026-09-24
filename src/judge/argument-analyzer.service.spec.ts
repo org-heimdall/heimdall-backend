@@ -6,6 +6,7 @@ import { Debate, DebateTurn } from '../debates/entities/debate.entity';
 import {
   ArgumentGraphValidationError,
   ArgumentAnalyzerService,
+  MAX_FACT_CHECKS_PER_TURN,
   MAX_STATEMENT_LENGTH,
 } from './argument-analyzer.service';
 import { JudgeTaskQueue, NonRetryableTaskError } from './judge-task.worker';
@@ -195,6 +196,30 @@ describe('ArgumentAnalyzerService', () => {
     await service.handle(task);
 
     expect(queue.schedule).not.toHaveBeenCalled();
+  });
+
+  it('검증 대상이 턴당 상한을 넘으면 앞선 것만 남기고 나머지는 검증 대상에서 뺀다', async () => {
+    const components = Array.from(
+      { length: MAX_FACT_CHECKS_PER_TURN + 2 },
+      (_, index) => ({
+        ref: `c${index + 1}`,
+        kind: ArgumentComponentKind.EVIDENCE,
+        statement: `근거 ${index + 1}`,
+        needsFactCheck: true,
+      }),
+    );
+    analyzer.analyze.mockResolvedValue(analyzed({ components, relations: [] }));
+
+    await service.handle(task);
+
+    const [input] = graph.replaceTurnGraph.mock.calls[0] as [
+      { result: AnalyzerResult },
+    ];
+    // 컴포넌트는 모두 저장되고 검증 표시만 상한까지 남는다.
+    expect(input.result.components).toHaveLength(components.length);
+    expect(
+      input.result.components.map((component) => component.needsFactCheck),
+    ).toEqual(components.map((_, index) => index < MAX_FACT_CHECKS_PER_TURN));
   });
 
   describe('Graph Validator', () => {
