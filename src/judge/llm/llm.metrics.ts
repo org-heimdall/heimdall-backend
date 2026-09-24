@@ -12,7 +12,7 @@ const TOKEN_TYPES = [
   ['input', 'inputTokens'],
   ['cached', 'cachedTokens'],
   ['output', 'outputTokens'],
-  ['thinking', 'reasoningTokens'],
+  ['thinking', 'thinkingTokens'],
 ] as const satisfies readonly (readonly [string, keyof LlmTokenUsage])[];
 
 @Injectable()

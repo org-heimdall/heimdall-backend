@@ -2,12 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
-import {
-  DebatePhase,
-  DebateSide,
-  DebateTurnSchedule,
-  resolveSpeakers,
-} from '../debates/debate-turn';
+import { DebateSide, resolveSpeakers } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
@@ -18,6 +13,7 @@ import {
   JudgeTaskQueue,
 } from './judge-task.worker';
 import { JudgeResultRepository } from './judge-result.repository';
+import { resolveTurnSlot } from './judge-turn-slot';
 import { DebateArgumentComponent } from './entities/debate-argument.entity';
 import { JudgeTask } from './entities/judge-task.entity';
 import { ARGUMENT_ANALYZER, AnalyzerKnownComponent } from './llm/judge-llm';
@@ -71,6 +67,7 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
     const turn = await this.findTurnOrThrow(task.targetId);
     const debate = await this.debates.findOneOrThrow(task.debateId);
     const sequence = turn.sequence as number;
+    const slot = resolveTurnSlot(debate, sequence);
     const speakerSide = this.resolveSide(debate, turn.memberId);
     const previous = await this.results.findComponentsBefore(
       task.debateId,
@@ -89,12 +86,18 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
       topic: debate.topic,
       turn: {
         sequence,
-        ...this.resolveSlot(debate, sequence),
+        ...slot,
         speakerSide,
         speakerNickname: this.resolveNickname(debate, turn.memberId),
         content: turn.body ?? '',
       },
       previousComponents: this.toKnownComponents(previous),
+      logContext: {
+        debateId: task.debateId,
+        turnIds: [turn.id],
+        phase: slot.phase,
+        round: slot.round,
+      },
     });
 
     // 형식은 맞아도 참조가 어긋날 수 있다. 거부되면 예외가 올라가 worker가 재시도한다.
@@ -236,22 +239,6 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
       );
     }
     return turn;
-  }
-
-  // 발언 순서(sequence)에서 phase·round를 파생한다. 규칙은 토론 스케줄 하나에만 있다.
-  private resolveSlot(
-    debate: Debate,
-    sequence: number,
-  ): { phase: DebatePhase; round: number } {
-    const slot = new DebateTurnSchedule(debate.rebuttalQuestionRounds).at(
-      sequence - 1,
-    );
-    if (slot === null) {
-      throw new NonRetryableTaskError(
-        `스케줄 범위를 벗어난 턴입니다: sequence=${sequence}`,
-      );
-    }
-    return { phase: slot.phase, round: slot.round };
   }
 
   private resolveSide(debate: Debate, memberId: string): DebateSide {
