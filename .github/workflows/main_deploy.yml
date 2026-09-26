@@ -38,6 +38,7 @@ jobs:
             ecosystem.config.js
             Dockerfile
             docker-compose.yml
+            promtail-config.yml
 
   deploy:
     needs: build
@@ -75,7 +76,7 @@ jobs:
           ssh -i private_key.pem -o StrictHostKeyChecking=no $EC2_USERNAME@$EC2_HOST "
             set -e
             cd $TARGET_DIR
-            docker compose up -d --build backend
+            docker compose up -d --build backend promtail
             docker image prune -f
           "
 
