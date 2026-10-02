@@ -34,12 +34,6 @@ export const DebateChatErrorCode = {
     title: 'Turn Mismatch',
     detail: '현재 발언 차례가 아닙니다.',
   },
-  CONTENT_TOO_LONG: {
-    httpStatus: HttpStatus.BAD_REQUEST,
-    code: 'DEBATE_CHAT.CONTENT_TOO_LONG',
-    title: 'Content Too Long',
-    detail: '메시지 길이가 허용 범위를 넘었습니다.',
-  },
   TURN_CHARACTER_LIMIT_EXCEEDED: {
     httpStatus: HttpStatus.CONFLICT,
     code: 'DEBATE_CHAT.TURN_CHARACTER_LIMIT_EXCEEDED',
