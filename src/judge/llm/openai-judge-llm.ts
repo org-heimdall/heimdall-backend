@@ -5,30 +5,29 @@ import type { ResponseUsage } from 'openai/resources/responses/responses';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 import { MAX_FACT_CHECKS_PER_ROUND } from '../argument-analyzer.service';
-import { MAX_SCORE, MIN_SCORE } from '../debate-judge.service';
 import { NonRetryableTaskError } from '../judge-task.worker';
 import { SIDE_PLACEHOLDERS } from '../judgment-text';
 import {
   ArgumentComponentKind,
   ArgumentRelationKind,
   ClaimType,
-  DebateViolation,
 } from '../judge.types';
 import {
   AnalyzerRequest,
   AnalyzerResult,
   ArgumentAnalyzer,
-  DebateJudge,
+  DebateCommentary,
+  DebateCommentaryRequest,
   DebateJudgeRequest,
-  DebateJudgeResult,
-  SideJudgment,
+  JudgeCommentator,
+  SideScoring,
   SILENT_TURN_PLACEHOLDER,
 } from './judge-llm';
 import { LlmCallLogger, LlmLogContext, LlmTokenUsage } from './llm-call-logger';
 
-// 1단계, 3단계 (Argument Analyzer, Debate Judge)는 OpenAI API 사용
+// 1단계(Argument Analyzer)와 3단계(Debate Judge)의 문장 작성은 OpenAI API 사용. 3단계의 점수·위반 판정은 Jev가 한다.
 @Injectable()
-export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
+export class OpenAiJudgeLlm implements ArgumentAnalyzer, JudgeCommentator {
   private readonly logger = new Logger(OpenAiJudgeLlm.name);
   private readonly model: string;
   private readonly client: OpenAI | null;
@@ -83,33 +82,21 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
     };
   }
 
-  async judge(request: DebateJudgeRequest): Promise<DebateJudgeResult> {
-    const input = buildJudgeInput(request);
-
-    // 두 판정은 서로 독립이라 순차로 기다릴 이유가 없다(판정 대기 시간에 직결된다).
-    const [performance, violation] = await Promise.all([
-      this.parse(
-        'judge.performance',
-        request.logContext,
-        SYSTEM_PROMPT_JUDGE,
-        input,
-        JudgingDebatePerformance,
-        'judging_debate_performance',
-      ),
-      this.parse(
-        'judge.violation',
-        request.logContext,
-        SYSTEM_PROMPT_VIOLATION,
-        input,
-        JudgingDebateViolation,
-        'judging_debate_violation',
-      ),
-    ]);
+  // 점수는 이미 정해져 있다. 그 점수를 근거로 피드백과 총평 문장만 쓴다.
+  async comment(request: DebateCommentaryRequest): Promise<DebateCommentary> {
+    const parsed = await this.parse(
+      'judge.commentary',
+      request.logContext,
+      SYSTEM_PROMPT_COMMENTARY,
+      buildCommentaryInput(request),
+      DebateCommentarySchema,
+      'debate_commentary',
+    );
 
     return {
-      sideA: toSideJudgment(performance.side_a, violation.side_a.violations),
-      sideB: toSideJudgment(performance.side_b, violation.side_b.violations),
-      overallReason: performance.judge_reason.trim(),
+      sideAFeedback: parsed.side_a_feedback.trim(),
+      sideBFeedback: parsed.side_b_feedback.trim(),
+      overallReason: parsed.judge_reason.trim(),
       model: this.model,
     };
   }
@@ -131,7 +118,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
     }
 
     const client = this.client;
-    // 호출마다 소요 시간과 token usage를 남긴다(판정은 두 호출이 병렬이라 두 줄이 남는다).
+    // 호출마다 소요 시간과 token usage를 남긴다.
     const response = await this.callLogger.measure(
       { provider: 'openai', model: this.model, operation, context: logContext },
       () =>
@@ -269,64 +256,24 @@ function buildAnalyzerInput(request: AnalyzerRequest): string {
 
 // ------------------------------------------------------------------- Judge
 
-const DebatePerformance = z.object({
-  argumentation_score: z.number().int().min(MIN_SCORE).max(MAX_SCORE),
-  interaction_score: z.number().int().min(MIN_SCORE).max(MAX_SCORE),
-  evidence_score: z.number().int().min(MIN_SCORE).max(MAX_SCORE),
-  feedback: z.string(),
-});
-
-const JudgingDebatePerformance = z.object({
-  side_a: DebatePerformance,
-  side_b: DebatePerformance,
+const DebateCommentarySchema = z.object({
+  side_a_feedback: z.string(),
+  side_b_feedback: z.string(),
   judge_reason: z.string(),
 });
 
-const Violation = z.object({
-  type: z.enum([
-    'profanity',
-    'personal_attack',
-    'disrespect',
-    'off_topic',
-    'threat',
-  ]),
-  severity: z.enum(['none', 'minor', 'moderate', 'high', 'severe']),
-  evidence: z.string(),
-});
-
-const ParticipantViolation = z.object({ violations: z.array(Violation) });
-
-const JudgingDebateViolation = z.object({
-  side_a: ParticipantViolation,
-  side_b: ParticipantViolation,
-});
-
-const SYSTEM_PROMPT_JUDGE = [
-  '너는 토론 심판이다. 두 편의 발언과 논증 구조, 사실 검증 결과를 보고 편마다 세 축을 0~100점으로 매긴다.',
+const SYSTEM_PROMPT_COMMENTARY = [
+  '너는 토론 심판의 해설자다. 점수는 이미 매겨져 있다. 두 편의 발언과 논증 구조, 사실 검증 결과, 그리고 매겨진 점수를 보고 편마다 피드백과 전체 총평을 쓴다.',
+  '점수 축(0~100점):',
   '- 논증(argumentation): 주장이 분명하고 근거가 주장을 실제로 뒷받침하는가.',
-  '- 상호작용(interaction): 상대의 주장에 정면으로 응답하고 질문에 답했는가. "논증 관계"의 ATTACK·QUESTION이 상대 편 컴포넌트를 실제로 겨냥하는지, 받은 질문이 뒤에 답변으로 이어지는지를 근거로 삼는다.',
-  '- 사실 신뢰도(evidence_score): 제시한 사실 주장이 검증 결과로 뒷받침되는가. 검증 결과가 없는 주장은 중립으로 본다.',
+  '- 상호작용(interaction): 상대의 주장에 정면으로 응답하고 질문에 답했는가.',
+  '- 사실 신뢰도(factual_reliability): 제시한 사실 주장이 검증 결과로 뒷받침되는가.',
+  '피드백과 총평은 매겨진 점수와 어긋나면 안 된다. 점수가 낮은 축을 칭찬하거나 높은 축을 깎아내리지 않는다. 점수를 바꾸거나 다시 매기지 않는다.',
+  '피드백에는 그 편이 잘한 점과 개선할 점을 발언·논증에 근거해 구체적으로 쓴다. 총평(judge_reason)에는 두 편의 차이를 만든 핵심을 쓴다.',
   `${SILENT_TURN_PLACEHOLDER}으로 표시된 차례는 시간 안에 아무 말도 하지 않은 것이다. 그 편에게 유리하게 해석하지 않는다.`,
-  '누가 이겼는지는 판단하지 않는다. 점수와 근거만 낸다.',
+  '누가 이겼는지는 판단하지 않는다.',
   `judge_reason과 feedback에서 참여자는 반드시 ${SIDE_PLACEHOLDERS.SIDE_A}, ${SIDE_PLACEHOLDERS.SIDE_B} 표기로만 지칭한다. SIDE_A, A측, 측면 A 같은 표기나 닉네임을 직접 쓰지 않는다.`,
   '모든 문장은 한국어로 쓴다.',
-].join('\n');
-
-/**
- * 위반 평가. 판정과 입력은 같고 보는 것만 다르다 — 잘했는지가 아니라 선을 넘었는지를 본다.
- * 결과는 프론트로 나가지 않고 신뢰도 차감의 근거로만 쓰인다.
- */
-const SYSTEM_PROMPT_VIOLATION = [
-  '너는 토론 대화에서 규칙 위반을 찾아내는 심판이다.',
-  '편마다 5가지 항목(profanity, personal_attack, disrespect, off_topic, threat)을 5단계로 평가한다.',
-  '- none: 해당 사항이 전혀 없음',
-  '- minor: 가벼운 무례함 또는 일회성의 경미한 비매너 발언. 토론 진행에 실질적인 영향을 주지 않는 수준',
-  '- moderate: 명확한 무례한 표현, 경미한 인신공격, 일회성 욕설',
-  '- high: 명확한 욕설 또는 강한 인신공격, 상대방을 직접 모욕하는 발언, 반복적인 무례한 발언',
-  '- severe: 심각한 모욕이나 위협, 지속적·반복적인 욕설/인신공격, 토론을 사실상 방해할 정도의 규칙 위반',
-  'none 단계일 경우 배열에 항목을 넣지 않는다.',
-  'evidence에는 근거가 된 발언을 그대로 옮긴다.',
-  '없는 위반을 지어내지 않는다.',
 ].join('\n');
 
 /**
@@ -375,36 +322,13 @@ function buildJudgeInput(request: DebateJudgeRequest): string {
   ].join('\n\n');
 }
 
-function toSideJudgment(
-  side: z.infer<typeof DebatePerformance>,
-  violations: z.infer<typeof ParticipantViolation>['violations'],
-): SideJudgment {
-  return {
-    argumentationScore: side.argumentation_score,
-    interactionScore: side.interaction_score,
-    factualReliabilityScore: side.evidence_score,
-    feedback: side.feedback.trim(),
-    violations: toViolations(violations),
-  };
-}
+// 판정 입력 뒤에 이미 매겨진 점수를 붙인다. 점수는 placeholder 표기로만 싣는다.
+function buildCommentaryInput(request: DebateCommentaryRequest): string {
+  const scoreLine = (label: string, side: SideScoring) =>
+    `${label}: 논증 ${side.argumentationScore} / 상호작용 ${side.interactionScore} / 사실 신뢰도 ${side.factualReliabilityScore}`;
 
-/**
- * LLM의 위반 목록을 도메인 계약으로 옮긴다.
- * severity 'none'은 "위반 없음"이므로 항목 자체를 뺀다 — 프롬프트가 넣지 말라고 지시하지만
- * 스키마상으로는 넣을 수 있어 서버에서 한 번 더 거른다.
- */
-function toViolations(
-  violations: z.infer<typeof ParticipantViolation>['violations'],
-): DebateViolation[] {
-  return violations.flatMap((violation) =>
-    violation.severity === 'none'
-      ? []
-      : [
-          {
-            type: violation.type,
-            severity: violation.severity,
-            evidence: violation.evidence,
-          },
-        ],
-  );
+  return [
+    buildJudgeInput(request),
+    `# 매겨진 점수 (0~100)\n${scoreLine(SIDE_PLACEHOLDERS.SIDE_A, request.scoring.sideA)}\n${scoreLine(SIDE_PLACEHOLDERS.SIDE_B, request.scoring.sideB)}`,
+  ].join('\n\n');
 }

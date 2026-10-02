@@ -33,9 +33,17 @@ import {
 import { DebateFactCheckResult } from './entities/debate-fact-check.entity';
 import { DebateJudgmentResult } from './entities/debate-judgment-result.entity';
 import { JudgeTask } from './entities/judge-task.entity';
-import { ARGUMENT_ANALYZER, DEBATE_JUDGE, FACT_CHECKER } from './llm/judge-llm';
+import {
+  ARGUMENT_ANALYZER,
+  DEBATE_JUDGE,
+  FACT_CHECKER,
+  JUDGE_COMMENTATOR,
+  JUDGE_SCORER,
+} from './llm/judge-llm';
 import { GeminiFactChecker } from './llm/gemini-fact-checker';
 import { OpenAiJudgeLlm } from './llm/openai-judge-llm';
+import { JevDebateScorer } from './llm/jev-debate-scorer';
+import { HybridDebateJudge } from './llm/hybrid-debate-judge';
 import { LlmCallLogger } from './llm/llm-call-logger';
 import { LlmMetrics } from './llm/llm.metrics';
 import { JudgeTaskMetrics } from './judge-task.metrics';
@@ -93,11 +101,14 @@ import { MetricsModule } from '../common/metrics/metrics.module';
     // LLM 호출 1건의 로그·메트릭. 벤더 구현체가 함께 쓴다.
     LlmMetrics,
     LlmCallLogger,
-    // LLM 구현체. 벤더는 단계마다 다르다 — 사실 검증만 Gemini(Google Search grounding).
+    // LLM 구현체. 벤더는 단계마다 다르다 — 분석은 OpenAI, 사실 검증은 Gemini(Google Search grounding),
+    // 판정은 점수·위반을 Jev가 매기고 그 점수로 OpenAI가 피드백·총평을 쓴다.
     OpenAiJudgeLlm,
     { provide: ARGUMENT_ANALYZER, useExisting: OpenAiJudgeLlm },
-    { provide: DEBATE_JUDGE, useExisting: OpenAiJudgeLlm },
     { provide: FACT_CHECKER, useClass: GeminiFactChecker },
+    { provide: JUDGE_SCORER, useClass: JevDebateScorer },
+    { provide: JUDGE_COMMENTATOR, useExisting: OpenAiJudgeLlm },
+    { provide: DEBATE_JUDGE, useClass: HybridDebateJudge },
     // 작업이 확정될 때마다 판정 조건을 다시 보는 것은 파이프라인 서비스의 몫이다.
     {
       provide: JUDGE_TASK_LISTENER,

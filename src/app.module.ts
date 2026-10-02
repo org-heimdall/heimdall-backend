@@ -72,6 +72,17 @@ import * as Joi from 'joi';
         GEMINI_MODEL: Joi.string().default('gemini-3.8-flash'),
         GEMINI_TIMEOUT_MS: Joi.number().default(60000),
 
+        // 토론 판정(점수·위반)용 TypeSafe Jev 설정. 키 규칙은 OPENAI_*와 같다(production에서만 필수).
+        TYPESAFE_API_KEY: Joi.string().when('NODE_ENV', {
+          is: 'production',
+          then: Joi.required(),
+          otherwise: Joi.string().allow('').optional(),
+        }),
+        TYPESAFE_MODEL: Joi.string().default('jev-latest'),
+        // 시도 1회당 시간 제한. 전사 전체를 state로 보내므로 SDK 기본값(10초)보다 넉넉히 둔다.
+        TYPESAFE_TIMEOUT_MS: Joi.number().default(30000),
+        TYPESAFE_MAX_RETRIES: Joi.number().default(2),
+
         // 토론 판정 파이프라인(Phase 3) 운영값.
         DEBATE_PIPELINE_WORKER_CONCURRENCY: Joi.number()
           .integer()

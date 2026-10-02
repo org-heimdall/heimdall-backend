@@ -11,6 +11,8 @@ import {
 export const ARGUMENT_ANALYZER = Symbol('ARGUMENT_ANALYZER');
 export const FACT_CHECKER = Symbol('FACT_CHECKER');
 export const DEBATE_JUDGE = Symbol('DEBATE_JUDGE');
+export const JUDGE_SCORER = Symbol('JUDGE_SCORER');
+export const JUDGE_COMMENTATOR = Symbol('JUDGE_COMMENTATOR');
 
 // 시간 초과로 아무 말도 하지 않은 차례. 판정에는 "넘겼다"는 사실이 필요하다.
 export const SILENT_TURN_PLACEHOLDER = '(발언 없음)';
@@ -213,4 +215,39 @@ export interface DebateJudgeResult {
 
 export interface DebateJudge {
   judge(request: DebateJudgeRequest): Promise<DebateJudgeResult>;
+}
+
+/*
+ * 판정은 둘로 나뉜다. 점수·위반처럼 정해진 답 중에서 고르는 판단은 Scorer(Jev)가,
+ * 그 판단을 사람이 읽을 문장으로 풀어 쓰는 일은 Commentator(LLM)가 맡는다.
+ * DebateJudge 구현체(HybridDebateJudge)가 둘을 이어 기존 DebateJudgeResult를 그대로 만든다.
+ */
+
+// 편 하나의 점수·위반. 문장은 없다.
+export type SideScoring = Omit<SideJudgment, 'feedback'>;
+
+export interface DebateScoring {
+  sideA: SideScoring;
+  sideB: SideScoring;
+  model: string;
+}
+
+export interface JudgeScorer {
+  score(request: DebateJudgeRequest): Promise<DebateScoring>;
+}
+
+// 이미 정해진 점수를 함께 넘긴다. 문장이 점수와 어긋나지 않게 하기 위해서다.
+export interface DebateCommentaryRequest extends DebateJudgeRequest {
+  scoring: DebateScoring;
+}
+
+export interface DebateCommentary {
+  sideAFeedback: string;
+  sideBFeedback: string;
+  overallReason: string;
+  model: string;
+}
+
+export interface JudgeCommentator {
+  comment(request: DebateCommentaryRequest): Promise<DebateCommentary>;
 }
