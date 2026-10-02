@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, LessThan, Repository } from 'typeorm';
@@ -7,7 +8,10 @@ import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
 import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate } from '../debates/entities/debate.entity';
 import {
+  ArgumentComponentKind,
+  ClaimType,
   DebateViolation,
+  FactCheckExclusionReason,
   FactCheckSource,
   JudgmentWinner,
   VerificationStatus,
@@ -18,16 +22,34 @@ import {
 } from './entities/debate-argument.entity';
 import { DebateFactCheckResult } from './entities/debate-fact-check.entity';
 import { DebateJudgmentResult } from './entities/debate-judgment-result.entity';
-import { AnalyzerResult } from './llm/judge-llm';
+import { AnalyzedRelation } from './llm/judge-llm';
 
-export interface ReplaceTurnGraphInput {
-  debateId: string;
+// 라운드 분석 결과 컴포넌트 하나를 저장할 값. 발언자·턴은 컴포넌트가 나온 턴에서, 검증 관련 값은 정책 결정에서 온다.
+export interface GraphComponentInput {
+  // 분석 응답 안의 별칭. 관계·중복 참조가 이 값으로 컴포넌트를 가리킨다.
+  ref: string;
   turnId: string;
   turnSequence: number;
   speakerId: string;
   speakerSide: DebateSide;
-  result: AnalyzerResult;
-  // 이전 턴 컴포넌트의 별칭 → 실제 id. 관계가 과거 컴포넌트를 가리킬 때 쓴다.
+  kind: ArgumentComponentKind;
+  statement: string;
+  claimType: ClaimType;
+  needsFactCheck: boolean;
+  factCheckStatement: string | null;
+  claimHash: string | null;
+  factCheckExclusionReason: FactCheckExclusionReason | null;
+  // 같은 주장을 먼저 한 컴포넌트의 별칭(이번 라운드 것 또는 이전 라운드의 p…).
+  duplicateOfRef: string | null;
+}
+
+export interface ReplaceRoundGraphInput {
+  debateId: string;
+  // 교체할 라운드의 확정 턴들. 이 턴들의 기존 컴포넌트·관계를 지우고 새로 넣는다.
+  turnIds: string[];
+  components: GraphComponentInput[];
+  relations: AnalyzedRelation[];
+  // 이전 라운드 컴포넌트의 별칭 → 실제 id. 관계·중복 참조가 과거 컴포넌트를 가리킬 때 쓴다.
   knownRefToId: ReadonlyMap<string, string>;
 }
 
@@ -141,21 +163,18 @@ export class JudgeResultRepository {
     return this.relations.findBy({ debateId });
   }
 
-  async findComponentById(
-    componentId: string,
-  ): Promise<DebateArgumentComponent | null> {
-    return this.components.findOneBy({ id: componentId });
-  }
-
   /**
-   * 턴 하나의 그래프를 통째로 갈아 끼운다.
+   * 라운드(확정 턴 묶음) 하나의 그래프를 통째로 갈아 끼운다.
    *
-   * 재시도로 같은 턴을 다시 분석할 수 있으므로 "추가"가 아니라 "교체"여야 컴포넌트가 중복되지 않는다.
-   * 지우는 관계는 이 턴의 컴포넌트가 걸치는 것 전부다 — 한쪽만 지우면 존재하지 않는 컴포넌트를
-   * 가리키는 관계가 남는다.
+   * 재시도로 같은 라운드를 다시 분석할 수 있으므로 "추가"가 아니라 "교체"여야 컴포넌트가 중복되지 않는다.
+   * 지우는 관계는 이 라운드의 컴포넌트가 걸치는 것 전부다 — 한쪽만 지우면 존재하지 않는 컴포넌트를
+   * 가리키는 관계가 남는다. 검증 결과는 FK CASCADE로 컴포넌트와 함께 사라진다.
+   *
+   * 컴포넌트 id를 저장 전에 정해 두는 이유는, 같은 라운드 안에서 먼저 한 주장을 가리키는
+   * 중복 참조(duplicate_of)와 관계를 한 번의 저장으로 실제 id로 이을 수 있게 하기 위해서다.
    */
-  async replaceTurnGraph(
-    input: ReplaceTurnGraphInput,
+  async replaceRoundGraph(
+    input: ReplaceRoundGraphInput,
   ): Promise<DebateArgumentComponent[]> {
     return this.dataSource.transaction(async (manager) => {
       const components = manager.getRepository(DebateArgumentComponent);
@@ -163,7 +182,7 @@ export class JudgeResultRepository {
 
       const previous = await components.findBy({
         debateId: input.debateId,
-        turnId: input.turnId,
+        turnId: In(input.turnIds),
       });
       if (previous.length > 0) {
         const ids = previous.map((component) => component.id);
@@ -172,28 +191,38 @@ export class JudgeResultRepository {
         await components.delete({ id: In(ids) });
       }
 
-      const saved = await components.save(
-        input.result.components.map((component) =>
-          components.create({
-            debateId: input.debateId,
-            turnId: input.turnId,
-            turnSequence: input.turnSequence,
-            speakerId: input.speakerId,
-            speakerSide: input.speakerSide,
-            kind: component.kind,
-            statement: component.statement,
-            needsFactCheck: component.needsFactCheck,
-          }),
-        ),
-      );
-
-      // 별칭 → id. 이번 턴에서 새로 만든 것과 이전 턴 것을 함께 본다(검증이 이미 통과한 상태다).
+      // 별칭 → id. 이번 라운드에서 새로 만드는 것과 이전 라운드 것을 함께 본다(검증이 이미 통과한 상태다).
       const refToId = new Map(input.knownRefToId);
-      input.result.components.forEach((component, index) => {
-        refToId.set(component.ref, saved[index].id);
-      });
+      for (const component of input.components) {
+        refToId.set(component.ref, randomUUID());
+      }
 
-      const rows = input.result.relations.map((relation) =>
+      const rows = input.components.map((component) =>
+        components.create({
+          id: refToId.get(component.ref) as string,
+          debateId: input.debateId,
+          turnId: component.turnId,
+          turnSequence: component.turnSequence,
+          speakerId: component.speakerId,
+          speakerSide: component.speakerSide,
+          kind: component.kind,
+          statement: component.statement,
+          claimType: component.claimType,
+          needsFactCheck: component.needsFactCheck,
+          factCheckStatement: component.factCheckStatement,
+          claimHash: component.claimHash,
+          factCheckExclusionReason: component.factCheckExclusionReason,
+          duplicateOfComponentId:
+            component.duplicateOfRef === null
+              ? null
+              : (refToId.get(component.duplicateOfRef) ?? null),
+        }),
+      );
+      if (rows.length > 0) {
+        await components.insert(rows);
+      }
+
+      const edges = input.relations.map((relation) =>
         relations.create({
           debateId: input.debateId,
           fromComponentId: refToId.get(relation.fromRef) as string,
@@ -201,12 +230,35 @@ export class JudgeResultRepository {
           kind: relation.kind,
         }),
       );
-      if (rows.length > 0) {
-        await relations.save(rows);
+      if (edges.length > 0) {
+        await relations.save(edges);
       }
 
-      return saved;
+      return rows;
     });
+  }
+
+  // 라운드 턴들에서 나온 검증 대상 가운데 아직 결과가 없는 것(발언 순서대로). 라운드 검증 batch의 입력이다.
+  async findUnresolvedTargets(
+    debateId: string,
+    turnIds: string[],
+  ): Promise<DebateArgumentComponent[]> {
+    const targets = await this.components.find({
+      where: { debateId, turnId: In(turnIds), needsFactCheck: true },
+      order: { turnSequence: 'ASC', createdAt: 'ASC' },
+    });
+    if (targets.length === 0) {
+      return [];
+    }
+
+    const resolved = new Set(
+      (
+        await this.factChecks.findBy({
+          componentId: In(targets.map((target) => target.id)),
+        })
+      ).map((check) => check.componentId),
+    );
+    return targets.filter((target) => !resolved.has(target.id));
   }
 
   // ------------------------------------------------------------ 사실 검증
