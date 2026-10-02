@@ -12,8 +12,7 @@ import { JudgeTaskKind, JudgeTaskStatus } from '../judge.types';
  *
  * 같은 대상의 작업은 (kind, target_id) unique로 한 행만 존재하고, 선점은 조건부 UPDATE로 한다.
  * target_id는 종류마다 가리키는 대상이 다르다:
- * ANALYZER·FACT_CHECK → 라운드를 닫는 확정 턴(debate_message.id, 라운드당 작업 하나), JUDGE → 토론 자체(debate.id).
- * (라운드 단위 이전에 만들어진 행은 ANALYZER가 각 확정 턴, FACT_CHECK가 논증 컴포넌트를 가리킨다.)
+ * ANALYZER → 확정 턴(debate_message.id), FACT_CHECK → 논증 컴포넌트, JUDGE → 토론 자체(debate.id).
  * 세 대상이 모두 uuid라 한 컬럼으로 묶었고, 덕분에 nullable 컬럼의 unique(NULL은 서로 달라
  * 중복을 막지 못한다) 문제도 생기지 않는다.
  */

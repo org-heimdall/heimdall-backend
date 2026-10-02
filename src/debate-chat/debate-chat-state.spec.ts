@@ -82,6 +82,7 @@ describe('DebateChatState', () => {
   const NOW = new Date('2026-09-05T00:00:00.000Z');
 
   const limits = {
+    maxContentLength: 10,
     maxTotalCharacters: 25,
     maxDurationSeconds: 180,
   };
@@ -231,93 +232,15 @@ describe('DebateChatState', () => {
       expect(state.snapshot().draftMessages).toHaveLength(2);
     });
 
-    it('메시지 1건의 길이는 따로 제한하지 않아 누적 한도까지 한 번에 보낼 수 있다', () => {
-      const result = state.appendDraft(SIDE_A_ID, {
-        ...opening(DebateSide.SIDE_A),
-        content: 'x'.repeat(25),
-      });
-      expect(result.status).toBe('APPENDED');
-    });
-
-    it('누적 한도를 넘는 단건은 TURN_CHARACTER_LIMIT_EXCEEDED', () => {
+    it('메시지 1건이 maxContentLength를 넘으면 CONTENT_TOO_LONG', () => {
       expectError(
         () =>
           state.appendDraft(SIDE_A_ID, {
             ...opening(DebateSide.SIDE_A),
-            content: 'x'.repeat(26),
+            content: 'x'.repeat(11),
           }),
-        DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED,
+        DebateChatErrorCode.CONTENT_TOO_LONG,
       );
-    });
-
-    it('한도 500에서 300 + 200은 통과하고 501자째부터 거부한다', () => {
-      const wide = build({ limits: { ...limits, maxTotalCharacters: 500 } });
-      const send = (content: string) =>
-        wide.appendDraft(SIDE_A_ID, { ...opening(DebateSide.SIDE_A), content });
-
-      send('x'.repeat(300));
-      send('x'.repeat(200));
-      expectError(
-        () => send('x'),
-        DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED,
-      );
-    });
-
-    it('재접속으로 복원된 draft도 누적 글자 수에 포함한다', () => {
-      const restored = build({
-        drafts: [
-          {
-            id: 'draft-1',
-            debateId: DEBATE_ID,
-            speakerId: SIDE_A_ID,
-            speakerSide: DebateSide.SIDE_A,
-            phase: DebatePhase.OPENING,
-            round: 1,
-            content: 'x'.repeat(20),
-            createdAt: NOW.toISOString(),
-          },
-        ],
-      });
-      const send = (content: string) =>
-        restored.appendDraft(SIDE_A_ID, {
-          ...opening(DebateSide.SIDE_A),
-          content,
-        });
-
-      send('x'.repeat(5)); // 누적 25 = 한도, 통과
-      expectError(
-        () => send('x'),
-        DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED,
-      );
-    });
-
-    it('확정 뒤 다음 차례는 누적 글자 수를 0부터 센다', () => {
-      state.appendDraft(SIDE_A_ID, {
-        ...opening(DebateSide.SIDE_A),
-        content: 'x'.repeat(25),
-      });
-      state.finalizeTurn(SIDE_A_ID, opening(DebateSide.SIDE_A));
-
-      const result = state.appendDraft(SIDE_B_ID, {
-        ...opening(DebateSide.SIDE_B),
-        content: 'x'.repeat(25),
-      });
-      expect(result.status).toBe('APPENDED');
-    });
-
-    it('시간 초과로 넘어간 다음 차례도 누적 글자 수를 0부터 센다', () => {
-      state.appendDraft(SIDE_A_ID, {
-        ...opening(DebateSide.SIDE_A),
-        content: 'x'.repeat(25),
-      });
-      clock = new Date(NOW.getTime() + 180_000);
-      expect(state.expireTurn()).not.toBeNull();
-
-      const result = state.appendDraft(SIDE_B_ID, {
-        ...opening(DebateSide.SIDE_B),
-        content: 'x'.repeat(25),
-      });
-      expect(result.status).toBe('APPENDED');
     });
 
     it('턴 누적 글자 수가 maxTotalCharacters를 넘으면 TURN_CHARACTER_LIMIT_EXCEEDED', () => {

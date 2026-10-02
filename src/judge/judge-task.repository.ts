@@ -175,34 +175,6 @@ export class JudgeTaskRepository {
   }
 
   /**
-   * 이미 끝난(COMPLETED·FAILED) 작업을 처음부터 다시 돌도록 PENDING으로 되돌린다. 시도 횟수도 초기화한다.
-   *
-   * 라운드 분석을 다시 해 검증 대상 컴포넌트가 교체되면, 같은 라운드의 검증 작업이 이미 끝나 있어도
-   * 새 컴포넌트를 검증해야 하기 때문이다. 진행 중(PROCESSING)이나 대기(PENDING) 작업은 건드리지 않는다.
-   * 되돌린 행이 있으면 true.
-   */
-  async resetSettled(kind: JudgeTaskKind, targetId: string): Promise<boolean> {
-    const result = await this.repository
-      .createQueryBuilder()
-      .update(JudgeTask)
-      .set({
-        status: JudgeTaskStatus.PENDING,
-        attempt: 0,
-        requestId: null,
-        lastError: null,
-        updatedAt: () => 'now()',
-      })
-      .where('kind = :kind', { kind })
-      .andWhere('target_id = :targetId', { targetId })
-      .andWhere('status IN (:...settled)', {
-        settled: [JudgeTaskStatus.COMPLETED, JudgeTaskStatus.FAILED],
-      })
-      .execute();
-
-    return (result.affected ?? 0) > 0;
-  }
-
-  /**
    * 프로세스가 죽어 PROCESSING으로 남은 작업을 PENDING으로 되돌린다(부팅 복구).
    *
    * 선점한 worker가 사라지면 그 행은 아무도 손대지 못한 채 남는다. 정상적인 실행이라면

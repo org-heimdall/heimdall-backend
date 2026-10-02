@@ -1,8 +1,4 @@
-import {
-  DebatePhase,
-  DebateRound,
-  DebateTurnSchedule,
-} from '../debates/debate-turn';
+import { DebatePhase, DebateTurnSchedule } from '../debates/debate-turn';
 import { Debate } from '../debates/entities/debate.entity';
 import { NonRetryableTaskError } from './judge-task.worker';
 
@@ -26,17 +22,4 @@ export function resolveTurnSlot(
     );
   }
   return { phase: slot.phase, round: slot.round };
-}
-
-// 발언 순서(sequence, 1부터)가 속한 라운드. 범위를 벗어나면 다시 시도해도 달라지지 않으므로 재시도 불가 실패다.
-export function resolveRound(debate: Debate, sequence: number): DebateRound {
-  const round = new DebateTurnSchedule(debate.rebuttalQuestionRounds).roundOf(
-    sequence - 1,
-  );
-  if (round === null) {
-    throw new NonRetryableTaskError(
-      `스케줄 범위를 벗어난 턴입니다: sequence=${sequence}`,
-    );
-  }
-  return round;
 }

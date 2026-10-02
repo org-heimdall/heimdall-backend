@@ -31,7 +31,7 @@ export class DebateTurnFinalizeDto {
 }
 
 // debate.turn.send / debate.turn.message.send 의 payload.
-// 메시지 1건의 길이는 제한하지 않는다. 차례의 누적 글자 수(DEBATE_TURN_MAX_TOTAL_CHARACTERS)는 도메인에서 검사한다.
+// 최대 길이는 환경변수(DEBATE_TURN_MAX_CONTENT_LENGTH)라 데코레이터 대신 도메인에서 검사한다.
 export class DebateTurnMessageSendDto extends DebateTurnFinalizeDto {
   @IsString()
   @IsNotEmpty()
