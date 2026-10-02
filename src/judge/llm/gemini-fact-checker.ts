@@ -6,22 +6,19 @@ import type {
   GenerateContentResponseUsageMetadata,
 } from '@google/genai';
 import * as z from 'zod';
-import { MAX_FACT_CHECKS_PER_ROUND } from '../argument-analyzer.service';
 import { MAX_SOURCES } from '../fact-checker.service';
 import { NonRetryableTaskError } from '../judge-task.worker';
-import { VerificationStatus } from '../judge.types';
-import {
-  FactCheckBatchOutcome,
-  FactCheckBatchRequest,
-  FactChecker,
-  FactCheckItemOutcome,
-} from './judge-llm';
+import { FactCheckSource, VerificationStatus } from '../judge.types';
+import { FactCheckOutcome, FactCheckRequest, FactChecker } from './judge-llm';
 import { LlmCallLogger, LlmTokenUsage } from './llm-call-logger';
+
+// grounding 출처의 리다이렉트 주소 호스트. 만료되는 주소라 저장·노출하지 않는다.
+const GROUNDING_REDIRECT_HOST = 'vertexaisearch.cloud.google.com';
 
 // 2단계 (Fact Checker)는 Gemini API 사용
 const SOURCES_JSON_SCHEMA: z.core.JSONSchema.BaseSchema = {
   type: 'array',
-  description: `이 명제의 판정 근거가 된 출처. 검색 결과에 실제로 있던 것만 최대 ${MAX_SOURCES}개까지 넣는다.`,
+  description: `판정 근거가 된 출처. 검색 결과에 실제로 있던 것만 최대 ${MAX_SOURCES}개까지 넣는다.`,
   items: {
     type: 'object',
     properties: {
@@ -33,70 +30,48 @@ const SOURCES_JSON_SCHEMA: z.core.JSONSchema.BaseSchema = {
   },
 };
 
-// 응답 스키마 골격. 개수 상한만 모델용/검증용으로 갈아 끼운다.
-function buildResponseJsonSchema(limits: {
-  results?: number;
-  sources?: number;
-}): z.core.JSONSchema.BaseSchema {
+// 응답 스키마 골격. 출처 스키마만 모델용/검증용으로 갈아 끼운다.
+function buildResponseJsonSchema(
+  sources: z.core.JSONSchema.BaseSchema,
+): z.core.JSONSchema.BaseSchema {
   return {
     type: 'object',
     properties: {
-      results: {
-        type: 'array',
-        description: '명제마다 정확히 하나씩의 판정.',
-        ...(limits.results === undefined ? {} : { maxItems: limits.results }),
-        items: {
-          type: 'object',
-          properties: {
-            ref: {
-              type: 'string',
-              description: '판정한 명제의 ref(f1, f2 …).',
-            },
-            status: {
-              type: 'string',
-              enum: Object.values(VerificationStatus),
-              description: '검증 결과.',
-            },
-            reason: {
-              type: 'string',
-              description:
-                '이 명제가 왜 그렇게 판정됐는지, 명제와 직접 연결된 근거만 한국어 두세 문장으로.',
-            },
-            sources: {
-              ...SOURCES_JSON_SCHEMA,
-              ...(limits.sources === undefined
-                ? {}
-                : { maxItems: limits.sources }),
-            },
-          },
-          required: ['ref', 'status', 'reason', 'sources'],
-        },
+      status: {
+        type: 'string',
+        enum: Object.values(VerificationStatus),
+        description: '검증 결과.',
       },
+      reason: {
+        type: 'string',
+        description: '왜 그렇게 판정했는지 한국어 두세 문장.',
+      },
+      sources,
     },
-    required: ['results'],
+    required: ['status', 'reason', 'sources'],
   };
 }
 
-// 모델에 보내는 스키마. 명제·출처 개수 상한을 생성 단계에서부터 건다.
+// 모델에 보내는 스키마. 출처 개수 상한을 생성 단계에서부터 건다.
 const RESPONSE_JSON_SCHEMA = buildResponseJsonSchema({
-  results: MAX_FACT_CHECKS_PER_ROUND,
-  sources: MAX_SOURCES,
+  ...SOURCES_JSON_SCHEMA,
+  maxItems: MAX_SOURCES,
 });
 
 /**
  * 응답 검증기. 스키마를 어기면 throw되고 worker가 재시도로 넘긴다.
- * 개수 상한은 일부러 뺀다 — 넘친 출처는 FactCheckerService가 잘라내고, 명제별 누락·중복도 그쪽이 가린다.
+ * 출처 개수 상한은 일부러 뺀다 — 넘친 출처는 거부하지 않고 FactCheckerService가 잘라내기 때문이다.
  */
-const RESPONSE_VALIDATOR = z.fromJSONSchema(buildResponseJsonSchema({}));
+const RESPONSE_VALIDATOR = z.fromJSONSchema(
+  buildResponseJsonSchema(SOURCES_JSON_SCHEMA),
+);
 
 const SYSTEM_INSTRUCTION = [
   '너는 토론 발언의 사실 여부를 검증하는 팩트체커다.',
-  '여러 명제(f1, f2 …)를 받는다. 명제마다 따로 Google 검색으로 근거를 찾고, 명제마다 정확히 하나의 결과를 ref와 함께 낸다. 명제를 합치거나 빠뜨리지 않는다.',
-  '검색으로 확인하지 못한 것은 INSUFFICIENT_EVIDENCE로 둔다.',
-  '출처는 그 명제의 검색 결과에 실제로 있던 문서만 넣고, URL을 지어내지 않는다.',
-  `출처는 명제마다 판정에 가장 직접적인 근거가 된 것부터 최대 ${MAX_SOURCES}개까지만 넣는다.`,
+  'Google 검색으로 근거를 찾은 뒤에만 판정한다. 판정 전에 반드시 Google 검색을 1회 이상 수행한다. 알고 있는 사실이라도 검색으로 확인한다. 검색으로 확인하지 못한 것은 INSUFFICIENT_EVIDENCE로 둔다.',
+  '출처는 검색 결과에 실제로 있던 문서만 넣고, URL을 지어내지 않는다.',
+  `출처는 판정에 가장 직접적인 근거가 된 것부터 최대 ${MAX_SOURCES}개까지만 넣는다.`,
   'SUPPORTED(뒷받침됨) · CONTRADICTED(반대 근거) · PARTIALLY_SUPPORTED(일부만) · INSUFFICIENT_EVIDENCE(자료 부족) · NOT_VERIFIABLE(검증 대상 아님) · OUTDATED(과거엔 맞았으나 현재는 아님) 중에서 고른다.',
-  'reason에는 그 명제의 사실 여부와 직접 연결된 근거만 쓴다. 토론 전체에 대한 평가, 설득력, 승패, 발언자에 대한 조언을 쓰지 않고 "발언자는" 같은 표현도 쓰지 않는다.',
   '설명은 한국어로 쓴다.',
 ].join('\n');
 
@@ -123,9 +98,7 @@ export class GeminiFactChecker implements FactChecker {
     this.client = new GoogleGenAI({ apiKey });
   }
 
-  async checkBatch(
-    request: FactCheckBatchRequest,
-  ): Promise<FactCheckBatchOutcome> {
+  async check(request: FactCheckRequest): Promise<FactCheckOutcome> {
     if (this.client === null) {
       // 키가 없는 상태는 재시도로 나아지지 않는다.
       throw new NonRetryableTaskError(
@@ -159,12 +132,9 @@ export class GeminiFactChecker implements FactChecker {
     // 검증을 통과한 값만 이 자리에 온다 — 모양 보증은 위의 스키마가 한다.
     const outcome = RESPONSE_VALIDATOR.parse(
       JSON.parse(response.text ?? ''),
-    ) as { results: FactCheckItemOutcome[] };
+    ) as FactCheckOutcome;
 
-    return {
-      results: outcome.results,
-      groundedDomains: extractGroundedDomains(response),
-    };
+    return { ...outcome, sources: toDomainSources(outcome.sources, response) };
   }
 }
 
@@ -182,37 +152,72 @@ function toTokenUsage(
 }
 
 // 검증 대상과 맥락을 한 덩어리로. 문장만 주면 대명사·생략된 주어를 검색할 수 없다.
-function buildInput(request: FactCheckBatchRequest): string {
-  const targets = request.targets
-    .map((target) => `- ${target.ref}: ${target.statement}`)
-    .join('\n');
+function buildInput(request: FactCheckRequest): string {
   return [
     `# 토론 주제\n${request.topic}`,
     `# 발언 맥락\n${request.context}`,
-    `# 검증할 명제\n${targets}`,
+    `# 검증할 문장\n${request.statement}`,
   ].join('\n\n');
 }
 
 /**
- * grounding 메타데이터에서 실제로 참조된 출처의 도메인을 뽑는다.
- * groundingChunks의 uri는 리다이렉트 주소이고 title에 도메인이 담기므로 둘 다 훑는다.
+ * 출처 url을 도메인으로 바꾼다. 원문 주소 대신 도메인만 저장·노출한다.
+ * 모델이 grounding 리다이렉트 주소를 그대로 적었으면 그 chunk의 도메인으로 바꾸고,
+ * 도메인을 알아낼 수 없는 출처(짝이 없는 리다이렉트 주소, URL이 아닌 값)는 버린다.
  */
-function extractGroundedDomains(response: GenerateContentResponse): string[] {
+function toDomainSources(
+  sources: FactCheckSource[],
+  response: GenerateContentResponse,
+): FactCheckSource[] {
+  const domainsByUri = groundedDomainsByUri(response);
+  return sources.flatMap((source) => {
+    const domain = domainsByUri.get(source.url) ?? toDomain(source.url);
+    return domain === null ? [] : [{ ...source, url: domain }];
+  });
+}
+
+/**
+ * grounding chunk의 리다이렉트 uri → 출처 도메인.
+ * web.domain이 비어 있으면 보통 도메인 문자열이 담기는 title로 대신한다.
+ */
+function groundedDomainsByUri(
+  response: GenerateContentResponse,
+): Map<string, string> {
   const chunks =
     response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
-  const domains = new Set<string>();
+  const domains = new Map<string, string>();
 
-  for (const chunk of chunks) {
-    const web = chunk.web;
-    if (web === undefined) {
-      continue;
-    }
-    if (web.domain !== undefined && web.domain !== '') {
-      domains.add(web.domain);
-    }
-    if (web.title !== undefined && web.title !== '') {
-      domains.add(web.title);
+  for (const { web } of chunks) {
+    const domain = web?.domain || web?.title;
+    if (web?.uri && domain) {
+      domains.set(web.uri, normalizeHost(domain));
     }
   }
-  return [...domains];
+  return domains;
+}
+
+// http(s) URL의 도메인. 스킴이 빠진 값(news.naver.com/...)도 받아 준다. 리다이렉트 주소는 도메인이 아니다.
+function toDomain(value: string): string | null {
+  const url = parseUrl(value.trim()) ?? parseUrl(`https://${value.trim()}`);
+  if (url === null || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
+    return null;
+  }
+  const host = normalizeHost(url.hostname);
+  return host === GROUNDING_REDIRECT_HOST ? null : host;
+}
+
+function parseUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+// 도메인 표기 정규화. 대소문자·www 차이를 없앤다.
+function normalizeHost(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, '');
 }

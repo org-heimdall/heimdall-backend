@@ -10,13 +10,11 @@ import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
 import { ArgumentAnalyzerService } from './argument-analyzer.service';
 import { FactCheckerService } from './fact-checker.service';
-import { FactCheckTargetPolicy } from './fact-check-target.policy';
 import { DebateJudgeService } from './debate-judge.service';
 import { JudgeConfig } from './judge.config';
 import { JudgeController } from './judge.controller';
 import { JudgeTaskRepository } from './judge-task.repository';
 import { JudgeService } from './judge.service';
-import { DebateResultPresenter } from './debate-result.presenter';
 import {
   BULLMQ_CONNECTION,
   createBullMqConnection,
@@ -35,15 +33,16 @@ import { DebateJudgmentResult } from './entities/debate-judgment-result.entity';
 import { JudgeTask } from './entities/judge-task.entity';
 import {
   ARGUMENT_ANALYZER,
+  DEBATE_COMMENTATOR,
   DEBATE_JUDGE,
+  DEBATE_SCORER,
   FACT_CHECKER,
-  JUDGE_COMMENTATOR,
-  JUDGE_SCORER,
+  VIOLATION_DETECTOR,
 } from './llm/judge-llm';
 import { GeminiFactChecker } from './llm/gemini-fact-checker';
-import { OpenAiJudgeLlm } from './llm/openai-judge-llm';
-import { JevDebateScorer } from './llm/jev-debate-scorer';
 import { HybridDebateJudge } from './llm/hybrid-debate-judge';
+import { OpenAiJudgeLlm } from './llm/openai-judge-llm';
+import { TypeSafeDebateScorer } from './llm/typesafe-debate-scorer';
 import { LlmCallLogger } from './llm/llm-call-logger';
 import { LlmMetrics } from './llm/llm.metrics';
 import { JudgeTaskMetrics } from './judge-task.metrics';
@@ -92,22 +91,21 @@ import { MetricsModule } from '../common/metrics/metrics.module';
     JudgeTaskWorker,
     JudgeTaskMetrics,
     JudgeService,
-    DebateResultPresenter,
-    // 사실 검증 대상의 최종 선별(제외·중복·상한). Analyzer가 쓴다.
-    FactCheckTargetPolicy,
     ArgumentAnalyzerService,
     FactCheckerService,
     DebateJudgeService,
     // LLM 호출 1건의 로그·메트릭. 벤더 구현체가 함께 쓴다.
     LlmMetrics,
     LlmCallLogger,
-    // LLM 구현체. 벤더는 단계마다 다르다 — 분석은 OpenAI, 사실 검증은 Gemini(Google Search grounding),
-    // 판정은 점수·위반을 Jev가 매기고 그 점수로 OpenAI가 피드백·총평을 쓴다.
+    // LLM 구현체. 벤더는 단계마다 다르다 — 사실 검증은 Gemini(Google Search grounding),
+    // 판정 점수는 TypeSafe Jev, 나머지(논증 분석·피드백·위반)는 OpenAI.
     OpenAiJudgeLlm,
     { provide: ARGUMENT_ANALYZER, useExisting: OpenAiJudgeLlm },
     { provide: FACT_CHECKER, useClass: GeminiFactChecker },
-    { provide: JUDGE_SCORER, useClass: JevDebateScorer },
-    { provide: JUDGE_COMMENTATOR, useExisting: OpenAiJudgeLlm },
+    { provide: DEBATE_SCORER, useClass: TypeSafeDebateScorer },
+    { provide: DEBATE_COMMENTATOR, useExisting: OpenAiJudgeLlm },
+    { provide: VIOLATION_DETECTOR, useExisting: OpenAiJudgeLlm },
+    // 판정 서비스가 아는 것은 이 조립체뿐이다.
     { provide: DEBATE_JUDGE, useClass: HybridDebateJudge },
     // 작업이 확정될 때마다 판정 조건을 다시 보는 것은 파이프라인 서비스의 몫이다.
     {

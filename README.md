@@ -85,7 +85,7 @@ flowchart TD
     FactCheck -->|완료 또는 최종 실패| Ready
     End[토론 종료 · 빠진 분석 작업 등록] --> Ready
     Ready -->|아니오| Wait[다른 작업이 끝나면 다시 확인]
-    Ready -->|예| Judge["3. JUDGE<br/>Jev · 점수·위반 판정<br/>OpenAI · 피드백·총평 작성"]
+    Ready -->|예| Judge["3. JUDGE<br/>Jev · 점수 부여<br/>OpenAI · 피드백·총평 작성, 위반 판정"]
     Judge --> Score[서버에서 총점·승자 계산]
     Score --> Persist[판정 결과·보상·토론 상태를 함께 저장]
 ```
@@ -153,24 +153,20 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-    Candidate["1. ANALYZER에서 제안한 검증 후보"] --> Screen[문장 정리·검색으로 확인할 수 있는 주장 선택]
-    Screen --> Dedup[중복 제거·우선순위 적용]
-    Dedup --> Batch[라운드당 최대 5개]
-    Batch --> Search["2. FACT_CHECK<br/>Gemini + Google Search grounding"]
-    Search --> Validate[응답 형식·근거 설명·출처 검사]
-    Validate -->|통과| Save[주장별 결과 저장]
-    Validate -->|누락 또는 검사 실패| Retry[해결되지 않은 주장만 재시도]
-    Retry --> Search
-    Save -->|최종 판정 조건 충족 시| Judge["3. JUDGE<br/>Jev · 점수·위반 판정<br/>OpenAI · 피드백·총평 작성"]
+  Candidate["1. ANALYZER에서 제안한 검증 후보"] --> Screen[문장 정리·검색으로 확인할 수 있는 주장 선택]
+Screen --> Dedup[중복 제거·우선순위 적용]
+Dedup --> Batch[라운드당 최대 5개]
+Batch --> Search["2. FACT_CHECK<br/>Gemini + Google Search grounding"]
+Search --> Validate[응답 형식·근거 설명·출처 검사]
+Validate -->|통과| Save[주장별 결과 저장]
+Validate -->|누락 또는 검사 실패| Retry[해결되지 않은 주장만 재시도]
+Retry --> Search
+Save -->|최종 판정 조건 충족 시| Judge["3. JUDGE<br/>Jev · 점수 부여<br/>OpenAI · 피드백·총평 작성, 위반 판정"]
 ```
 
 1. **검색할 주장 선택**: 수치·통계·인용 자료가 있는 주장을 우선하고, 날짜·사건·법·제도·역사·과학적 사실을 확인합니다. 개인 의견이나 가치 판단, 상대 발언에 대한 평가, 확인할 근거가 없는 추측은 제외하고 그 이유를 남깁니다.
 2. **같은 주장 반복 검색 방지**: 문자 표기를 통일하는 NFKC 정규화 후 공백·문장부호·대소문자 차이를 없애고, SHA-256 해시로 같은 문장인지 비교합니다. 표현만 다른 동일 주장은 Analyzer의 `duplicateOfRef`로 원본과 연결해 기존 검증 결과를 재사용합니다.
 3. **검색으로 근거 확인**: 토론 주제와 발언 맥락, 확인할 주장을 Gemini에 전달합니다. Gemini는 Google Search로 근거를 찾아 뒷받침됨(`SUPPORTED`), 반대 근거 있음(`CONTRADICTED`), 일부 뒷받침됨(`PARTIALLY_SUPPORTED`), 자료 부족(`INSUFFICIENT_EVIDENCE`), 검증 불가(`NOT_VERIFIABLE`), 오래된 정보(`OUTDATED`) 중 하나로 답합니다.
-4. **출처와 설명 검사**: 자료 부족·검증 불가를 제외하면 출처가 최소 1개 있어야 합니다. 서버는 HTTP(S) URL 형식을 검사하고, 최소 한 출처의 도메인이 Google 검색 근거 정보(grounding)에 있거나 그 하위 도메인인지 확인합니다. 검색 근거와 일치하는 출처를 우선해 최대 3개 저장하며, 근거 설명이 비어 있거나 승패 조언 등이 섞인 결과는 거릅니다.
-5. **실패한 주장만 다시 확인**: 예를 들어 5개 중 3개가 검사를 통과하면 먼저 저장합니다. 나머지 2개만 허용된 시도 횟수 안에서 다시 검증해 이미 성공한 검색을 반복하지 않습니다.
-
-현재 출처 검사는 **검색 근거에 나온 도메인인지 확인하는 수준**입니다. 서버가 출처 페이지의 본문을 직접 읽고 주장과 대조하지는 않습니다.
 
 구현: [대상 선별 정책](src/judge/fact-check-target.policy.ts) · [팩트체크 서비스](src/judge/fact-checker.service.ts) · [Gemini 어댑터](src/judge/llm/gemini-fact-checker.ts)
 

@@ -9,7 +9,7 @@ import { LlmMetrics } from './llm.metrics';
 // 호출을 도메인과 잇는 필드(debateId 등). 넘긴 순서대로 outcome 뒤에 찍힌다.
 export type LlmLogContext = Readonly<Record<string, LogFieldValue>>;
 
-// 어느 호출인지. operation은 analyze / judge.score / judge.commentary / fact_check 중 하나다.
+// 어느 호출인지. operation은 analyze / judge.score / judge.feedback / judge.violation / fact_check 중 하나다.
 export interface LlmCallMeta {
   provider: 'openai' | 'gemini' | 'typesafe';
   model: string;

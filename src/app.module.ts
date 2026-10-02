@@ -72,16 +72,18 @@ import * as Joi from 'joi';
         GEMINI_MODEL: Joi.string().default('gemini-3.8-flash'),
         GEMINI_TIMEOUT_MS: Joi.number().default(60000),
 
-        // 토론 판정(점수·위반)용 TypeSafe Jev 설정. 키 규칙은 OPENAI_*와 같다(production에서만 필수).
+        // 토론 판정 점수용 TypeSafe(Jev) 설정. 키 규칙은 OPENAI_*와 같다(production에서만 필수).
         TYPESAFE_API_KEY: Joi.string().when('NODE_ENV', {
           is: 'production',
           then: Joi.required(),
           otherwise: Joi.string().allow('').optional(),
         }),
-        TYPESAFE_MODEL: Joi.string().default('jev-latest'),
-        // 시도 1회당 시간 제한. 전사 전체를 state로 보내므로 SDK 기본값(10초)보다 넉넉히 둔다.
+        // 별칭(jev-latest)은 새 버전이 나오면 조용히 옮겨 가 같은 토론의 점수가 달라질 수 있으므로
+        // 버전 id로 고정하고, 올릴 때는 점수 분포를 확인한 뒤 바꾼다.
+        TYPESAFE_MODEL: Joi.string().default('jev-1.13.0'),
+        // SDK 기본값(10초)은 전사 전체를 state로 싣는 판정에는 빠듯하다. 시도 1회당 시간이다.
         TYPESAFE_TIMEOUT_MS: Joi.number().default(30000),
-        TYPESAFE_MAX_RETRIES: Joi.number().default(2),
+        TYPESAFE_MAX_RETRIES: Joi.number().integer().min(0).default(2),
 
         // 토론 판정 파이프라인(Phase 3) 운영값.
         DEBATE_PIPELINE_WORKER_CONCURRENCY: Joi.number()
@@ -102,7 +104,7 @@ import * as Joi from 'joi';
         DEBATE_PIPELINE_FACT_CHECK_MAX_ATTEMPTS: Joi.number()
           .integer()
           .min(1)
-          .default(3),
+          .default(2),
         DEBATE_PIPELINE_JUDGE_MAX_ATTEMPTS: Joi.number()
           .integer()
           .min(1)
@@ -119,7 +121,7 @@ import * as Joi from 'joi';
         // 토론 채팅 WebSocket. 계약상 HTTP와 별도 포트를 쓴다.
         DEBATE_CHAT_WS_PORT: Joi.number().integer().min(1).default(8080),
         // 턴 제한값. 글자 수와 시간 초과(Phase 2)를 서버가 강제한다.
-        // 글자 수는 메시지 1건이 아니라 한 차례의 누적 글자 수만 제한한다.
+        // 글자 수는 메시지 1건이 아니라 한 턴의 누적 발언에만 건다.
         DEBATE_TURN_MAX_TOTAL_CHARACTERS: Joi.number()
           .integer()
           .min(1)

@@ -8,7 +8,7 @@ describe('JudgeConfig', () => {
     DEBATE_PIPELINE_JOB_TIMEOUT_MS: 120000,
     DEBATE_PIPELINE_BACKOFF_MS: 5000,
     DEBATE_PIPELINE_ANALYZER_MAX_ATTEMPTS: 3,
-    DEBATE_PIPELINE_FACT_CHECK_MAX_ATTEMPTS: 3,
+    DEBATE_PIPELINE_FACT_CHECK_MAX_ATTEMPTS: 2,
     DEBATE_PIPELINE_JUDGE_MAX_ATTEMPTS: 2,
     DEBATE_JUDGE_RETRY_COOLDOWN_SECONDS: 300,
     OPENAI_API_KEY: 'sk-test',
@@ -36,7 +36,7 @@ describe('JudgeConfig', () => {
 
     expect(config.maxAttempts).toEqual({
       [JudgeTaskKind.ANALYZER]: 3,
-      [JudgeTaskKind.FACT_CHECK]: 3,
+      [JudgeTaskKind.FACT_CHECK]: 2,
       [JudgeTaskKind.JUDGE]: 2,
     });
     expect(config.judgeRetryCooldownSeconds).toBe(300);

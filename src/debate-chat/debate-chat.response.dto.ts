@@ -37,7 +37,7 @@ export class CurrentTurnDto implements CurrentTurn {
   @ApiProperty({
     example: 500,
     description:
-      '이번 차례에 보낼 수 있는 누적 글자 수. 메시지 1건의 길이 제한은 없다.',
+      '이번 차례에 보낼 수 있는 누적 글자 수. 메시지를 나눠 보내도 합계로 센다(메시지 1건 제한은 없다).',
   })
   maxTotalCharacters: number;
 }

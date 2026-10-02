@@ -223,9 +223,11 @@ describe('DebateChatService', () => {
       );
     });
 
-    it('메시지 1건이어도 차례의 누적 한도를 넘으면 TURN_CHARACTER_LIMIT_EXCEEDED', async () => {
+    it('나눠 보낸 누적 글자 수가 한도를 넘으면 TURN_CHARACTER_LIMIT_EXCEEDED', async () => {
+      await send(DebateSide.SIDE_A, 'x'.repeat(18));
+      await send(DebateSide.SIDE_A, 'x'.repeat(12)); // 누적 30 = 한도, 통과
       await expectCode(
-        send(DebateSide.SIDE_A, 'x'.repeat(31)),
+        send(DebateSide.SIDE_A, 'x'),
         DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED.code,
       );
     });
