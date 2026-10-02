@@ -12,7 +12,7 @@
 | 애플리케이션 | Node.js 24, TypeScript, NestJS 11 | API와 백그라운드 작업 실행 |
 | 데이터 | PostgreSQL 17, TypeORM 1.0 | 토론·확정 발언·분석·판정 결과 저장 |
 | 실시간·큐 | WebSocket, Redis 7, BullMQ 6 | 실시간 채팅, 임시 발언 저장, 중복·동시 처리 제어, 작업 대기열 |
-| AI | OpenAI Responses API, Gemini API + Google Search grounding, Zod | 발언 분석·판정, 검색을 통한 사실 검증, AI 응답 형식 검사 |
+| AI | OpenAI Responses API, Gemini API + Google Search grounding, TypeSafe Jev, Zod | 발언 분석·판정 문장 작성, 검색을 통한 사실 검증, 점수·위반 판정, AI 응답 형식 검사 |
 | API 계약·인증 | Swagger, class-validator, Passport, JWT, Google OAuth | 요청 검증, API 명세, 사용자 인증 |
 | 인프라·관측 | AWS EC2, Docker Compose, GitHub Actions, Prometheus, Loki, Promtail, Grafana | 배포, 메트릭·로그 수집 및 시각화 |
 | 테스트 | Jest | 서비스·저장소의 상태 변경과 처리 규칙 검증 |
@@ -85,7 +85,7 @@ flowchart TD
     FactCheck -->|완료 또는 최종 실패| Ready
     End[토론 종료 · 빠진 분석 작업 등록] --> Ready
     Ready -->|아니오| Wait[다른 작업이 끝나면 다시 확인]
-    Ready -->|예| Judge["3. JUDGE<br/>OpenAI · 전체 발언과 분석·검증 결과 평가"]
+    Ready -->|예| Judge["3. JUDGE<br/>Jev · 점수·위반 판정<br/>OpenAI · 피드백·총평 작성"]
     Judge --> Score[서버에서 총점·승자 계산]
     Score --> Persist[판정 결과·보상·토론 상태를 함께 저장]
 ```
@@ -161,7 +161,7 @@ flowchart LR
     Validate -->|통과| Save[주장별 결과 저장]
     Validate -->|누락 또는 검사 실패| Retry[해결되지 않은 주장만 재시도]
     Retry --> Search
-    Save -->|최종 판정 조건 충족 시| Judge["3. JUDGE<br/>OpenAI · 전체 발언과 분석·검증 결과 평가"]
+    Save -->|최종 판정 조건 충족 시| Judge["3. JUDGE<br/>Jev · 점수·위반 판정<br/>OpenAI · 피드백·총평 작성"]
 ```
 
 1. **검색할 주장 선택**: 수치·통계·인용 자료가 있는 주장을 우선하고, 날짜·사건·법·제도·역사·과학적 사실을 확인합니다. 개인 의견이나 가치 판단, 상대 발언에 대한 평가, 확인할 근거가 없는 추측은 제외하고 그 이유를 남깁니다.
