@@ -83,7 +83,10 @@ export class FactCheckSourceDto {
   @ApiProperty({ example: 'European Commission' })
   publisher: string;
 
-  @ApiProperty({ example: 'https://digital-strategy.ec.europa.eu/ai-act' })
+  @ApiProperty({
+    example: 'digital-strategy.ec.europa.eu',
+    description: '출처 도메인. 원문 URL이 아니다.',
+  })
   url: string;
 }
 

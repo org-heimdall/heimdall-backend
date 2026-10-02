@@ -111,12 +111,8 @@ export interface FactCheckRequest {
 export interface FactCheckOutcome {
   status: VerificationStatus;
   reason: string;
+  // url에는 원문 주소 대신 출처 도메인(예: news.naver.com)이 담긴다.
   sources: FactCheckSource[];
-  /**
-   * 실제로 검색이 일어났다는 근거(grounding 메타데이터의 출처 도메인).
-   * Source Validator가 "모델이 검색 없이 지어낸 출처"를 걸러 내는 데 쓴다.
-   */
-  groundedDomains: string[];
 }
 
 // 문장 하나의 사실 여부를 외부 검색 근거와 함께 판정하는 것.

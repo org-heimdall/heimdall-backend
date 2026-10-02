@@ -32,7 +32,7 @@ export class DebateFactCheckResult {
   checkedAt: Date;
 
   /**
-   * Source Validator를 통과한 근거 출처. 결과와 수명이 완전히 같고(결과를 갈아 끼우면 함께 바뀐다)
+   * Source Validator를 통과한 근거 출처(url에는 도메인만 담긴다). 결과와 수명이 완전히 같고(결과를 갈아 끼우면 함께 바뀐다)
    * 출처 단위로 조회할 일이 없어 별도 테이블 대신 jsonb로 둔다.
    */
   @Column({ type: 'jsonb', default: () => `'[]'::jsonb` })

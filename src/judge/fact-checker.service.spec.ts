@@ -62,10 +62,9 @@ describe('FactCheckerService', () => {
       {
         title: 'EU AI Act',
         publisher: 'European Commission',
-        url: 'https://digital-strategy.ec.europa.eu/ai-act',
+        url: 'digital-strategy.ec.europa.eu',
       },
     ],
-    groundedDomains: ['digital-strategy.ec.europa.eu'],
   };
 
   beforeEach(() => {
@@ -140,27 +139,16 @@ describe('FactCheckerService', () => {
     ]);
   });
 
-  it('출처가 상한을 넘으면 검색 결과와 일치하는 출처를 먼저 두고 잘라 저장한다', async () => {
-    const source = (host: string) => ({
-      title: host,
-      publisher: host,
-      url: `https://${host}/a`,
-    });
-    // 검색 결과와 무관한 출처가 앞에 와도 일치하는 출처가 먼저 남는다.
-    const ungrounded = ['a.com', 'b.com', 'c.com'].map(source);
-    const grounded = ['x.com', 'y.com'].map(source);
-    factChecker.check.mockResolvedValue({
-      ...outcome,
-      sources: [...ungrounded, ...grounded],
-      groundedDomains: ['x.com', 'y.com'],
-    });
+  it('출처가 상한을 넘으면 모델이 낸 순서대로 잘라 저장한다', async () => {
+    const sources = ['a.com', 'b.com', 'c.com', 'd.com', 'e.com'].map(
+      (domain) => ({ title: domain, publisher: domain, url: domain }),
+    );
+    factChecker.check.mockResolvedValue({ ...outcome, sources });
 
     await service.handle(task);
 
     expect(results.replaceFactCheck).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sources: [...grounded, ungrounded[0]].slice(0, MAX_SOURCES),
-      }),
+      expect.objectContaining({ sources: sources.slice(0, MAX_SOURCES) }),
     );
   });
 
@@ -175,38 +163,8 @@ describe('FactCheckerService', () => {
       expect(results.replaceFactCheck).not.toHaveBeenCalled();
     };
 
-    it('www가 붙거나 하위 도메인이어도 같은 출처로 본다', async () => {
-      factChecker.check.mockResolvedValue({
-        ...outcome,
-        sources: [
-          {
-            title: '기사',
-            publisher: '연합뉴스',
-            url: 'https://www.news.yna.co.kr/view/1',
-          },
-        ],
-        groundedDomains: ['yna.co.kr'],
-      });
-
-      await service.handle(task);
-
-      expect(results.replaceFactCheck).toHaveBeenCalled();
-    });
-
     it.each([
       ['출처가 없으면', { sources: [] }],
-      [
-        'URL 형식이 잘못됐으면',
-        { sources: [{ title: 'x', publisher: 'y', url: 'not-a-url' }] },
-      ],
-      [
-        'http(s)가 아니면',
-        {
-          sources: [{ title: 'x', publisher: 'y', url: 'ftp://example.com/a' }],
-        },
-      ],
-      ['검색 근거가 없으면', { groundedDomains: [] }],
-      ['출처가 검색 결과와 무관하면', { groundedDomains: ['example.com'] }],
       ['판정 근거 설명이 비어 있으면', { reason: '  ' }],
     ])('%s 거부한다', async (_name, overrides) => {
       await rejects(overrides);
@@ -220,7 +178,6 @@ describe('FactCheckerService', () => {
         ...outcome,
         status,
         sources: [],
-        groundedDomains: [],
       });
 
       await service.handle(task);
