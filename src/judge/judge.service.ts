@@ -10,13 +10,18 @@ import {
   DebateOutcome,
   DebateOutcomeKind,
 } from '../debate-outcomes/debate-outcome.types';
-import { resolveSide, resolveSpeakers } from '../debates/debate-turn';
+import {
+  DebateSide,
+  resolveSide,
+  resolveSpeakers,
+} from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateDto } from '../debates/dto/debate.dto';
 import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate } from '../debates/entities/debate.entity';
+import { MembersService } from '../members/members.service';
 import { JudgeConfig } from './judge.config';
 import { JudgeTaskRepository } from './judge-task.repository';
 import { JudgeTaskKind } from './judge.types';
@@ -32,7 +37,9 @@ import {
   JudgmentResultDto,
 } from './dto/debate-result.dto';
 import { JudgeTask } from './entities/judge-task.entity';
+import { DebateJudgmentResult } from './entities/debate-judgment-result.entity';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
+import { renderJudgmentTexts, SideNames } from './judgment-text';
 
 // 재시도로 되돌릴 작업 종류. FactCheck 실패는 판정을 막지 않으므로 여기 없다.
 const RETRYABLE_KINDS = [JudgeTaskKind.ANALYZER, JudgeTaskKind.JUDGE];
@@ -68,6 +75,7 @@ export class JudgeService implements JudgeTaskListener {
     private readonly debates: DebatesService,
     private readonly config: JudgeConfig,
     private readonly outcomes: DebateOutcomeService,
+    private readonly members: MembersService,
   ) {}
 
   // ------------------------------------------------------------- 채팅 훅
@@ -193,7 +201,7 @@ export class JudgeService implements JudgeTaskListener {
 
     const completed = await this.results.findJudgment(debateId);
     if (completed !== null) {
-      return JudgmentResultDto.from(completed);
+      return this.toJudgmentDto(debate, completed);
     }
 
     const scheduled = await this.resumeAnalyzers(debateId);
@@ -263,7 +271,7 @@ export class JudgeService implements JudgeTaskListener {
     return Object.assign(new DebateResultDto(), {
       debate: await this.debates.findOneDto(debateId),
       viewerSide: resolveSide(resolveSpeakers(debate), memberId),
-      judgmentResult: JudgmentResultDto.from(judgment),
+      judgmentResult: await this.toJudgmentDto(debate, judgment),
       factChecks: await this.loadFactChecks(debateId),
     });
   }
@@ -315,6 +323,55 @@ export class JudgeService implements JudgeTaskListener {
       scheduled += 1;
     }
     return scheduled;
+  }
+
+  /**
+   * 저장된 판정(LLM 원문)을 응답으로 바꾼다. 계약은 그대로 두고 문장 필드의 side 표기(SIDE_A 등)만
+   * 참여자 닉네임으로 바꾼다. DB 원문은 내부 계산·감사용으로 그대로 남는다.
+   */
+  private async toJudgmentDto(
+    debate: Debate,
+    judgment: DebateJudgmentResult,
+  ): Promise<JudgmentResultDto> {
+    const { texts, violations } = renderJudgmentTexts(
+      judgment,
+      await this.loadSideNames(debate),
+    );
+    // 변환 규칙이 놓친 표기다. 응답은 강제 치환으로 막고, 규칙을 고칠 근거만 남긴다.
+    if (violations.length > 0) {
+      this.logger.error(
+        `판정 문장에 변환되지 않은 side 토큰이 남았습니다: debateId=${debate.id}, ` +
+          violations
+            .map(({ field, tokens }) => `${field}=[${tokens.join(',')}]`)
+            .join(' '),
+      );
+    }
+    return Object.assign(JudgmentResultDto.from(judgment), texts);
+  }
+
+  /**
+   * 두 편 참여자의 닉네임. 회원의 현재 닉네임을 쓰고, 찾지 못하면(탈퇴 등) 토론을 만들 때 복사해 둔
+   * 닉네임으로 대신한다 — 결과 화면이 회원 상태 때문에 깨지면 안 된다.
+   */
+  private async loadSideNames(debate: Debate): Promise<SideNames> {
+    const speakers = resolveSpeakers(debate);
+    if (speakers === null) {
+      // 판정은 상대가 있는 토론에서만 만들어지므로 여기 오면 데이터 이상이다.
+      throw new Error(`상대가 없는 토론의 판정입니다: debateId=${debate.id}`);
+    }
+
+    const members = await this.members.findByIds(Object.values(speakers));
+    const nicknameById = new Map(
+      members.map((member) => [member.id, member.nickname]),
+    );
+    return {
+      [DebateSide.SIDE_A]:
+        nicknameById.get(speakers[DebateSide.SIDE_A]) ?? debate.hostNickname,
+      [DebateSide.SIDE_B]:
+        nicknameById.get(speakers[DebateSide.SIDE_B]) ??
+        debate.opponentNickname ??
+        '',
+    };
   }
 
   // 검증 결과에 발언자·문장을 붙인다(계약 FactCheckResult).

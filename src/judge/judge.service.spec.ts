@@ -7,6 +7,8 @@ import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { DebateStatus } from '../debates/entities/debate-status.enum';
 import { Debate, DebateTurn } from '../debates/entities/debate.entity';
+import { Member } from '../members/entities/member.entity';
+import { MembersService } from '../members/members.service';
 import { JudgeConfig } from './judge.config';
 import { JudgeTaskRepository } from './judge-task.repository';
 import { JudgeService } from './judge.service';
@@ -49,6 +51,7 @@ describe('JudgeService', () => {
   };
   let debates: { findOneOrThrow: jest.Mock; findOneDto: jest.Mock };
   let outcomes: { applyWithin: jest.Mock; announce: jest.Mock };
+  let members: { findByIds: jest.Mock };
   let service: JudgeService;
   // failJudgment가 트랜잭션 안에서 넘겨주는 manager 자리.
   const MANAGER = { id: 'entity-manager' };
@@ -181,6 +184,20 @@ describe('JudgeService', () => {
       applyWithin: jest.fn().mockResolvedValue(undefined),
       announce: jest.fn().mockResolvedValue(undefined),
     };
+    members = {
+      findByIds: jest.fn().mockResolvedValue([
+        Object.assign(new Member(), {
+          id: HOST_ID,
+          nickname: '메시',
+          profileImageUrl: null,
+        }),
+        Object.assign(new Member(), {
+          id: OPPONENT_ID,
+          nickname: '호날두',
+          profileImageUrl: null,
+        }),
+      ]),
+    };
 
     service = new JudgeService(
       messages as unknown as Repository<DebateMessage>,
@@ -192,6 +209,7 @@ describe('JudgeService', () => {
         judgeRetryCooldownSeconds: COOLDOWN_SECONDS,
       } as unknown as JudgeConfig,
       outcomes as unknown as DebateOutcomeService,
+      members as unknown as MembersService,
     );
   });
 
@@ -288,6 +306,9 @@ describe('JudgeService', () => {
           winner: JudgmentWinner.SIDE_A,
           sideATotalScore: 73,
           sideBTotalScore: 71,
+          overallReason: 'SIDE_A가 근거를 더 잘 제시했다.',
+          sideAFeedback: '',
+          sideBFeedback: '',
           judgedAt: new Date('2026-09-07T12:20:00.000Z'),
         }),
       );
@@ -297,6 +318,7 @@ describe('JudgeService', () => {
       expect(result).toMatchObject({
         id: 'judgment-uuid',
         winner: JudgmentWinner.SIDE_A,
+        overallReason: '메시님이 근거를 더 잘 제시했다.',
         judgedAt: '2026-09-07T12:20:00.000Z',
       });
       expect(queue.schedule).not.toHaveBeenCalled();
@@ -442,6 +464,9 @@ describe('JudgeService', () => {
           id: 'judgment-uuid',
           debateId: DEBATE_ID,
           winner: JudgmentWinner.DRAW,
+          overallReason: '',
+          sideAFeedback: '',
+          sideBFeedback: '',
           judgedAt: new Date('2026-09-07T12:20:00.000Z'),
         }),
       );
@@ -493,6 +518,58 @@ describe('JudgeService', () => {
       const result = await service.getResult(DEBATE_ID, 'viewer-uuid');
 
       expect(result.viewerSide).toBeNull();
+    });
+
+    describe('판정 문장', () => {
+      const judgment = () =>
+        Object.assign(new DebateJudgmentResult(), {
+          id: 'judgment-uuid',
+          debateId: DEBATE_ID,
+          winner: JudgmentWinner.SIDE_B,
+          sideATotalScore: 67,
+          sideBTotalScore: 73,
+          overallReason: 'SIDE_B가 SIDE_A의 질문에 정확히 답했다.',
+          sideAFeedback: 'A측은 근거를 보강하세요.',
+          sideBFeedback: '측면 B는 잘했습니다.',
+          judgedAt: new Date('2026-09-07T12:20:00.000Z'),
+        });
+
+      it('side 표기를 닉네임으로 바꾸고 나머지 계약 필드는 그대로 둔다', async () => {
+        const stored = judgment();
+        results.findJudgment.mockResolvedValue(stored);
+
+        const { judgmentResult } = await service.getResult(DEBATE_ID, HOST_ID);
+
+        expect(judgmentResult).toMatchObject({
+          winner: JudgmentWinner.SIDE_B,
+          sideATotalScore: 67,
+          sideBTotalScore: 73,
+          overallReason: '호날두님이 메시님의 질문에 정확히 답했다.',
+          sideAFeedback: '메시님은 근거를 보강하세요.',
+          sideBFeedback: '호날두님은 잘했습니다.',
+        });
+        // DB 원문은 바꾸지 않는다.
+        expect(stored.overallReason).toBe(
+          'SIDE_B가 SIDE_A의 질문에 정확히 답했다.',
+        );
+      });
+
+      it('회원을 찾지 못하면 토론에 복사해 둔 닉네임을 쓴다', async () => {
+        results.findJudgment.mockResolvedValue(judgment());
+        members.findByIds.mockResolvedValue([]);
+        debates.findOneOrThrow.mockResolvedValue(
+          buildDebate({
+            hostNickname: '메시(당시)',
+            opponentNickname: '호날두(당시)',
+          }),
+        );
+
+        const { judgmentResult } = await service.getResult(DEBATE_ID, HOST_ID);
+
+        expect(judgmentResult.overallReason).toBe(
+          '호날두(당시)님이 메시(당시)님의 질문에 정확히 답했다.',
+        );
+      });
     });
 
     it('아직 판정 전이면 거절한다', async () => {
