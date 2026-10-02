@@ -51,7 +51,7 @@ export interface JudgeTaskHandler {
   readonly stageReporting?: StageReportingPolicy;
 
   /**
-   * stage 메시지 앞에 붙는 표시. 턴 단위 작업은 `turn #3`처럼 돌려주고,
+   * stage 메시지 앞에 붙는 표시. 라운드 단위 작업(분석·검증)은 `round #2`처럼 돌려주고,
    * 토론 단위(JUDGE)는 null이다. 프론트가 필요하면 이 접두사를 파싱한다.
    */
   describe(task: JudgeTask): Promise<string | null>;
@@ -83,7 +83,7 @@ export class NonRetryableTaskError extends Error {
 interface TaskRun {
   jobId: string | undefined;
   requestId: string;
-  // stage 메시지 접두사(turn #3 등).
+  // stage 메시지 접두사(round #2 등).
   prefix: string | null;
   // handler 실행 시간. handler를 부르지 못한 시도는 null이다.
   durationMs: number | null;
@@ -146,6 +146,33 @@ export class JudgeTaskQueue implements OnApplicationShutdown {
       await this.enqueue(task);
     }
     return task;
+  }
+
+  /**
+   * 대상의 작업을 다시 돌게 한다. 없으면 만들고, 이미 끝났으면(COMPLETED·FAILED) PENDING으로 되돌려 큐에 올린다.
+   * 진행 중이면 그대로 둔다 — 그 시도가 실패하면 재시도에서 바뀐 입력을 다시 읽는다.
+   * 입력이 바뀌었을 수 있는 작업(재분석 뒤의 라운드 검증)에 쓴다.
+   */
+  async reschedule(
+    debateId: string,
+    kind: JudgeTaskKind,
+    targetId: string,
+  ): Promise<JudgeTask> {
+    const task = await this.schedule(debateId, kind, targetId);
+    if (
+      task.status !== JudgeTaskStatus.COMPLETED &&
+      task.status !== JudgeTaskStatus.FAILED
+    ) {
+      return task;
+    }
+
+    await this.tasks.resetSettled(kind, targetId);
+    const reset = await this.tasks.findByTarget(kind, targetId);
+    if (reset !== null && reset.status === JudgeTaskStatus.PENDING) {
+      await this.enqueue(reset);
+      return reset;
+    }
+    return reset ?? task;
   }
 
   /**

@@ -32,6 +32,7 @@ import {
   JudgmentAlreadySettledError,
 } from './judge-result.repository';
 import { JudgeTask } from './entities/judge-task.entity';
+import { findResidualSideTokens } from './judgment-text';
 import { DEBATE_JUDGE, SILENT_TURN_PLACEHOLDER } from './llm/judge-llm';
 import type {
   DebateJudge,
@@ -335,10 +336,25 @@ export class DebateJudgeService implements JudgeTaskHandler {
           `${label}의 피드백이 비어 있습니다.`,
         );
       }
+      this.assertNoResidualSideTokens(`${label}의 피드백`, judgment.feedback);
     }
 
     if (result.overallReason.trim() === '') {
       throw new JudgmentScoreValidationError('총평이 비어 있습니다.');
+    }
+    this.assertNoResidualSideTokens('총평', result.overallReason);
+  }
+
+  /**
+   * 화면에 나갈 문장은 읽을 때 side 표기를 닉네임으로 바꾼다. 그 규칙이 흡수하지 못하는 표기가 남아 있으면
+   * 화면에 내부 값이 새므로 저장하지 않고 다시 묻는다(통과한 원문은 감사용으로 그대로 저장한다).
+   */
+  private assertNoResidualSideTokens(label: string, text: string): void {
+    const residual = findResidualSideTokens(text);
+    if (residual.length > 0) {
+      throw new JudgmentScoreValidationError(
+        `${label}에 변환할 수 없는 참여자 표기가 있습니다: ${residual.join(', ')}`,
+      );
     }
   }
 
@@ -424,7 +440,12 @@ export class DebateJudgeService implements JudgeTaskHandler {
 
     return {
       components: components.map((component) => {
-        const check = checkByComponentId.get(component.id);
+        // 같은 주장을 다시 말한 조각은 따로 검증하지 않았으므로 먼저 한 조각의 결과를 그대로 본다.
+        const check =
+          checkByComponentId.get(component.id) ??
+          (component.duplicateOfComponentId === null
+            ? undefined
+            : checkByComponentId.get(component.duplicateOfComponentId));
         return {
           ref: refByComponentId.get(component.id) as string,
           speakerSide: component.speakerSide,

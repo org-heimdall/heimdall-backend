@@ -38,12 +38,23 @@ export interface TurnSlot {
   side: DebateSide;
 }
 
+// 같은 (phase, round)에 속한 차례 묶음. 판정 파이프라인은 이 단위로 분석·검증한다.
+export interface DebateRound {
+  // 토론 안에서 몇 번째 라운드인지(1부터). OPENING = 1, 반론·질의 k = 1 + k, CLOSING = 마지막.
+  ordinal: number;
+  phase: DebatePhase;
+  round: number;
+  // 이 라운드 차례의 인덱스(= sequence - 1), 발언 순서대로.
+  turnIndexes: number[];
+}
+
 /**
  * 토론 1건의 발언 순서. OPENING(1라운드) → REBUTTAL_QUESTION(N라운드) → CLOSING(1라운드),
  * 모든 라운드는 SIDE_A → SIDE_B. 순서 규칙이 바뀌면 build()만 고치면 된다.
  */
 export class DebateTurnSchedule {
   private readonly slots: readonly TurnSlot[];
+  private readonly roundList: readonly DebateRound[];
 
   constructor(rebuttalQuestionRounds: number) {
     if (
@@ -55,6 +66,7 @@ export class DebateTurnSchedule {
       );
     }
     this.slots = DebateTurnSchedule.build(rebuttalQuestionRounds);
+    this.roundList = DebateTurnSchedule.groupRounds(this.slots);
   }
 
   // 토론에 있는 차례의 총 개수. 전체 제한 시간(expiresAt) 계산의 근거다.
@@ -83,6 +95,29 @@ export class DebateTurnSchedule {
 
   toArray(): TurnSlot[] {
     return [...this.slots];
+  }
+
+  rounds(): DebateRound[] {
+    return this.roundList.map((round) => ({
+      ...round,
+      turnIndexes: [...round.turnIndexes],
+    }));
+  }
+
+  // 차례 index가 속한 라운드. 범위 밖이면 null.
+  roundOf(index: number): DebateRound | null {
+    const round = this.roundList.find((candidate) =>
+      candidate.turnIndexes.includes(index),
+    );
+    return round === undefined
+      ? null
+      : { ...round, turnIndexes: [...round.turnIndexes] };
+  }
+
+  // 차례 index가 자기 라운드의 마지막 차례인지(그 차례가 확정되면 라운드가 닫힌다).
+  isRoundClosing(index: number): boolean {
+    const round = this.roundOf(index);
+    return round !== null && round.turnIndexes.at(-1) === index;
   }
 
   // 스케줄에 없는 차례를 넘기는 것은 호출자 버그이므로 비즈니스 예외가 아닌 Error로 드러낸다.
@@ -114,6 +149,25 @@ export class DebateTurnSchedule {
     }
     pushRound(DebatePhase.CLOSING, 1);
     return slots;
+  }
+
+  // 연속한 같은 (phase, round) 차례를 라운드 하나로 묶는다. 편 순서를 여기서 가정하지 않는다.
+  private static groupRounds(slots: readonly TurnSlot[]): DebateRound[] {
+    const rounds: DebateRound[] = [];
+    slots.forEach((slot, index) => {
+      const last = rounds.at(-1);
+      if (last && last.phase === slot.phase && last.round === slot.round) {
+        last.turnIndexes.push(index);
+        return;
+      }
+      rounds.push({
+        ordinal: rounds.length + 1,
+        phase: slot.phase,
+        round: slot.round,
+        turnIndexes: [index],
+      });
+    });
+    return rounds;
   }
 }
 

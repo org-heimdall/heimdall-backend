@@ -10,11 +10,13 @@ import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
 import { ArgumentAnalyzerService } from './argument-analyzer.service';
 import { FactCheckerService } from './fact-checker.service';
+import { FactCheckTargetPolicy } from './fact-check-target.policy';
 import { DebateJudgeService } from './debate-judge.service';
 import { JudgeConfig } from './judge.config';
 import { JudgeController } from './judge.controller';
 import { JudgeTaskRepository } from './judge-task.repository';
 import { JudgeService } from './judge.service';
+import { DebateResultPresenter } from './debate-result.presenter';
 import {
   BULLMQ_CONNECTION,
   createBullMqConnection,
@@ -82,6 +84,9 @@ import { MetricsModule } from '../common/metrics/metrics.module';
     JudgeTaskWorker,
     JudgeTaskMetrics,
     JudgeService,
+    DebateResultPresenter,
+    // 사실 검증 대상의 최종 선별(제외·중복·상한). Analyzer가 쓴다.
+    FactCheckTargetPolicy,
     ArgumentAnalyzerService,
     FactCheckerService,
     DebateJudgeService,

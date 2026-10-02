@@ -2,6 +2,7 @@ import { DebatePhase, DebateSide } from '../../debates/debate-turn';
 import {
   ArgumentComponentKind,
   ArgumentRelationKind,
+  ClaimType,
   DebateViolation,
   FactCheckSource,
   VerificationStatus,
@@ -20,7 +21,7 @@ export const SILENT_TURN_PLACEHOLDER = '(발언 없음)';
  * (LlmLogContext에 대입하려면 index signature가 있어야 해서 interface가 아니라 type으로 둔다.)
  */
 
-// Analyzer는 턴 1개 단위라 turnIds에는 하나만 들어간다. heimdall_ai와 형식을 맞추려고 배열로 둔다.
+// Analyzer는 라운드 1개 단위라 turnIds에는 그 라운드의 비어 있지 않은 턴들이 발언 순서대로 들어간다.
 export type AnalyzerLogContext = {
   debateId: string;
   turnIds: string[];
@@ -28,7 +29,7 @@ export type AnalyzerLogContext = {
   round: number;
 };
 
-// FactCheck는 Gemini 1회 호출이라 stage는 grounded_check 하나이고 targets에는 컴포넌트 id 1개가 들어간다.
+// FactCheck는 라운드당 Gemini 1회 호출이라 stage는 grounded_check 하나이고, targets에는 검증할 컴포넌트 id들이 들어간다.
 export type FactCheckLogContext = {
   stage: 'grounded_check';
   debateId: string;
@@ -44,16 +45,23 @@ export type DebateJudgeLogContext = {
 // ---------------------------------------------------------------- Argument Analyzer
 
 export interface AnalyzerTurn {
+  // 이번 요청 안에서만 쓰는 턴 별칭(t1, t2 …). 컴포넌트가 어느 턴에서 나왔는지 이 값으로 가리킨다.
+  ref: string;
   sequence: number;
-  phase: DebatePhase;
-  round: number;
   speakerSide: DebateSide;
   speakerNickname: string;
   content: string;
 }
 
+// 분석할 라운드. 같은 (phase, round)의 비어 있지 않은 턴을 발언 순서대로 담는다.
+export interface AnalyzerRound {
+  phase: DebatePhase;
+  round: number;
+  turns: AnalyzerTurn[];
+}
+
 /**
- * 이전 턴들에서 이미 뽑아 둔 컴포넌트. 이번 턴의 반박·질의가 무엇을 겨냥하는지 잇기 위해 넣는다.
+ * 이전 라운드들에서 이미 뽑아 둔 컴포넌트. 이번 라운드의 반박·질의가 무엇을 겨냥하는지 잇기 위해 넣는다.
  * ref는 프롬프트 안에서만 쓰는 짧은 별칭이고, 실제 id는 서버가 갖고 있다.
  */
 export interface AnalyzerKnownComponent {
@@ -61,11 +69,13 @@ export interface AnalyzerKnownComponent {
   speakerSide: DebateSide;
   kind: ArgumentComponentKind;
   statement: string;
+  // 이미 사실 검증 대상이 된 조각의 검증 명제. 같은 주장을 다시 말했는지(duplicate_of_ref) 가리는 데 쓴다.
+  factCheckStatement: string | null;
 }
 
 export interface AnalyzerRequest {
   topic: string;
-  turn: AnalyzerTurn;
+  round: AnalyzerRound;
   previousComponents: AnalyzerKnownComponent[];
   logContext: AnalyzerLogContext;
 }
@@ -73,16 +83,23 @@ export interface AnalyzerRequest {
 export interface AnalyzedComponent {
   // 이번 응답 안에서만 유효한 별칭. 관계가 이 값으로 컴포넌트를 가리킨다.
   ref: string;
+  // 이 조각이 나온 턴의 별칭(AnalyzerTurn.ref). 발언자·턴은 여기서 정해진다.
+  turnRef: string;
   kind: ArgumentComponentKind;
   statement: string;
-  // 외부 사실 확인이 필요한 주장인지. true인 것마다 FactCheck 작업이 하나 생긴다.
+  claimType: ClaimType;
+  // LLM이 외부 사실 확인을 요청했는지. 최종 대상 여부는 서버 정책(FactCheckTargetPolicy)이 정한다.
   needsFactCheck: boolean;
+  // 검증할 원자적 명제(발언자·메타 표현 제거). needsFactCheck가 false면 null.
+  factCheckStatement: string | null;
+  // 이미 검증 대상이 된 조각(p… 또는 이번 라운드의 c…)과 같은 주장이면 그 별칭.
+  duplicateOfRef: string | null;
 }
 
 export interface AnalyzedRelation {
-  // 이번 턴에서 새로 나온 컴포넌트여야 한다(관계를 만드는 쪽은 언제나 지금 말한 사람이다).
+  // 이번 라운드에서 새로 나온 컴포넌트여야 한다(관계를 만드는 쪽은 언제나 지금 말한 사람이다).
   fromRef: string;
-  // 이번 턴의 컴포넌트이거나 이전 턴의 컴포넌트.
+  // 이번 라운드의 컴포넌트이거나 이전 라운드의 컴포넌트.
   toRef: string;
   kind: ArgumentRelationKind;
 }
@@ -92,36 +109,48 @@ export interface AnalyzerResult {
   relations: AnalyzedRelation[];
 }
 
-// 확정 턴 하나에서 논증 그래프 조각을 뽑아내는 것.
+// 라운드 하나(확정 턴 묶음)에서 논증 그래프 조각을 뽑아내는 것.
 export interface ArgumentAnalyzer {
   analyze(request: AnalyzerRequest): Promise<AnalyzerResult>;
 }
 
 // --------------------------------------------------------------- Fact Checker
 
-export interface FactCheckRequest {
-  topic: string;
-  // 검증할 문장(Analyzer가 뽑은 컴포넌트).
+// 검증할 명제 하나. ref는 이번 요청 안에서만 쓰는 별칭(f1, f2 …)이다.
+export interface FactCheckTarget {
+  ref: string;
   statement: string;
-  // 발언이 나온 맥락. 대명사·생략된 주어를 복원하는 데 쓴다.
+  claimType: ClaimType | null;
+}
+
+export interface FactCheckBatchRequest {
+  topic: string;
+  // 명제들이 나온 라운드의 발언 원문. 대명사·생략된 주어를 복원하는 데 쓴다.
   context: string;
+  targets: FactCheckTarget[];
   logContext: FactCheckLogContext;
 }
 
-export interface FactCheckOutcome {
+// 명제 하나에 대한 판정.
+export interface FactCheckItemOutcome {
+  ref: string;
   status: VerificationStatus;
   reason: string;
   sources: FactCheckSource[];
+}
+
+export interface FactCheckBatchOutcome {
+  results: FactCheckItemOutcome[];
   /**
-   * 실제로 검색이 일어났다는 근거(grounding 메타데이터의 출처 도메인).
+   * 실제로 검색이 일어났다는 근거(grounding 메타데이터의 출처 도메인). 한 번의 호출에서 나오므로 명제들이 공유한다.
    * Source Validator가 "모델이 검색 없이 지어낸 출처"를 걸러 내는 데 쓴다.
    */
   groundedDomains: string[];
 }
 
-// 문장 하나의 사실 여부를 외부 검색 근거와 함께 판정하는 것.
+// 여러 명제의 사실 여부를 한 번의 검색 근거 호출로 판정하는 것(bounded batch).
 export interface FactChecker {
-  check(request: FactCheckRequest): Promise<FactCheckOutcome>;
+  checkBatch(request: FactCheckBatchRequest): Promise<FactCheckBatchOutcome>;
 }
 
 // ------------------------------------------------------------------- Debate Judge

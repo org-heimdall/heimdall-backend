@@ -343,6 +343,40 @@ describe('DebateJudgeService', () => {
     ]);
   });
 
+  it('같은 주장을 다시 말한 컴포넌트는 먼저 한 컴포넌트의 검증 결과를 물려받는다', async () => {
+    results.findComponents.mockResolvedValue([
+      Object.assign(new DebateArgumentComponent(), {
+        id: 'component-1',
+        speakerSide: DebateSide.SIDE_A,
+        kind: ArgumentComponentKind.EVIDENCE,
+        statement: '국민 70%가 찬성했다',
+        duplicateOfComponentId: null,
+      }),
+      Object.assign(new DebateArgumentComponent(), {
+        id: 'component-2',
+        speakerSide: DebateSide.SIDE_A,
+        kind: ArgumentComponentKind.EVIDENCE,
+        statement: '다수 국민이 찬성한다는 조사가 있다',
+        duplicateOfComponentId: 'component-1',
+      }),
+    ]);
+    results.findFactChecks.mockResolvedValue([
+      Object.assign(new DebateFactCheckResult(), {
+        componentId: 'component-1',
+        status: VerificationStatus.SUPPORTED,
+        reason: '여론조사로 확인됨',
+      }),
+    ]);
+
+    await service.handle(task);
+
+    const [request] = judge.judge.mock.calls[0] as [DebateJudgeRequest];
+    expect(request.components[1].factCheck).toEqual({
+      status: VerificationStatus.SUPPORTED,
+      reason: '여론조사로 확인됨',
+    });
+  });
+
   it('논증 관계를 별칭으로 이어 판정 입력에 넣는다', async () => {
     results.findComponents.mockResolvedValue([
       Object.assign(new DebateArgumentComponent(), {
@@ -421,6 +455,29 @@ describe('DebateJudgeService', () => {
       JudgmentScoreValidationError,
     );
     expect(results.completeJudgment).not.toHaveBeenCalled();
+  });
+
+  it('총평에 변환할 수 없는 side 표기가 남으면 저장하지 않고 재시도로 넘긴다', async () => {
+    judge.judge.mockResolvedValue(
+      judgment({ overallReason: 'SIDE_AB가 우세했다.' }),
+    );
+
+    await expect(service.handle(task)).rejects.toThrow(
+      JudgmentScoreValidationError,
+    );
+    expect(results.completeJudgment).not.toHaveBeenCalled();
+  });
+
+  it('placeholder나 흔한 side 표기는 통과시키고 원문 그대로 저장한다', async () => {
+    const overallReason = '{{SIDE_A}}가 SIDE_B보다 근거가 강했다.';
+    judge.judge.mockResolvedValue(judgment({ overallReason }));
+
+    await service.handle(task);
+
+    expect(results.completeJudgment).toHaveBeenCalledWith(
+      expect.objectContaining({ overallReason }),
+      expect.any(Function),
+    );
   });
 
   it('상대가 없는 토론은 재시도 불가로 끝낸다', async () => {
