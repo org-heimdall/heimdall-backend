@@ -91,7 +91,7 @@ import * as Joi from 'joi';
         DEBATE_PIPELINE_FACT_CHECK_MAX_ATTEMPTS: Joi.number()
           .integer()
           .min(1)
-          .default(3),
+          .default(2),
         DEBATE_PIPELINE_JUDGE_MAX_ATTEMPTS: Joi.number()
           .integer()
           .min(1)
