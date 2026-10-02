@@ -43,7 +43,6 @@ export function toSpeakers(debate: Debate): DebateSpeakers {
 }
 
 export interface DebateTurnLimits {
-  maxContentLength: number;
   maxTotalCharacters: number;
   maxDurationSeconds: number;
 }
@@ -248,7 +247,7 @@ export class DebateChatState {
     return resolveSide(this.speakers, memberId);
   }
 
-  // draft 추가. 발언자·차례·길이를 검증하고, clientMessageId가 같으면 저장 없이 DUPLICATE로 응답한다.
+  // draft 추가. 발언자·차례·턴 누적 글자 수를 검증하고, clientMessageId가 같으면 저장 없이 DUPLICATE로 응답한다.
   appendDraft(
     memberId: string,
     command: TurnCommand & { content: string },
@@ -264,9 +263,6 @@ export class DebateChatState {
       return { status: 'DUPLICATE', message: duplicate };
     }
 
-    if (command.content.length > this.limits.maxContentLength) {
-      throw new GeneralException(DebateChatErrorCode.CONTENT_TOO_LONG);
-    }
     if (
       this.totalCharacters() + command.content.length >
       this.limits.maxTotalCharacters

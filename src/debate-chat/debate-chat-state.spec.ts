@@ -82,7 +82,6 @@ describe('DebateChatState', () => {
   const NOW = new Date('2026-09-05T00:00:00.000Z');
 
   const limits = {
-    maxContentLength: 10,
     maxTotalCharacters: 25,
     maxDurationSeconds: 180,
   };
@@ -232,14 +231,22 @@ describe('DebateChatState', () => {
       expect(state.snapshot().draftMessages).toHaveLength(2);
     });
 
-    it('메시지 1건이 maxContentLength를 넘으면 CONTENT_TOO_LONG', () => {
+    it('메시지 1건 길이 제한은 없어 한 번에 턴 한도까지 보낼 수 있다', () => {
+      const result = state.appendDraft(SIDE_A_ID, {
+        ...opening(DebateSide.SIDE_A),
+        content: 'x'.repeat(25),
+      });
+      expect(result.status).toBe('APPENDED');
+    });
+
+    it('한 번에 보내도 턴 한도를 넘으면 TURN_CHARACTER_LIMIT_EXCEEDED', () => {
       expectError(
         () =>
           state.appendDraft(SIDE_A_ID, {
             ...opening(DebateSide.SIDE_A),
-            content: 'x'.repeat(11),
+            content: 'x'.repeat(26),
           }),
-        DebateChatErrorCode.CONTENT_TOO_LONG,
+        DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED,
       );
     });
 
@@ -249,9 +256,8 @@ describe('DebateChatState', () => {
           ...opening(DebateSide.SIDE_A),
           content,
         });
-      send('x'.repeat(10));
-      send('x'.repeat(10));
-      send('x'.repeat(5)); // 누적 25 = 한도, 통과
+      send('x'.repeat(15));
+      send('x'.repeat(10)); // 누적 25 = 한도, 통과
       expectError(
         () => send('x'),
         DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED,
@@ -439,6 +445,32 @@ describe('DebateChatState', () => {
       ).toMatchObject({ sequence: 1, content: '이어서' });
     });
 
+    it('복원된 draft도 턴 누적 글자 수에 포함된다(재접속 후에도 같은 한도)', () => {
+      const draft: DraftMessage = {
+        id: 'draft-1',
+        debateId: DEBATE_ID,
+        clientMessageId: 'c-1',
+        speakerId: SIDE_A_ID,
+        speakerSide: DebateSide.SIDE_A,
+        phase: DebatePhase.OPENING,
+        round: 1,
+        content: 'x'.repeat(15),
+        createdAt: NOW.toISOString(),
+      };
+      const restored = build({ drafts: [draft] });
+      const send = (content: string) =>
+        restored.appendDraft(SIDE_A_ID, {
+          ...opening(DebateSide.SIDE_A),
+          content,
+        });
+
+      send('x'.repeat(10)); // 누적 25 = 한도, 통과
+      expectError(
+        () => send('x'),
+        DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED,
+      );
+    });
+
     it('clientMessageId 중복 판정은 확정된 차례의 것까지 이어진다(토론 단위)', () => {
       const previous: DraftMessage = {
         id: 'draft-1',
@@ -574,6 +606,22 @@ describe('DebateChatState', () => {
         debate: null,
         endReason: null,
       });
+    });
+
+    it('시간 초과로 확정되면 다음 차례는 누적 글자 수를 0부터 다시 센다', () => {
+      state.appendDraft(SIDE_A_ID, {
+        ...opening(DebateSide.SIDE_A),
+        content: 'x'.repeat(25),
+      });
+      clock = new Date(NOW.getTime() + 180_000);
+      state.expireTurn();
+
+      const result = state.appendDraft(SIDE_B_ID, {
+        ...opening(DebateSide.SIDE_B),
+        content: 'x'.repeat(25),
+      });
+
+      expect(result.status).toBe('APPENDED');
     });
 
     it('한 글자도 쓰지 않은 차례는 빈 턴으로 남기고 넘어간다(차례 계산이 밀리지 않게)', () => {
