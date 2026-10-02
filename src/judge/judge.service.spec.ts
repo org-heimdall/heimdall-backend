@@ -12,18 +12,11 @@ import { JudgeTaskRepository } from './judge-task.repository';
 import { JudgeService } from './judge.service';
 import { JudgeTaskQueue } from './judge-task.worker';
 import { JudgeResultRepository } from './judge-result.repository';
-import {
-  ArgumentComponentKind,
-  JudgeTaskKind,
-  JudgeTaskStatus,
-  JudgmentWinner,
-  VerificationStatus,
-} from './judge.types';
-import { DebateArgumentComponent } from './entities/debate-argument.entity';
-import { DebateFactCheckResult } from './entities/debate-fact-check.entity';
+import { JudgeTaskKind, JudgeTaskStatus, JudgmentWinner } from './judge.types';
 import { DebateJudgmentResult } from './entities/debate-judgment-result.entity';
 import { JudgeTask } from './entities/judge-task.entity';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
+import { DebateResultPresenter } from './debate-result.presenter';
 
 describe('JudgeService', () => {
   const DEBATE_ID = 'debate-uuid';
@@ -49,6 +42,7 @@ describe('JudgeService', () => {
   };
   let debates: { findOneOrThrow: jest.Mock; findOneDto: jest.Mock };
   let outcomes: { applyWithin: jest.Mock; announce: jest.Mock };
+  let presenter: { presentJudgment: jest.Mock; presentFactChecks: jest.Mock };
   let service: JudgeService;
   // failJudgment가 트랜잭션 안에서 넘겨주는 manager 자리.
   const MANAGER = { id: 'entity-manager' };
@@ -182,6 +176,18 @@ describe('JudgeService', () => {
       announce: jest.fn().mockResolvedValue(undefined),
     };
 
+    // 화면용 가공은 presenter 스펙이 검증한다. 여기서는 저장된 판정을 그대로 옮긴다.
+    presenter = {
+      presentJudgment: jest.fn(
+        (_debate: Debate, judgment: DebateJudgmentResult) => ({
+          id: judgment.id,
+          winner: judgment.winner,
+          judgedAt: judgment.judgedAt.toISOString(),
+        }),
+      ),
+      presentFactChecks: jest.fn().mockResolvedValue([]),
+    };
+
     service = new JudgeService(
       messages as unknown as Repository<DebateMessage>,
       tasks as unknown as JudgeTaskRepository,
@@ -192,6 +198,7 @@ describe('JudgeService', () => {
         judgeRetryCooldownSeconds: COOLDOWN_SECONDS,
       } as unknown as JudgeConfig,
       outcomes as unknown as DebateOutcomeService,
+      presenter as unknown as DebateResultPresenter,
     );
   });
 
@@ -251,18 +258,18 @@ describe('JudgeService', () => {
   });
 
   describe('requestJudgment', () => {
-    it('분석 작업이 없는 확정 턴을 채우고 판정 조건을 다시 본다', async () => {
+    it('분석 작업이 없는 닫힌 라운드를 채우고 판정 조건을 다시 본다', async () => {
       await expectCode(
         service.requestJudgment(DEBATE_ID, HOST_ID),
         JudgeErrorCode.IN_PROGRESS.code,
       );
 
-      // 빈 턴(2번)은 건너뛴다.
+      // OPENING 라운드(1, 2번)만 닫혀 있고, 작업 대상은 라운드를 닫는 2번 턴이다(빈 턴이어도 앵커가 된다).
       expect(queue.schedule).toHaveBeenCalledTimes(1);
       expect(queue.schedule).toHaveBeenCalledWith(
         DEBATE_ID,
         JudgeTaskKind.ANALYZER,
-        'turn-1',
+        'turn-2',
       );
       expect(tasks.countByKind).toHaveBeenCalledWith(DEBATE_ID);
     });
@@ -294,6 +301,10 @@ describe('JudgeService', () => {
 
       const result = await service.requestJudgment(DEBATE_ID, HOST_ID);
 
+      expect(presenter.presentJudgment).toHaveBeenCalledWith(
+        expect.objectContaining({ id: DEBATE_ID }),
+        expect.objectContaining({ id: 'judgment-uuid' }),
+      );
       expect(result).toMatchObject({
         id: 'judgment-uuid',
         winner: JudgmentWinner.SIDE_A,
@@ -448,45 +459,15 @@ describe('JudgeService', () => {
     });
 
     it('판정·검증 결과와 요청자의 편을 함께 돌려준다', async () => {
-      results.findComponents.mockResolvedValue([
-        Object.assign(new DebateArgumentComponent(), {
-          id: 'component-1',
-          speakerId: HOST_ID,
-          speakerSide: DebateSide.SIDE_A,
-          kind: ArgumentComponentKind.EVIDENCE,
-          statement: 'EU가 AI법을 시행했다',
-        }),
-      ]);
-      results.findFactChecks.mockResolvedValue([
-        Object.assign(new DebateFactCheckResult(), {
-          id: 'check-1',
-          componentId: 'component-1',
-          status: VerificationStatus.SUPPORTED,
-          reason: '공식 문서로 확인됨',
-          checkedAt: new Date('2026-09-07T12:15:00.000Z'),
-          sources: [
-            {
-              title: 'EU AI Act',
-              publisher: 'European Commission',
-              url: 'https://example.org/ai-act',
-            },
-          ],
-        }),
-      ]);
+      const cards = [{ id: 'check-1', componentId: 'component-1' }];
+      presenter.presentFactChecks.mockResolvedValue(cards);
 
       const result = await service.getResult(DEBATE_ID, OPPONENT_ID);
 
       expect(result.viewerSide).toBe(DebateSide.SIDE_B);
       expect(result.judgmentResult.winner).toBe(JudgmentWinner.DRAW);
-      expect(result.factChecks).toEqual([
-        expect.objectContaining({
-          componentId: 'component-1',
-          speakerSide: DebateSide.SIDE_A,
-          statement: 'EU가 AI법을 시행했다',
-          status: VerificationStatus.SUPPORTED,
-          checkedAt: '2026-09-07T12:15:00.000Z',
-        }),
-      ]);
+      expect(presenter.presentFactChecks).toHaveBeenCalledWith(DEBATE_ID);
+      expect(result.factChecks).toBe(cards);
     });
 
     it('관전자의 편은 null이다', async () => {
@@ -668,32 +649,126 @@ describe('JudgeService', () => {
   });
 
   describe('onTurnFinalized', () => {
-    const turn = (content: string) => ({
-      id: 'turn-1',
+    // 반론·질의 0라운드: OPENING(1, 2) → CLOSING(3, 4).
+    const turn = (sequence: number, content: string) => ({
+      id: `turn-${sequence}`,
       debateId: DEBATE_ID,
-      speakerId: HOST_ID,
-      speakerSide: DebateSide.SIDE_A,
-      phase: DebatePhase.OPENING,
+      speakerId: sequence % 2 === 1 ? HOST_ID : OPPONENT_ID,
+      speakerSide: sequence % 2 === 1 ? DebateSide.SIDE_A : DebateSide.SIDE_B,
+      phase: sequence <= 2 ? DebatePhase.OPENING : DebatePhase.CLOSING,
       round: 1,
       content,
       createdAt: new Date().toISOString(),
-      sequence: 1,
+      sequence,
     });
 
-    it('확정 턴마다 분석 작업을 만든다', async () => {
-      await service.onTurnFinalized(turn('규제가 필요하다'));
+    it('라운드 중간 턴이 확정되면 아직 작업을 만들지 않는다', async () => {
+      await service.onTurnFinalized(turn(1, '규제가 필요하다'));
+
+      expect(queue.schedule).not.toHaveBeenCalled();
+    });
+
+    it('라운드를 닫는 턴이 확정되면 그 턴을 대상으로 라운드 분석 작업 하나를 만든다', async () => {
+      messages.find.mockResolvedValue([
+        buildMessage(1, '규제가 필요하다'),
+        buildMessage(2, ''),
+      ]);
+
+      await service.onTurnFinalized(turn(2, ''));
+
+      expect(queue.schedule).toHaveBeenCalledTimes(1);
+      expect(queue.schedule).toHaveBeenCalledWith(
+        DEBATE_ID,
+        JudgeTaskKind.ANALYZER,
+        'turn-2',
+      );
+    });
+
+    it('라운드 턴이 전부 비어 있으면(시간 초과) 작업을 만들지 않는다', async () => {
+      messages.find.mockResolvedValue([
+        buildMessage(3, '  '),
+        buildMessage(4, null),
+      ]);
+
+      await service.onTurnFinalized(turn(4, ''));
+
+      expect(queue.schedule).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('onDebateEnded', () => {
+    const allTurns = () =>
+      [1, 2, 3, 4].map((sequence) =>
+        buildMessage(sequence, `발언 ${sequence}`),
+      );
+
+    it('판정 조건을 보기 전에 닫힌 라운드의 분석 작업을 먼저 보장한다(마지막 턴 훅과의 경합 방지)', async () => {
+      messages.find.mockResolvedValue(allTurns());
+      // 마지막 라운드 작업이 아직 없는 상태 — 마지막 턴 훅보다 이 훅이 먼저 돈 경우다.
+      tasks.findByTarget.mockImplementation(
+        (_kind: JudgeTaskKind, targetId: string) =>
+          Promise.resolve(
+            targetId === 'turn-2'
+              ? buildTask({ status: JudgeTaskStatus.COMPLETED })
+              : null,
+          ),
+      );
+      tasks.countByKind.mockResolvedValue(
+        counts({ analyzer: { total: 1, completed: 1 } }),
+      );
+
+      await service.onDebateEnded(DEBATE_ID);
 
       expect(queue.schedule).toHaveBeenCalledWith(
         DEBATE_ID,
         JudgeTaskKind.ANALYZER,
-        'turn-1',
+        'turn-4',
+      );
+      expect(queue.schedule.mock.invocationCallOrder[0]).toBeLessThan(
+        tasks.countByKind.mock.invocationCallOrder[0],
       );
     });
 
-    it('빈 턴(시간 초과)은 작업을 만들지 않는다', async () => {
-      await service.onTurnFinalized(turn('   '));
+    it('라운드 작업이 모두 있으면 새로 만들지 않는다(멱등)', async () => {
+      messages.find.mockResolvedValue(allTurns());
+      tasks.findByTarget.mockResolvedValue(
+        buildTask({ status: JudgeTaskStatus.COMPLETED }),
+      );
 
-      expect(queue.schedule).not.toHaveBeenCalled();
+      await service.onDebateEnded(DEBATE_ID);
+
+      expect(queue.schedule).not.toHaveBeenCalledWith(
+        DEBATE_ID,
+        JudgeTaskKind.ANALYZER,
+        expect.anything(),
+      );
     });
+  });
+
+  it('마지막 FactCheck batch가 확정되면 같은 호출 안에서 바로 Judge 작업을 만든다(polling 없음)', async () => {
+    tasks.countByKind.mockResolvedValue(
+      counts({
+        analyzer: { total: 2, completed: 2 },
+        factCheck: { total: 2, completed: 2 },
+      }),
+    );
+
+    await service.onTaskSettled(
+      Object.assign(new JudgeTask(), {
+        id: 'fact-check-task',
+        debateId: DEBATE_ID,
+        kind: JudgeTaskKind.FACT_CHECK,
+        targetId: 'turn-4',
+        status: JudgeTaskStatus.COMPLETED,
+      }),
+      'COMPLETED',
+    );
+
+    expect(queue.schedule).toHaveBeenCalledWith(
+      DEBATE_ID,
+      JudgeTaskKind.JUDGE,
+      DEBATE_ID,
+    );
+    expect(results.startJudging).toHaveBeenCalledWith(DEBATE_ID);
   });
 });

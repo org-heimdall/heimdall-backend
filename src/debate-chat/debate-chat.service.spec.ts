@@ -89,7 +89,6 @@ describe('DebateChatService', () => {
       // N=0 → OPENING(A,B) → CLOSING(A,B) 4턴
       schedule: new DebateTurnSchedule(0),
       limits: {
-        maxContentLength: 10,
         maxTotalCharacters: 30,
         maxDurationSeconds: 180,
       },
@@ -224,10 +223,10 @@ describe('DebateChatService', () => {
       );
     });
 
-    it('길이 초과는 CONTENT_TOO_LONG', async () => {
+    it('메시지 1건이어도 차례의 누적 한도를 넘으면 TURN_CHARACTER_LIMIT_EXCEEDED', async () => {
       await expectCode(
-        send(DebateSide.SIDE_A, 'x'.repeat(11)),
-        DebateChatErrorCode.CONTENT_TOO_LONG.code,
+        send(DebateSide.SIDE_A, 'x'.repeat(31)),
+        DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED.code,
       );
     });
   });
@@ -433,7 +432,6 @@ describe('DebateChatService', () => {
         },
         schedule: new DebateTurnSchedule(0),
         limits: {
-          maxContentLength: 10,
           maxTotalCharacters: 30,
           maxDurationSeconds: 180,
         },

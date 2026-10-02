@@ -51,6 +51,62 @@ describe('debate-turn', () => {
       expect(() => new DebateTurnSchedule(-1)).toThrow();
       expect(() => new DebateTurnSchedule(1.5)).toThrow();
     });
+
+    describe('라운드', () => {
+      it('같은 (phase, round)의 차례를 발언 순서대로 묶는다', () => {
+        expect(schedule.rounds()).toEqual([
+          {
+            ordinal: 1,
+            phase: DebatePhase.OPENING,
+            round: 1,
+            turnIndexes: [0, 1],
+          },
+          {
+            ordinal: 2,
+            phase: DebatePhase.REBUTTAL_QUESTION,
+            round: 1,
+            turnIndexes: [2, 3],
+          },
+          {
+            ordinal: 3,
+            phase: DebatePhase.CLOSING,
+            round: 1,
+            turnIndexes: [4, 5],
+          },
+        ]);
+      });
+
+      it('반론·질의 3라운드면 라운드는 5개이고 CLOSING이 마지막이다', () => {
+        const rounds = new DebateTurnSchedule(3).rounds();
+        expect(rounds).toHaveLength(5);
+        expect(rounds[4]).toMatchObject({
+          ordinal: 5,
+          phase: DebatePhase.CLOSING,
+          turnIndexes: [8, 9],
+        });
+      });
+
+      it('roundOf는 차례가 속한 라운드를, 범위 밖이면 null을 돌려준다', () => {
+        expect(schedule.roundOf(3)).toMatchObject({
+          ordinal: 2,
+          phase: DebatePhase.REBUTTAL_QUESTION,
+        });
+        expect(schedule.roundOf(6)).toBeNull();
+        expect(schedule.roundOf(-1)).toBeNull();
+      });
+
+      it('라운드의 마지막 차례만 라운드를 닫는다', () => {
+        expect(
+          [0, 1, 2, 3, 4, 5].map((i) => schedule.isRoundClosing(i)),
+        ).toEqual([false, true, false, true, false, true]);
+        expect(schedule.isRoundClosing(6)).toBe(false);
+      });
+
+      it('돌려준 라운드를 고쳐도 스케줄은 바뀌지 않는다', () => {
+        schedule.rounds()[0].turnIndexes.push(99);
+        expect(schedule.roundOf(0)?.turnIndexes).toEqual([0, 1]);
+      });
+    });
   });
 
   describe('deriveCurrentTurn', () => {
