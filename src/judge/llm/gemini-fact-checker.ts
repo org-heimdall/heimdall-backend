@@ -68,7 +68,7 @@ const RESPONSE_VALIDATOR = z.fromJSONSchema(
 
 const SYSTEM_INSTRUCTION = [
   '너는 토론 발언의 사실 여부를 검증하는 팩트체커다.',
-  'Google 검색으로 근거를 찾은 뒤에만 판정한다. 검색으로 확인하지 못한 것은 INSUFFICIENT_EVIDENCE로 둔다.',
+  'Google 검색으로 근거를 찾은 뒤에만 판정한다. 판정 전에 반드시 Google 검색을 1회 이상 수행한다. 알고 있는 사실이라도 검색으로 확인한다. 검색으로 확인하지 못한 것은 INSUFFICIENT_EVIDENCE로 둔다.',
   '출처는 검색 결과에 실제로 있던 문서만 넣고, URL을 지어내지 않는다.',
   `출처는 판정에 가장 직접적인 근거가 된 것부터 최대 ${MAX_SOURCES}개까지만 넣는다.`,
   'SUPPORTED(뒷받침됨) · CONTRADICTED(반대 근거) · PARTIALLY_SUPPORTED(일부만) · INSUFFICIENT_EVIDENCE(자료 부족) · NOT_VERIFIABLE(검증 대상 아님) · OUTDATED(과거엔 맞았으나 현재는 아님) 중에서 고른다.',
