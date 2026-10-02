@@ -2,7 +2,11 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
-import { DebateSide, resolveSpeakers } from '../debates/debate-turn';
+import {
+  DebatePhase,
+  DebateSide,
+  resolveSpeakers,
+} from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import { Debate } from '../debates/entities/debate.entity';
@@ -26,7 +30,13 @@ const KNOWN_REF_PREFIX = 'p';
 export const MAX_STATEMENT_LENGTH = 500;
 
 // 한 턴에서 사실 검증을 돌리는 컴포넌트 상한(비용). 넘는 것은 검증 대상에서만 뺀다.
-export const MAX_FACT_CHECKS_PER_TURN = 5;
+export const MAX_FACT_CHECKS_PER_TURN = 3;
+
+// 사실 검증을 돌리는 단계. 최종 발언(CLOSING)은 판정 직전이라 검증을 기다리면 결과가 늦어지므로 뺀다.
+export const FACT_CHECK_PHASES: readonly DebatePhase[] = [
+  DebatePhase.OPENING,
+  DebatePhase.REBUTTAL_QUESTION,
+];
 
 /**
  * Graph Validator가 거부한 결과. 같은 입력이라도 다시 물으면 달라질 수 있으므로 재시도 대상이다
@@ -105,7 +115,9 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
 
     // 형식은 맞아도 참조가 어긋날 수 있다. 거부되면 예외가 올라가 worker가 재시도한다.
     this.validateGraph(analyzed, [...knownRefToId.keys()]);
-    const result = this.limitFactChecks(task.debateId, sequence, analyzed);
+    const result = FACT_CHECK_PHASES.includes(slot.phase)
+      ? this.limitFactChecks(task.debateId, sequence, analyzed)
+      : this.skipFactChecks(task.debateId, sequence, analyzed);
     this.logResult(task.debateId, sequence, result);
 
     const saved = await this.results.replaceTurnGraph({
@@ -161,6 +173,33 @@ export class ArgumentAnalyzerService implements JudgeTaskHandler {
       );
     }
     return { ...result, components };
+  }
+
+  /**
+   * 검증하지 않는 단계의 턴. 컴포넌트는 그래프에 그대로 두고 needsFactCheck만 모두 내려
+   * FactCheck 작업이 아예 만들어지지 않게 한다.
+   */
+  private skipFactChecks(
+    debateId: string,
+    sequence: number,
+    result: AnalyzerResult,
+  ): AnalyzerResult {
+    const requested = result.components.filter(
+      (component) => component.needsFactCheck,
+    ).length;
+    if (requested > 0) {
+      this.logger.log(
+        `검증하지 않는 단계: debateId=${debateId}, turn #${sequence}, ` +
+          `검증 대상 ${requested}건을 건너뛴다.`,
+      );
+    }
+    return {
+      ...result,
+      components: result.components.map((component) => ({
+        ...component,
+        needsFactCheck: false,
+      })),
+    };
   }
 
   /**

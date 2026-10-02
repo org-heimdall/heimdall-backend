@@ -54,6 +54,7 @@ export enum JudgmentWinner {
 export interface FactCheckSource {
   title: string;
   publisher: string;
+  // 원문 URL이 아니라 출처 도메인(예: news.naver.com)이다.
   url: string;
 }
 

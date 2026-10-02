@@ -222,6 +222,31 @@ describe('ArgumentAnalyzerService', () => {
     ).toEqual(components.map((_, index) => index < MAX_FACT_CHECKS_PER_TURN));
   });
 
+  it('최종 발언(CLOSING) 턴은 검증 대상을 모두 내려 FactCheck 작업을 만들지 않는다', async () => {
+    // 반론·질의 0라운드 토론의 3번째 턴 = 최종 발언 SIDE_A.
+    messages.findOneBy.mockResolvedValue(buildTurn({ sequence: 3 }));
+    graph.replaceTurnGraph.mockImplementation(
+      ({ result }: { result: AnalyzerResult }) =>
+        savedComponents().map((component, index) =>
+          Object.assign(component, {
+            needsFactCheck: result.components[index].needsFactCheck,
+          }),
+        ),
+    );
+
+    await service.handle(task);
+
+    const [input] = graph.replaceTurnGraph.mock.calls[0] as [
+      { result: AnalyzerResult },
+    ];
+    // 컴포넌트는 모두 저장되고 검증 표시만 내려간다.
+    expect(input.result.components).toHaveLength(analyzed().components.length);
+    expect(
+      input.result.components.every((component) => !component.needsFactCheck),
+    ).toBe(true);
+    expect(queue.schedule).not.toHaveBeenCalled();
+  });
+
   describe('Graph Validator', () => {
     const rejects = async (result: AnalyzerResult) => {
       analyzer.analyze.mockResolvedValue(result);
