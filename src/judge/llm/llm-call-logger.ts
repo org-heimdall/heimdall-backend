@@ -9,9 +9,9 @@ import { LlmMetrics } from './llm.metrics';
 // 호출을 도메인과 잇는 필드(debateId 등). 넘긴 순서대로 outcome 뒤에 찍힌다.
 export type LlmLogContext = Readonly<Record<string, LogFieldValue>>;
 
-// 어느 호출인지. operation은 analyze / judge.performance / judge.violation / fact_check 중 하나다.
+// 어느 호출인지. operation은 analyze / judge.score / judge.feedback / judge.violation / fact_check 중 하나다.
 export interface LlmCallMeta {
-  provider: 'openai' | 'gemini';
+  provider: 'openai' | 'gemini' | 'typesafe';
   model: string;
   operation: string;
   // 로그에만 싣는다. debateId 같은 무한 값이 섞이므로 메트릭 label로 쓰면 안 된다.

@@ -36,10 +36,10 @@ import { DEBATE_JUDGE, SILENT_TURN_PLACEHOLDER } from './llm/judge-llm';
 import type {
   DebateJudge,
   DebateJudgeResult,
+  DebateSideScores,
   JudgeComponentSummary,
   JudgeRelationSummary,
   JudgeTranscriptTurn,
-  SideJudgment,
 } from './llm/judge-llm';
 
 export const MIN_SCORE = 0;
@@ -84,10 +84,7 @@ export class JudgmentScoreValidationError extends Error {
 }
 
 // 총점 계산에 필요한 것은 세 점수뿐이다(피드백·위반은 총점에 들어가지 않는다).
-export type SideScores = Pick<
-  SideJudgment,
-  'argumentationScore' | 'interactionScore' | 'factualReliabilityScore'
->;
+export type SideScores = DebateSideScores;
 
 // 총점 = 가중합(반올림). LLM이 아니라 서버가 계산한다(내부 설계 다이어그램).
 export function calculateTotalScore(scores: SideScores): number {

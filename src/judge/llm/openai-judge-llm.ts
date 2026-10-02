@@ -5,7 +5,6 @@ import type { ResponseUsage } from 'openai/resources/responses/responses';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 import { MAX_FACT_CHECKS_PER_TURN } from '../argument-analyzer.service';
-import { MAX_SCORE, MIN_SCORE } from '../debate-judge.service';
 import { NonRetryableTaskError } from '../judge-task.worker';
 import {
   ArgumentComponentKind,
@@ -16,17 +15,22 @@ import {
   AnalyzerRequest,
   AnalyzerResult,
   ArgumentAnalyzer,
-  DebateJudge,
+  DebateCommentary,
+  DebateCommentator,
+  DebateCommentRequest,
   DebateJudgeRequest,
-  DebateJudgeResult,
-  SideJudgment,
+  DebateSideScores,
+  DebateViolationReport,
   SILENT_TURN_PLACEHOLDER,
+  ViolationDetector,
 } from './judge-llm';
 import { LlmCallLogger, LlmLogContext, LlmTokenUsage } from './llm-call-logger';
 
-// 1단계, 3단계 (Argument Analyzer, Debate Judge)는 OpenAI API 사용
+// 1단계 Argument Analyzer와 3단계의 피드백·위반 평가는 OpenAI API 사용(점수는 TypeSafe Jev가 매긴다)
 @Injectable()
-export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
+export class OpenAiJudgeLlm
+  implements ArgumentAnalyzer, DebateCommentator, ViolationDetector
+{
   private readonly logger = new Logger(OpenAiJudgeLlm.name);
   private readonly model: string;
   private readonly client: OpenAI | null;
@@ -77,34 +81,40 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
     };
   }
 
-  async judge(request: DebateJudgeRequest): Promise<DebateJudgeResult> {
-    const input = buildJudgeInput(request);
-
-    // 두 판정은 서로 독립이라 순차로 기다릴 이유가 없다(판정 대기 시간에 직결된다).
-    const [performance, violation] = await Promise.all([
-      this.parse(
-        'judge.performance',
-        request.logContext,
-        SYSTEM_PROMPT_JUDGE,
-        input,
-        JudgingDebatePerformance,
-        'judging_debate_performance',
-      ),
-      this.parse(
-        'judge.violation',
-        request.logContext,
-        SYSTEM_PROMPT_VIOLATION,
-        input,
-        JudgingDebateViolation,
-        'judging_debate_violation',
-      ),
-    ]);
+  // 점수는 이미 확정되어 있다. 피드백과 총평은 그 점수를 설명하는 역할만 한다.
+  async comment(request: DebateCommentRequest): Promise<DebateCommentary> {
+    const parsed = await this.parse(
+      'judge.feedback',
+      request.logContext,
+      SYSTEM_PROMPT_FEEDBACK,
+      buildCommentInput(request),
+      JudgingDebateFeedback,
+      'judging_debate_feedback',
+    );
 
     return {
-      sideA: toSideJudgment(performance.side_a, violation.side_a.violations),
-      sideB: toSideJudgment(performance.side_b, violation.side_b.violations),
-      overallReason: performance.judge_reason.trim(),
+      sideAFeedback: parsed.side_a.feedback.trim(),
+      sideBFeedback: parsed.side_b.feedback.trim(),
+      overallReason: parsed.judge_reason.trim(),
       model: this.model,
+    };
+  }
+
+  async detectViolations(
+    request: DebateJudgeRequest,
+  ): Promise<DebateViolationReport> {
+    const parsed = await this.parse(
+      'judge.violation',
+      request.logContext,
+      SYSTEM_PROMPT_VIOLATION,
+      buildJudgeInput(request),
+      JudgingDebateViolation,
+      'judging_debate_violation',
+    );
+
+    return {
+      sideA: toViolations(parsed.side_a.violations),
+      sideB: toViolations(parsed.side_b.violations),
     };
   }
 
@@ -125,7 +135,7 @@ export class OpenAiJudgeLlm implements ArgumentAnalyzer, DebateJudge {
     }
 
     const client = this.client;
-    // 호출마다 소요 시간과 token usage를 남긴다(판정은 두 호출이 병렬이라 두 줄이 남는다).
+    // 호출마다 소요 시간과 token usage를 남긴다(피드백·위반은 각각 한 줄씩 남는다).
     const response = await this.callLogger.measure(
       { provider: 'openai', model: this.model, operation, context: logContext },
       () =>
@@ -227,16 +237,11 @@ function buildAnalyzerInput(request: AnalyzerRequest): string {
 
 // ------------------------------------------------------------------- Judge
 
-const DebatePerformance = z.object({
-  argumentation_score: z.number().int().min(MIN_SCORE).max(MAX_SCORE),
-  interaction_score: z.number().int().min(MIN_SCORE).max(MAX_SCORE),
-  evidence_score: z.number().int().min(MIN_SCORE).max(MAX_SCORE),
-  feedback: z.string(),
-});
+const SideFeedback = z.object({ feedback: z.string() });
 
-const JudgingDebatePerformance = z.object({
-  side_a: DebatePerformance,
-  side_b: DebatePerformance,
+const JudgingDebateFeedback = z.object({
+  side_a: SideFeedback,
+  side_b: SideFeedback,
   judge_reason: z.string(),
 });
 
@@ -259,13 +264,20 @@ const JudgingDebateViolation = z.object({
   side_b: ParticipantViolation,
 });
 
-const SYSTEM_PROMPT_JUDGE = [
-  '너는 토론 심판이다. 두 편의 발언과 논증 구조, 사실 검증 결과를 보고 편마다 세 축을 0~100점으로 매긴다.',
-  '- 논증(argumentation): 주장이 분명하고 근거가 주장을 실제로 뒷받침하는가.',
-  '- 상호작용(interaction): 상대의 주장에 정면으로 응답하고 질문에 답했는가. "논증 관계"의 ATTACK·QUESTION이 상대 편 컴포넌트를 실제로 겨냥하는지, 받은 질문이 뒤에 답변으로 이어지는지를 근거로 삼는다.',
-  '- 사실 신뢰도(evidence_score): 제시한 사실 주장이 검증 결과로 뒷받침되는가. 검증 결과가 없는 주장은 중립으로 본다.',
+/**
+ * 피드백·총평. 점수는 별도 채점 모델이 이미 매겼으므로 여기서는 점수를 바꾸지 않고 설명만 한다 —
+ * 피드백이 점수와 어긋나면(예: 칭찬 일색인데 점수는 낮음) 사용자가 판정을 믿지 않는다.
+ */
+const SYSTEM_PROMPT_FEEDBACK = [
+  '너는 토론 심판이다. 두 편의 발언과 논증 구조, 사실 검증 결과, 그리고 이미 확정된 편별 점수(0~100)를 받는다.',
+  '점수는 바꿀 수 없다. 편마다 왜 그 점수가 나왔는지 설명하는 피드백과, 토론 전체에 대한 총평을 쓴다.',
+  '세 축의 의미는 다음과 같다.',
+  '- 논증: 주장이 분명하고 근거가 주장을 실제로 뒷받침하는가.',
+  '- 상호작용: 상대의 주장에 정면으로 응답하고 질문에 답했는가. "논증 관계"의 ATTACK·QUESTION이 상대 편 컴포넌트를 실제로 겨냥하는지, 받은 질문이 뒤에 답변으로 이어지는지를 근거로 삼는다.',
+  '- 사실 신뢰도: 제시한 사실 주장이 검증 결과로 뒷받침되는가. 검증 결과가 없는 주장은 중립으로 본다.',
+  '피드백은 점수가 높은 축의 강점과 낮은 축의 약점을 실제 발언을 근거로 짚고, 점수와 모순되는 평가를 하지 않는다.',
   `${SILENT_TURN_PLACEHOLDER}으로 표시된 차례는 시간 안에 아무 말도 하지 않은 것이다. 그 편에게 유리하게 해석하지 않는다.`,
-  '누가 이겼는지는 판단하지 않는다. 점수와 근거만 낸다.',
+  '누가 이겼는지는 판단하지 않는다(승패는 서버가 점수로 정한다).',
   '모든 문장은 한국어로 쓴다.',
 ].join('\n');
 
@@ -328,17 +340,15 @@ function buildJudgeInput(request: DebateJudgeRequest): string {
   ].join('\n\n');
 }
 
-function toSideJudgment(
-  side: z.infer<typeof DebatePerformance>,
-  violations: z.infer<typeof ParticipantViolation>['violations'],
-): SideJudgment {
-  return {
-    argumentationScore: side.argumentation_score,
-    interactionScore: side.interaction_score,
-    factualReliabilityScore: side.evidence_score,
-    feedback: side.feedback.trim(),
-    violations: toViolations(violations),
-  };
+// 판정 입력 뒤에 확정 점수를 붙인다. 피드백이 점수를 설명하도록 하는 유일한 통로다.
+function buildCommentInput(request: DebateCommentRequest): string {
+  const describe = (scores: DebateSideScores) =>
+    `논증 ${scores.argumentationScore} / 상호작용 ${scores.interactionScore} / 사실 신뢰도 ${scores.factualReliabilityScore}`;
+
+  return [
+    buildJudgeInput(request),
+    `# 확정 점수 (0~100)\nSIDE_A: ${describe(request.scores.sideA)}\nSIDE_B: ${describe(request.scores.sideB)}`,
+  ].join('\n\n');
 }
 
 /**
