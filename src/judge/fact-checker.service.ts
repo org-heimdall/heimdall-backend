@@ -1,8 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
-import { DebateRound, DebateTurnSchedule } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateMessage } from '../debates/entities/debate-message.entity';
 import {
@@ -13,12 +12,11 @@ import {
 import { REPORT_FIRST_ATTEMPT_START_ONLY } from './judge-stage-reporting';
 import { JudgeTaskHandler, NonRetryableTaskError } from './judge-task.worker';
 import { JudgeResultRepository } from './judge-result.repository';
-import { resolveRound } from './judge-turn-slot';
-import { canonicalizeSideTokens } from './judgment-text';
+import { resolveTurnSlot } from './judge-turn-slot';
 import { DebateArgumentComponent } from './entities/debate-argument.entity';
 import { JudgeTask } from './entities/judge-task.entity';
 import { FACT_CHECKER } from './llm/judge-llm';
-import type { FactCheckItemOutcome, FactChecker } from './llm/judge-llm';
+import type { FactCheckOutcome, FactChecker } from './llm/judge-llm';
 
 /**
  * 출처가 없어도 되는 판정. "확인할 자료를 못 찾았다"는 결론 자체가 출처를 가질 수 없다.
@@ -35,20 +33,6 @@ export const MAX_SOURCES = 3;
 // 로그 한 줄에 싣는 검증 문장의 길이 상한.
 const LOG_STATEMENT_LENGTH = 60;
 
-// batch 안에서 검증 명제를 가리키는 별칭 접두사(f1, f2 …).
-const TARGET_REF_PREFIX = 'f';
-
-/**
- * 검증 근거 설명(reason)에 있으면 안 되는 표현. reason은 그 명제의 사실 여부에 대한 근거만 담아야 하고,
- * 토론 평가·승패 조언·발언자 언급이 섞이면 카드가 판정처럼 읽힌다. 재시도를 남발하지 않도록 좁게 둔다.
- */
-const FORBIDDEN_REASON_PATTERNS: readonly RegExp[] = [
-  /발언자|화자/u,
-  /토론에서\s?(?:이기|승리|유리)/u,
-  /설득력/u,
-  /승패/u,
-];
-
 // Source Validator가 거부한 결과. 다시 물으면 달라질 수 있으므로 재시도 대상이다.
 export class FactCheckSourceValidationError extends Error {
   constructor(message: string) {
@@ -57,32 +41,8 @@ export class FactCheckSourceValidationError extends Error {
   }
 }
 
-// 검증 근거 설명이 명제와 무관한 평가·조언을 담았다. 다시 물으면 달라질 수 있으므로 재시도 대상이다.
-export class FactCheckReasonValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'FactCheckReasonValidationError';
-  }
-}
-
 /**
- * batch 응답에서 일부 명제의 판정이 빠졌거나 검증을 통과하지 못했다. 통과한 판정은 이미 저장했으므로
- * 재시도는 남은 명제만 다시 묻는다.
- */
-export class FactCheckBatchIncompleteError extends Error {
-  constructor(unresolved: string[], failures: string[]) {
-    super(
-      `검증 결과를 받지 못한 명제 ${unresolved.length}건: ${unresolved.join(', ')}` +
-        (failures.length === 0 ? '' : ` (${failures.join('; ')})`),
-    );
-    this.name = 'FactCheckBatchIncompleteError';
-  }
-}
-
-/**
- * 라운드 하나의 사실 검증(bounded batch). 대상(task.targetId)은 라운드를 닫는 확정 턴이며,
- * 그 라운드에서 검증 대상으로 남은 컴포넌트 가운데 아직 결과가 없는 것을 한 번의 호출로 검증한다.
- * 재시도·재실행은 결과가 없는 것만 다시 묻으므로 몇 번 돌아도 결과가 겹치지 않는다.
+ * 컴포넌트 하나의 사실 검증. 대상(task.targetId)은 논증 컴포넌트다.
  *
  * 여기서 최종 실패(FAILED)해도 판정은 막히지 않는다 — 검색이 안 됐다는 이유로 토론 전체가
  * 영영 판정 불가가 되면 안 되기 때문이다. 그 판단은 판정 조건 쪽에 있다.
@@ -105,95 +65,42 @@ export class FactCheckerService implements JudgeTaskHandler {
     private readonly debates: DebatesService,
   ) {}
 
-  // 검증은 라운드 단위이므로 stage 메시지에 몇 번째 라운드인지 남긴다.
+  // 검증도 결국 어떤 턴의 발언에서 나온 것이므로 턴 번호를 남긴다.
   async describe(task: JudgeTask): Promise<string | null> {
-    const anchor = await this.messages.findOneBy({ id: task.targetId });
-    if (anchor === null || anchor.sequence === null) {
-      return null;
-    }
-    const debate = await this.debates.findOneOrThrow(task.debateId);
-    const round = new DebateTurnSchedule(debate.rebuttalQuestionRounds).roundOf(
-      anchor.sequence - 1,
-    );
-    return round === null ? null : `round #${round.ordinal}`;
+    const component = await this.results.findComponentById(task.targetId);
+    return component === null ? null : `turn #${component.turnSequence}`;
   }
 
   async handle(task: JudgeTask): Promise<void> {
-    const anchor = await this.findAnchorOrThrow(task.targetId);
+    const component = await this.findComponentOrThrow(task.targetId);
     const debate = await this.debates.findOneOrThrow(task.debateId);
-    const round = resolveRound(debate, anchor.sequence as number);
-    const roundMessages = await this.findRoundMessages(debate.id, round);
+    const slot = resolveTurnSlot(debate, component.turnSequence);
 
-    const targets = await this.results.findUnresolvedTargets(
-      debate.id,
-      roundMessages.map((message) => message.id),
-    );
-    if (targets.length === 0) {
-      return;
-    }
-    const targetByRef = new Map(
-      targets.map((target, index) => [
-        `${TARGET_REF_PREFIX}${index + 1}`,
-        target,
-      ]),
-    );
-
-    const checked = await this.factChecker.checkBatch({
+    const checked = await this.factChecker.check({
       topic: debate.topic,
-      context: roundMessages
-        .map((message) => (message.body ?? '').trim())
-        .filter((body) => body !== '')
-        .join('\n\n'),
-      targets: [...targetByRef].map(([ref, target]) => ({
-        ref,
-        statement: statementOf(target),
-        claimType: target.claimType,
-      })),
+      statement: component.statement,
+      context: await this.loadContext(component),
       logContext: {
         stage: 'grounded_check',
-        debateId: debate.id,
-        phase: round.phase,
-        round: round.round,
-        targets: targets.map((target) => target.id),
+        debateId: task.debateId,
+        phase: slot.phase,
+        round: slot.round,
+        targets: [component.id],
       },
     });
 
-    // 명제마다 따로 검사해 통과한 것은 바로 저장한다. 한 명제가 어긋났다고 나머지를 버리지 않는다.
-    const resolved = new Set<string>();
-    const failures: string[] = [];
-    for (const item of checked.results) {
-      const target = targetByRef.get(item.ref);
-      if (target === undefined || resolved.has(item.ref)) {
-        // 요청하지 않은 ref이거나 같은 ref의 두 번째 답이다. 첫 답만 쓴다.
-        continue;
-      }
-      try {
-        this.validateOutcome(item, checked.groundedDomains);
-      } catch (error: unknown) {
-        failures.push(
-          `${item.ref}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        continue;
-      }
+    // 지어낸 출처·검색 없는 판정을 거른다. 거부되면 예외가 올라가 worker가 재시도한다.
+    this.validateSources(checked);
+    const outcome = { ...checked, sources: limitSources(checked) };
+    this.logOutcome(component, outcome, checked.sources.length);
 
-      const sources = limitSources(item.sources, checked.groundedDomains);
-      this.logOutcome(target, item, sources, checked.groundedDomains);
-      await this.results.replaceFactCheck({
-        debateId: debate.id,
-        componentId: target.id,
-        status: item.status,
-        reason: item.reason.trim(),
-        sources,
-      });
-      resolved.add(item.ref);
-    }
-
-    const unresolved = [...targetByRef.keys()].filter(
-      (ref) => !resolved.has(ref),
-    );
-    if (unresolved.length > 0) {
-      throw new FactCheckBatchIncompleteError(unresolved, failures);
-    }
+    await this.results.replaceFactCheck({
+      debateId: task.debateId,
+      componentId: component.id,
+      status: outcome.status,
+      reason: outcome.reason.trim(),
+      sources: outcome.sources,
+    });
   }
 
   /**
@@ -203,52 +110,40 @@ export class FactCheckerService implements JudgeTaskHandler {
    */
   private logOutcome(
     component: DebateArgumentComponent,
-    outcome: FactCheckItemOutcome,
-    sources: FactCheckSource[],
-    groundedDomains: string[],
+    outcome: FactCheckOutcome,
+    receivedSourceCount: number,
   ): void {
     const sourceCount =
-      outcome.sources.length > sources.length
-        ? `${sources.length}건(받은 ${outcome.sources.length}건에서 자름)`
-        : `${sources.length}건`;
+      receivedSourceCount > outcome.sources.length
+        ? `${outcome.sources.length}건(받은 ${receivedSourceCount}건에서 자름)`
+        : `${outcome.sources.length}건`;
     this.logger.log(
       `사실 검증 완료: debateId=${component.debateId}, ` +
         `turn #${component.turnSequence}, status=${outcome.status}, ` +
-        `출처 ${sourceCount}, 문장="${summarize(statementOf(component))}"`,
+        `출처 ${sourceCount}, 문장="${summarize(component.statement)}"`,
     );
 
     this.logger.debug(`  근거: ${outcome.reason.trim()}`);
-    for (const source of sources) {
+    for (const source of outcome.sources) {
       this.logger.debug(
         `  출처: ${source.title} (${source.publisher}) ${source.url}`,
       );
     }
-    this.logger.debug(`  검색 도메인: ${groundedDomains.join(', ') || '없음'}`);
+    this.logger.debug(
+      `  검색 도메인: ${outcome.groundedDomains.join(', ') || '없음'}`,
+    );
   }
 
   /**
-   * 명제 하나의 판정 검사(내부 설계 "Source Validator" + 근거 설명 규칙).
+   * 검증 결과의 출처 검사(내부 설계 "Source Validator").
    *
    * LLM은 그럴듯한 URL을 지어낼 수 있고, 검색을 아예 하지 않고도 답을 낼 수 있다.
    * 형식(http/https)과 최소 개수, 그리고 grounding 메타데이터에 실제로 있던 도메인인지를 함께 본다.
-   * 근거 설명은 명제와 직접 연결된 것이어야 하므로 토론 평가·승패 조언·발언자 언급을 거른다.
    */
-  private validateOutcome(
-    outcome: FactCheckItemOutcome,
-    groundedDomains: string[],
-  ): void {
-    const reason = outcome.reason.trim();
-    if (reason === '') {
+  private validateSources(outcome: FactCheckOutcome): void {
+    if (outcome.reason.trim() === '') {
       throw new FactCheckSourceValidationError(
         '검증 근거 설명이 비어 있습니다.',
-      );
-    }
-    if (
-      canonicalizeSideTokens(reason) !== reason ||
-      FORBIDDEN_REASON_PATTERNS.some((pattern) => pattern.test(reason))
-    ) {
-      throw new FactCheckReasonValidationError(
-        '검증 근거 설명에 명제와 무관한 평가나 발언자 언급이 있습니다.',
       );
     }
     if (STATUSES_WITHOUT_SOURCES.includes(outcome.status)) {
@@ -263,14 +158,14 @@ export class FactCheckerService implements JudgeTaskHandler {
     const hosts = outcome.sources.map((source) => this.toHostOrThrow(source));
 
     // 검색 근거가 하나도 없으면 모델이 검색 없이 답한 것이다.
-    if (groundedDomains.length === 0) {
+    if (outcome.groundedDomains.length === 0) {
       throw new FactCheckSourceValidationError(
         '검색 근거(grounding)가 없어 출처를 신뢰할 수 없습니다.',
       );
     }
 
     // 출처 도메인 중 최소 하나는 실제 검색 결과에서 온 것이어야 한다.
-    const grounded = groundedDomains.map(normalizeHost);
+    const grounded = outcome.groundedDomains.map(normalizeHost);
     if (!hosts.some((host) => isGroundedHost(host, grounded))) {
       throw new FactCheckSourceValidationError(
         `출처가 검색 결과와 일치하지 않습니다: ${hosts.join(', ')}`,
@@ -289,42 +184,29 @@ export class FactCheckerService implements JudgeTaskHandler {
     return host;
   }
 
-  // 라운드의 확정 턴(발언 순서대로). 검증 대상을 고르는 범위이자 검색어를 풀어낼 맥락이다.
-  private async findRoundMessages(
-    debateId: string,
-    round: DebateRound,
-  ): Promise<DebateMessage[]> {
-    return this.messages.find({
-      where: {
-        debateId,
-        status: ResourceStatus.NORMAL,
-        sequence: In(round.turnIndexes.map((index) => index + 1)),
-      },
-      order: { sequence: 'ASC' },
-    });
-  }
-
-  /**
-   * 라운드 앵커 턴. 없으면(삭제됐거나, 이 기준 이전의 컴포넌트 단위 작업이라 대상이 턴이 아니면)
-   * 다시 해도 의미가 없다 — 판정은 검증 실패에 막히지 않으므로 재시도 불가로 끝낸다.
-   */
-  private async findAnchorOrThrow(turnId: string): Promise<DebateMessage> {
-    const anchor = await this.messages.findOneBy({
-      id: turnId,
+  // 검증 문장이 나온 발언 원문. 대명사·생략된 주어를 검색어로 풀어내는 데 쓴다.
+  private async loadContext(
+    component: DebateArgumentComponent,
+  ): Promise<string> {
+    const turn = await this.messages.findOneBy({
+      id: component.turnId,
       status: ResourceStatus.NORMAL,
     });
-    if (anchor === null || anchor.sequence === null) {
+    return turn?.body ?? component.statement;
+  }
+
+  // 컴포넌트가 사라졌다면(재분석으로 교체) 이 작업은 다시 해도 의미가 없다.
+  private async findComponentOrThrow(
+    componentId: string,
+  ): Promise<DebateArgumentComponent> {
+    const component = await this.results.findComponentById(componentId);
+    if (component === null) {
       throw new NonRetryableTaskError(
-        `검증할 라운드의 확정 턴이 없습니다: targetId=${turnId}`,
+        `검증할 컴포넌트가 없습니다: componentId=${componentId}`,
       );
     }
-    return anchor;
+    return component;
   }
-}
-
-// 검증한 명제. 검증 명제가 없는 레거시 행은 논증 문장으로 대신한다.
-function statementOf(component: DebateArgumentComponent): string {
-  return component.factCheckStatement ?? component.statement;
 }
 
 // 로그 한 줄에 실을 만큼 문장을 줄인다. 전문은 분석 단계의 debug 로그에 있다.
@@ -338,21 +220,18 @@ function summarize(statement: string): string {
  * 출처를 상한까지만 남긴다. 실제 검색 결과(grounding)와 도메인이 일치하는 출처를 먼저 두고,
  * 같은 그룹 안에서는 모델이 낸 순서를 지킨다 — 잘라낸 뒤에도 검색 근거가 있는 출처가 남도록.
  */
-function limitSources(
-  sources: FactCheckSource[],
-  groundedDomains: string[],
-): FactCheckSource[] {
-  if (sources.length <= MAX_SOURCES) {
-    return sources;
+function limitSources(outcome: FactCheckOutcome): FactCheckSource[] {
+  if (outcome.sources.length <= MAX_SOURCES) {
+    return outcome.sources;
   }
-  const grounded = groundedDomains.map(normalizeHost);
+  const grounded = outcome.groundedDomains.map(normalizeHost);
   const isGrounded = (source: FactCheckSource): boolean => {
     const host = toHost(source.url);
     return host !== null && isGroundedHost(host, grounded);
   };
   return [
-    ...sources.filter(isGrounded),
-    ...sources.filter((source) => !isGrounded(source)),
+    ...outcome.sources.filter(isGrounded),
+    ...outcome.sources.filter((source) => !isGrounded(source)),
   ].slice(0, MAX_SOURCES);
 }
 

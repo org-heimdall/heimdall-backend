@@ -219,36 +219,6 @@ describe('JudgeTaskRepository', () => {
     });
   });
 
-  describe('resetSettled', () => {
-    it('끝난(COMPLETED·FAILED) 작업만 PENDING으로 되돌리고 시도 횟수를 초기화한다', async () => {
-      execute.mockResolvedValue({ affected: 1 });
-
-      await expect(
-        taskRepository.resetSettled(JudgeTaskKind.FACT_CHECK, TURN_ID),
-      ).resolves.toBe(true);
-
-      expect(lastSet).toMatchObject({
-        status: JudgeTaskStatus.PENDING,
-        attempt: 0,
-        requestId: null,
-        lastError: null,
-      });
-      expect(conditions).toEqual([
-        'kind = :kind',
-        'target_id = :targetId',
-        'status IN (:...settled)',
-      ]);
-    });
-
-    it('진행 중이거나 대기 중이라 바뀐 행이 없으면 false', async () => {
-      execute.mockResolvedValue({ affected: 0 });
-
-      await expect(
-        taskRepository.resetSettled(JudgeTaskKind.FACT_CHECK, TURN_ID),
-      ).resolves.toBe(false);
-    });
-  });
-
   describe('countByKind', () => {
     it('종류별로 상태 개수를 집계한다', async () => {
       repository.findBy.mockResolvedValue([

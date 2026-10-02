@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ResourceStatus } from '../common/entities/resource-status.enum';
 import { ErrorCode } from '../common/exceptions/error-code';
 import { GeneralException } from '../common/exceptions/general.exception';
@@ -10,12 +10,7 @@ import {
   DebateOutcome,
   DebateOutcomeKind,
 } from '../debate-outcomes/debate-outcome.types';
-import {
-  DebateRound,
-  DebateTurnSchedule,
-  resolveSide,
-  resolveSpeakers,
-} from '../debates/debate-turn';
+import { resolveSide, resolveSpeakers } from '../debates/debate-turn';
 import { DebatesService } from '../debates/debates.service';
 import { DebateDto } from '../debates/dto/debate.dto';
 import { DebateEndReason } from '../debates/entities/debate-end-reason.enum';
@@ -31,10 +26,13 @@ import {
   TaskOutcome,
 } from './judge-task.worker';
 import { JudgeResultRepository } from './judge-result.repository';
-import { DebateResultDto, JudgmentResultDto } from './dto/debate-result.dto';
+import {
+  DebateResultDto,
+  FactCheckResultDto,
+  JudgmentResultDto,
+} from './dto/debate-result.dto';
 import { JudgeTask } from './entities/judge-task.entity';
 import { JudgeErrorCode } from './exceptions/judge-error-code';
-import { DebateResultPresenter } from './debate-result.presenter';
 
 // 재시도로 되돌릴 작업 종류. FactCheck 실패는 판정을 막지 않으므로 여기 없다.
 const RETRYABLE_KINDS = [JudgeTaskKind.ANALYZER, JudgeTaskKind.JUDGE];
@@ -70,27 +68,15 @@ export class JudgeService implements JudgeTaskListener {
     private readonly debates: DebatesService,
     private readonly config: JudgeConfig,
     private readonly outcomes: DebateOutcomeService,
-    private readonly presenter: DebateResultPresenter,
   ) {}
 
   // ------------------------------------------------------------- 채팅 훅
 
-  /**
-   * 라운드를 닫는 턴이 확정되면 그 라운드의 분석 작업 하나를 만든다(대상 = 이 턴).
-   * 라운드 중간 턴은 아무것도 하지 않고, 라운드 전체가 빈 턴(시간 초과)이면 뽑아낼 주장이 없어 만들지 않는다.
-   */
+  // 확정 턴마다 분석 작업 하나. 빈 턴(시간 초과)은 뽑아낼 주장이 없어 작업을 만들지 않는다.
   async onTurnFinalized(turn: DebateChatTurn): Promise<void> {
-    const debate = await this.debates.findOneOrThrow(turn.debateId);
-    const schedule = new DebateTurnSchedule(debate.rebuttalQuestionRounds);
-    if (!schedule.isRoundClosing(turn.sequence - 1)) {
-      return;
-    }
-
-    const round = schedule.roundOf(turn.sequence - 1) as DebateRound;
-    const turns = await this.findRoundTurns(debate.id, round);
-    if (!this.hasSpeech(turns)) {
+    if (turn.content.trim() === '') {
       this.logger.log(
-        `발언이 없는 라운드라 분석하지 않습니다: debateId=${turn.debateId}, round #${round.ordinal}`,
+        `빈 턴이라 분석하지 않습니다: debateId=${turn.debateId}, sequence=${turn.sequence}`,
       );
       return;
     }
@@ -101,13 +87,8 @@ export class JudgeService implements JudgeTaskListener {
   /**
    * 토론이 끝나면 판정 조건을 확인한다. 대개 분석이 아직 남아 있어 여기서는 시작되지 않고,
    * 마지막 분석이 끝나는 순간 그쪽에서 시작된다(어느 쪽이 먼저든 결과는 같다).
-   *
-   * 마지막 턴의 onTurnFinalized와 이 훅은 동시에 백그라운드로 불린다. 집계가 마지막 라운드 작업 생성보다
-   * 먼저 일어나면 그 라운드를 분석하지 않은 채 판정이 시작될 수 있으므로, 집계 전에 라운드 작업을 먼저
-   * 보장한다(작업 생성은 멱등이라 두 경로가 겹쳐도 하나뿐이다).
    */
   async onDebateEnded(debateId: string): Promise<void> {
-    await this.ensureRoundAnalyzers(debateId);
     const readiness = await this.tryStartJudge(debateId);
     this.logger.log(
       `토론 종료 처리: debateId=${debateId}, readiness=${readiness}`,
@@ -212,10 +193,10 @@ export class JudgeService implements JudgeTaskListener {
 
     const completed = await this.results.findJudgment(debateId);
     if (completed !== null) {
-      return this.presenter.presentJudgment(debate, completed);
+      return JudgmentResultDto.from(completed);
     }
 
-    const scheduled = await this.ensureRoundAnalyzers(debateId);
+    const scheduled = await this.resumeAnalyzers(debateId);
     if (scheduled > 0) {
       this.logger.log(
         `빠진 분석 작업 ${scheduled}건을 채웠습니다: debateId=${debateId}`,
@@ -248,7 +229,7 @@ export class JudgeService implements JudgeTaskListener {
     }
 
     const failed = await this.tasks.findFailed(debateId, RETRYABLE_KINDS);
-    const missing = await this.ensureRoundAnalyzers(debateId);
+    const missing = await this.resumeAnalyzers(debateId);
     if (failed.length === 0 && missing === 0) {
       throw new GeneralException(JudgeErrorCode.NOTHING_TO_RETRY);
     }
@@ -282,8 +263,8 @@ export class JudgeService implements JudgeTaskListener {
     return Object.assign(new DebateResultDto(), {
       debate: await this.debates.findOneDto(debateId),
       viewerSide: resolveSide(resolveSpeakers(debate), memberId),
-      judgmentResult: await this.presenter.presentJudgment(debate, judgment),
-      factChecks: await this.presenter.presentFactChecks(debateId),
+      judgmentResult: JudgmentResultDto.from(judgment),
+      factChecks: await this.loadFactChecks(debateId),
     });
   }
 
@@ -309,67 +290,56 @@ export class JudgeService implements JudgeTaskListener {
   }
 
   /**
-   * 닫힌 라운드 가운데 분석 작업이 없는 것을 채운다(토론 종료, POST /judge의 재개).
-   * 대상은 라운드를 닫는 턴이고, 발언이 하나도 없는 라운드는 건너뛴다. 이미 있는 작업은 그대로 둔다(멱등).
-   * 이번에 새로 만든 작업 수를 돌려준다.
+   * 확정된 턴 가운데 분석 작업이 없는 것을 채운다(POST /judge의 재개).
+   * 빈 턴은 뽑아낼 주장이 없어 건너뛴다. 이미 있는 작업은 그대로 둔다(멱등).
    */
-  private async ensureRoundAnalyzers(debateId: string): Promise<number> {
-    const debate = await this.debates.findOneOrThrow(debateId);
+  private async resumeAnalyzers(debateId: string): Promise<number> {
     const turns = await this.messages.find({
       where: { debateId, status: ResourceStatus.NORMAL },
       order: { sequence: 'ASC' },
     });
-    const turnBySequence = new Map(
-      turns.flatMap((turn) =>
-        turn.sequence === null ? [] : [[turn.sequence, turn] as const],
-      ),
-    );
 
     let scheduled = 0;
-    for (const round of new DebateTurnSchedule(
-      debate.rebuttalQuestionRounds,
-    ).rounds()) {
-      const roundTurns = round.turnIndexes.flatMap((index) => {
-        const turn = turnBySequence.get(index + 1);
-        return turn === undefined ? [] : [turn];
-      });
-      const anchor = turnBySequence.get(
-        (round.turnIndexes.at(-1) as number) + 1,
-      );
-      // 아직 닫히지 않은 라운드는 그 라운드의 마지막 턴이 확정될 때 만들어진다.
-      if (anchor === undefined || !this.hasSpeech(roundTurns)) {
+    for (const turn of turns) {
+      if (turn.sequence === null || (turn.body ?? '').trim() === '') {
         continue;
       }
       const existing = await this.tasks.findByTarget(
         JudgeTaskKind.ANALYZER,
-        anchor.id,
+        turn.id,
       );
       if (existing !== null) {
         continue;
       }
-      await this.queue.schedule(debateId, JudgeTaskKind.ANALYZER, anchor.id);
+      await this.queue.schedule(debateId, JudgeTaskKind.ANALYZER, turn.id);
       scheduled += 1;
     }
     return scheduled;
   }
 
-  // 라운드의 확정 턴(빈 턴 포함).
-  private async findRoundTurns(
+  // 검증 결과에 발언자·문장을 붙인다(계약 FactCheckResult).
+  private async loadFactChecks(
     debateId: string,
-    round: DebateRound,
-  ): Promise<DebateMessage[]> {
-    return this.messages.find({
-      where: {
-        debateId,
-        status: ResourceStatus.NORMAL,
-        sequence: In(round.turnIndexes.map((index) => index + 1)),
-      },
-    });
-  }
+  ): Promise<FactCheckResultDto[]> {
+    const checks = await this.results.findFactChecks(debateId);
+    if (checks.length === 0) {
+      return [];
+    }
 
-  // 시간 초과로 비어 있지 않은 턴이 하나라도 있는지. 없으면 뽑아낼 주장이 없다.
-  private hasSpeech(turns: DebateMessage[]): boolean {
-    return turns.some((turn) => (turn.body ?? '').trim() !== '');
+    const components = new Map(
+      (await this.results.findComponents(debateId)).map((component) => [
+        component.id,
+        component,
+      ]),
+    );
+
+    return checks.flatMap((check) => {
+      const component = components.get(check.componentId);
+      // 재분석으로 컴포넌트가 교체되면 결과만 남을 수 있다. 보여 줄 문장이 없으므로 뺀다.
+      return component === undefined
+        ? []
+        : [FactCheckResultDto.from(check, component)];
+    });
   }
 
   // 마지막 실패로부터 쿨다운이 지나야 재시도를 받는다.

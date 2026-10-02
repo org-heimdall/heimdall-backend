@@ -13,6 +13,9 @@ export class DebateChatConfig {
 
   constructor(configService: ConfigService) {
     this.limits = {
+      maxContentLength: configService.getOrThrow<number>(
+        'DEBATE_TURN_MAX_CONTENT_LENGTH',
+      ),
       maxTotalCharacters: configService.getOrThrow<number>(
         'DEBATE_TURN_MAX_TOTAL_CHARACTERS',
       ),
@@ -21,7 +24,7 @@ export class DebateChatConfig {
       ),
     };
     new Logger(DebateChatConfig.name).log(
-      `토론 채팅 WS port=${DEBATE_CHAT_WS_PORT}, 턴 제한: ` +
+      `토론 채팅 WS port=${DEBATE_CHAT_WS_PORT}, 턴 제한: content=${this.limits.maxContentLength}자, ` +
         `total=${this.limits.maxTotalCharacters}자, duration=${this.limits.maxDurationSeconds}초`,
     );
   }

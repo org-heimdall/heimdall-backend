@@ -171,6 +171,7 @@ describe('RedisDebateChatStateStore', () => {
       dataSource as never,
       {
         limits: {
+          maxContentLength: 10,
           maxTotalCharacters: 30,
           maxDurationSeconds: 180,
         },

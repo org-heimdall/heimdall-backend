@@ -78,6 +78,7 @@ export class DebateChatController {
     DebateChatErrorCode.OPPONENT_MISSING,
     DebateChatErrorCode.NOT_IN_PROGRESS,
     DebateChatErrorCode.TURN_MISMATCH,
+    DebateChatErrorCode.CONTENT_TOO_LONG,
     DebateChatErrorCode.TURN_CHARACTER_LIMIT_EXCEEDED,
     DebateChatErrorCode.FINALIZE_IN_PROGRESS,
   )

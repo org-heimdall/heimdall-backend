@@ -23,7 +23,7 @@ export class DebateMessage extends SoftDeletableEntity {
   @Column({ type: 'uuid' })
   debateId: string;
 
-  // 확정 턴 한 건은 DEBATE_TURN_MAX_TOTAL_CHARACTERS(기본 500자)까지 커질 수 있어
+  // 확정 턴 한 건은 DEBATE_TURN_MAX_TOTAL_CHARACTERS(기본 1500자)까지 커질 수 있어
   // 길이 제한을 두지 않는다.
   @Column({ type: 'text', nullable: true })
   body: string | null;

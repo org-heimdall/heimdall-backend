@@ -42,8 +42,8 @@ export function toSpeakers(debate: Debate): DebateSpeakers {
   return speakers;
 }
 
-// 턴 제한. 메시지 1건의 길이는 따로 제한하지 않고, 한 차례의 누적 글자 수만 본다.
 export interface DebateTurnLimits {
+  maxContentLength: number;
   maxTotalCharacters: number;
   maxDurationSeconds: number;
 }
@@ -264,6 +264,9 @@ export class DebateChatState {
       return { status: 'DUPLICATE', message: duplicate };
     }
 
+    if (command.content.length > this.limits.maxContentLength) {
+      throw new GeneralException(DebateChatErrorCode.CONTENT_TOO_LONG);
+    }
     if (
       this.totalCharacters() + command.content.length >
       this.limits.maxTotalCharacters
@@ -480,8 +483,6 @@ export class DebateChatState {
     };
   }
 
-  // 현재 차례 draft의 누적 글자 수(String.length, UTF-16 code unit). draft는 재접속 때 그대로 복원되므로
-  // 확정·시간 초과 전까지는 언제 다시 세어도 같고, 차례가 넘어가면 draft가 비워져 0부터 센다.
   private totalCharacters(): number {
     return this.drafts.reduce((sum, draft) => sum + draft.content.length, 0);
   }
