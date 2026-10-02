@@ -108,14 +108,11 @@ import * as Joi from 'joi';
         // 토론 채팅 WebSocket. 계약상 HTTP와 별도 포트를 쓴다.
         DEBATE_CHAT_WS_PORT: Joi.number().integer().min(1).default(8080),
         // 턴 제한값. 글자 수와 시간 초과(Phase 2)를 서버가 강제한다.
-        DEBATE_TURN_MAX_CONTENT_LENGTH: Joi.number()
-          .integer()
-          .min(1)
-          .default(500),
+        // 글자 수는 메시지 1건이 아니라 한 턴의 누적 발언에만 건다.
         DEBATE_TURN_MAX_TOTAL_CHARACTERS: Joi.number()
           .integer()
           .min(1)
-          .default(1500),
+          .default(500),
         DEBATE_TURN_MAX_DURATION_SECONDS: Joi.number()
           .integer()
           .min(1)
