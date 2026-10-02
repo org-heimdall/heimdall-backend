@@ -10,6 +10,9 @@ import {
 export const ARGUMENT_ANALYZER = Symbol('ARGUMENT_ANALYZER');
 export const FACT_CHECKER = Symbol('FACT_CHECKER');
 export const DEBATE_JUDGE = Symbol('DEBATE_JUDGE');
+export const DEBATE_SCORER = Symbol('DEBATE_SCORER');
+export const DEBATE_COMMENTATOR = Symbol('DEBATE_COMMENTATOR');
+export const VIOLATION_DETECTOR = Symbol('VIOLATION_DETECTOR');
 
 // 시간 초과로 아무 말도 하지 않은 차례. 판정에는 "넘겼다"는 사실이 필요하다.
 export const SILENT_TURN_PLACEHOLDER = '(발언 없음)';
@@ -161,11 +164,15 @@ export interface DebateJudgeRequest {
   logContext: DebateJudgeLogContext;
 }
 
-// 편 하나의 판정. 총점과 승자는 여기에 없다 — 서버가 계산한다.
-export interface SideJudgment {
+// 편 하나의 세 축 점수(0~100 정수). 총점은 서버가 가중합으로 계산한다.
+export interface DebateSideScores {
   argumentationScore: number;
   interactionScore: number;
   factualReliabilityScore: number;
+}
+
+// 편 하나의 판정. 총점과 승자는 여기에 없다 — 서버가 계산한다.
+export interface SideJudgment extends DebateSideScores {
   feedback: string;
   // 신뢰도 차감의 근거. 위반이 없으면 빈 배열이다.
   violations: DebateViolation[];
@@ -178,6 +185,47 @@ export interface DebateJudgeResult {
   model: string;
 }
 
+// 점수·피드백·위반을 한데 모은 최종 판정. 판정 서비스는 이 포트만 안다.
 export interface DebateJudge {
   judge(request: DebateJudgeRequest): Promise<DebateJudgeResult>;
+}
+
+// 편별 세 축 점수. model은 실제로 답한 모델의 버전 id다(별칭이 아니다).
+export interface DebateScoreResult {
+  sideA: DebateSideScores;
+  sideB: DebateSideScores;
+  model: string;
+}
+
+// 세 축 점수를 매기는 것. 피드백·위반은 만들지 않는다.
+export interface DebateScorer {
+  score(request: DebateJudgeRequest): Promise<DebateScoreResult>;
+}
+
+// 피드백은 이미 확정된 점수를 설명해야 하므로 점수를 함께 받는다.
+export interface DebateCommentRequest extends DebateJudgeRequest {
+  scores: { sideA: DebateSideScores; sideB: DebateSideScores };
+}
+
+export interface DebateCommentary {
+  sideAFeedback: string;
+  sideBFeedback: string;
+  overallReason: string;
+  model: string;
+}
+
+// 확정 점수에 대한 편별 피드백과 총평을 쓰는 것.
+export interface DebateCommentator {
+  comment(request: DebateCommentRequest): Promise<DebateCommentary>;
+}
+
+// 위반이 없는 편은 빈 배열이다.
+export interface DebateViolationReport {
+  sideA: DebateViolation[];
+  sideB: DebateViolation[];
+}
+
+// 토론 규칙 위반(신뢰도 차감 근거)을 찾는 것.
+export interface ViolationDetector {
+  detectViolations(request: DebateJudgeRequest): Promise<DebateViolationReport>;
 }
